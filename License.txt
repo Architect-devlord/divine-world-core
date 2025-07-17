@@ -1,0 +1,17 @@
+Copyright © 2025 Devlord the Architect
+
+This software, project, or any derived material (collectively referred to as “Divine World”) is the exclusive intellectual property of Devlord the Architect.
+
+Permission is hereby granted to use, modify, and distribute Divine World solely at the discretion of Devlord the Architect. No part of Divine World may be repurposed, reverse-engineered, sold, or sublicensed without explicit, documented permission from Devlord the Architect.
+
+At any time and for any reason, Devlord the Architect reserves the right to:
+- Revoke permission from any party using this software.
+- Modify, restrict, or terminate any license agreement or granted access.
+- Require removal of this software from any platform, system, or userbase.
+
+All rights not explicitly granted are reserved.
+
+This license overrides any conflicting open-source licenses, declarations, or headers that may have been mistakenly included in the project during development.
+
+Issued: July 17, 2025  
+Signed: Devlord the Architect

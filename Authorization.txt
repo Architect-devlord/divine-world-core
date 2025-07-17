@@ -1,0 +1,20 @@
+AUTHORIZATION AND OWNERSHIP DECLARATION  
+Divine World Project  
+Date of Declaration: July 17, 2025  
+
+This document certifies that the Divine World project — including all associated files, code, concepts, game logic, assets, and systems — is solely authored, maintained, and owned by:
+
+Alias: Devlord the Architect
+
+This declaration confirms:
+
+- Full intellectual property (IP) ownership is held by Devlord the Architect.
+- No co-ownership, joint authorship, or external rights exist by default.
+- No rights are granted to any third party unless through written and signed authorization by Devlord the Architect.
+- All collaborators (if permitted in the future) will operate under non-exclusive, non-transferable contribution rights with no claim to IP ownership.
+- All contributions to the Divine World project by external collaborators will be considered assigned work under Devlord the Architect’s ownership, unless explicitly licensed otherwise in writing.
+
+Devlord the Architect reserves the exclusive right to authorize, revoke, or limit collaboration at any time.
+
+Signed and Confirmed,
+Devlord the Architect

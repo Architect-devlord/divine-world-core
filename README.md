@@ -21,7 +21,7 @@ This is the encrypted offline archive of the Divine World project.
 
 - Encrypted file: `DivineWorld_Encrypted.zip`
 - Integrity: Verified using `SHA256SUM.txt`
-- Ownership: See `AUTHORIZATION.txt` and `LICENSE.txt`
+- Ownership: See `Authorization.txt` and `License.txt`
 
 To decrypt, use the original key file stored by Devlord the Architect. Do not distribute or modify without permission.
 
@@ -31,3 +31,4 @@ All rights reserved by Devlord the Architect.
 
 Updated the readme for more accuracy
 Added more things
+changed some things for accuracy

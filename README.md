@@ -9,8 +9,12 @@ This version contains the full offline functional package of Divine World includ
 This project is under full ownership and copyright of Devlord the Architect (2025). It is NOT open source and is NOT for redistribution.
 
 ## 📦 Contents
-- DivineWorld_Offline_Archive.tar (Main project archive)
-- LICENSE.txt (Full control license)
-- AUTHORIZATION.txt (Proof of authorship)
+- DivineWorld_Encrypted.zip (Main project archive)
+- License.txt (Full control license)
+- Authorization.txt (Proof of authorship)
 - README.md (This file)
 - SHA256SUM.txt (Integrity signature)
+
+
+
+Updated the readme for more accuracy

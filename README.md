@@ -15,6 +15,19 @@ This project is under full ownership and copyright of Devlord the Architect (202
 - README.md (This file)
 - SHA256SUM.txt (Integrity signature)
 
+  # Divine World – Secure Archive
+
+This is the encrypted offline archive of the Divine World project.
+
+- Encrypted file: `DivineWorld_Encrypted.zip`
+- Integrity: Verified using `SHA256SUM.txt`
+- Ownership: See `AUTHORIZATION.txt` and `LICENSE.txt`
+
+To decrypt, use the original key file stored by Devlord the Architect. Do not distribute or modify without permission.
+
+All rights reserved by Devlord the Architect.
+
 
 
 Updated the readme for more accuracy
+Added more things

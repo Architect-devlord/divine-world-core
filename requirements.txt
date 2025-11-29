@@ -1,0 +1,41 @@
+# Core ML/DL
+numpy>=2.3.3
+torch>=2.4.0
+torchvision>=0.19.0
+
+# RL Libraries
+stable-baselines3>=2.0.0
+torchrl>=0.5.0  # NEW: TorchRL for modular RL
+gymnasium>=0.29.0  # NEW: Updated gym
+
+# Continual Learning
+avalanche-lib>=0.5.0  # NEW: For lifelong learning
+
+# Backend
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart>=0.0.6
+websockets>=11.0
+
+# Vision/Audio
+opencv-python>=4.10.0
+pillow>=10.0.0
+
+# Utilities
+scipy>=1.16.2
+psutil>=5.9.0
+tqdm>=4.65.0
+
+# Optional: GUI
+PyQt5>=5.15.0  # For utils/gui.py
+
+# Optional: Audio
+sounddevice>=0.4.6  # For microphone input
+
+websockets>=11.0  # Used in unified_chat_system
+python-multipart>=0.0.6  # Used in main.py uploads
+pyinstaller>=6.10.0  # Used in packager.py
+
+flask>=3.0.0
+flask-socketio>=5.3.0
+sounddevice>=0.4.6

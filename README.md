@@ -1,58 +1,34 @@
-# Divine World AI Codebase
+# Divine World (Offline Build)
+> Proprietary World Simulation | AI-driven Minecraft Universe  
+> Created by Devlord the Architect — All rights reserved
 
-This is an AI agent framework for controlling NPCs with personality, emotions, and memory.
+## 🌐 About
+This version contains the full offline functional package of Divine World including logic systems, simulations, behavior trees, gods, bots, map logic, trades, societies, and documentation.
 
-## Setup
+## 🔐 Author and Rights
+This project is under full ownership and copyright of Devlord the Architect (2025). It is NOT open source and is NOT for redistribution.
 
-1. Create a virtual environment:
-```bash
-python -m venv dw_env
-source dw_env/bin/activate  # Linux/Mac
-.\dw_env\Scripts\activate   # Windows
-```
- 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+## 📦 Contents
+- DivineWorld_Encrypted.zip (Main project archive)
+- License.txt (Full control license)
+- Authorization.txt (Proof of authorship)
+- README.md (This file)
+- SHA256SUM.txt (Integrity signature)
 
-## Project Structure
+  # Divine World – Secure Archive
 
-- `ai_core/`: Core AI agent implementation
-  - `agent.py`: Main NPC agent class
-  - `brain.py`: Brain capsule for saving/loading agent state
-  - `brain_core.py`: Core brain functionality
-  - `planner.py`: Action planning system
-  - `actuators.py`: Interfaces for Forge and Isaac Sim
-  - `vision.py`: Vision processing system
-  - `reward.py`: Reward shaping system
+This is the encrypted offline archive of the Divine World project.
 
-- `rl/`: Reinforcement learning components
-  - `env.py`: Gym environment wrapper
-  - `policy.py`: Neural network policies
-  - `train.py`: Training scripts
-  - `demo_recorder.py`: Demo recording utilities
+- Encrypted file: `DivineWorld_Encrypted.zip`
+- Integrity: Verified using `SHA256SUM.txt`
+- Ownership: See `Authorization.txt` and `License.txt`
 
-- `tests/`: Test scripts
-- `utils/`: Utility functions and backend services
-- `data/`: Data storage directory
+To decrypt, use the original key file stored by Devlord the Architect. Do not distribute or modify without permission.
 
-## Running
+All rights reserved by Devlord the Architect.
 
-1. Start the chat backend:
-```bash
-python -m utils.chat_backend
-```
 
-2. Run the main loop:
-```bash
-python run_loop.py
-```
 
-## Testing
-
-Run individual test scripts:
-```bash
-python tests/inspect_agent.py
-python tests/inspect_agent_memory.py [agent_id]
-```
+Updated the readme for more accuracy
+Added more things
+changed some things for accuracy

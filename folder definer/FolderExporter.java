@@ -1,6 +1,4 @@
 import java.io.*;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 
 public class FolderExporter {
     // ANSI colors
@@ -17,17 +15,23 @@ public class FolderExporter {
     private static boolean stepByStep = false;
     private static boolean autoContinue = false;
 
-    private static BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+    private static final BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
 
     private static int totalFiles = 0;
     private static int processedFiles = 0;
 
+    // Detect OS through menu
+    private static String selectedOS = "";
+
     public static void main(String[] args) {
         try {
+            selectOS();
+
             System.out.print(CYAN + "📂 Drag and drop the folder here: " + RESET);
             String input = reader.readLine();
 
-            input = input.replace("\"", "").trim();
+            input = cleanPath(input);
+
             File folder = new File(input).getAbsoluteFile();
 
             if (!folder.exists() || !folder.isDirectory()) {
@@ -42,30 +46,78 @@ public class FolderExporter {
             System.out.print(YELLOW + "⚙️ Dump all at once or step-by-step? (a/s): " + RESET);
             stepByStep = reader.readLine().trim().equalsIgnoreCase("s");
 
-            // Count total files for progress bar
+            // Count total files
             totalFiles = countFiles(folder);
             System.out.println(CYAN + "📊 Total files to process: " + totalFiles + RESET);
 
-            // Output file
-            String timestamp = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss").format(new Date());
-            String desktopPath = System.getProperty("user.home") + File.separator + "Desktop";
-            File outputFile = new File(desktopPath, folder.getName() + "-" + timestamp + ".txt");
+            // Ask the user where to store the result
+            System.out.print(CYAN + "📁 Enter path to save the output file: " + RESET);
+            String outputPath = cleanPath(reader.readLine());
 
-            PrintWriter writer = new PrintWriter(new FileWriter(outputFile));
-            writer.println("📁 Folder Structure Export");
-            writer.println("------------------------------------------------------");
+            File directory = new File(outputPath);
+            if (!directory.exists() || !directory.isDirectory()) {
+                System.out.println(RED + "❌ Invalid directory: " + outputPath + RESET);
+                return;
+            }
 
-            writeFolder(folder, writer, 0);
+            // Generate file without timestamp
+            File outputFile = new File(directory, folder.getName() + ".txt");
 
-            writer.close();
+            try (PrintWriter writer = new PrintWriter(new FileWriter(outputFile))) {
+                writer.println("📁 Folder Structure Export");
+                writer.println("------------------------------------------------------");
+                
+                writeFolder(folder, writer, 0);
+            }
             System.out.println(GREEN + "\n✅ Done! Output written to " + outputFile.getAbsolutePath() + RESET);
 
-        } catch (Exception e) {
+        } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    // Count total files for progress tracking
+    // OS Selection
+    private static void selectOS() throws IOException {
+        System.out.println(MAGENTA + """
+                Select your operating system:
+                [1] Windows
+                [2] Linux (Arch, Ubuntu, etc.)
+                """ + RESET);
+
+        System.out.print(YELLOW + "👉 Your choice: " + RESET);
+        String choice = reader.readLine().trim();
+
+        switch (choice) {
+            case "1" -> {
+                selectedOS = "windows";
+                System.out.println(GREEN + "✔ Windows selected." + RESET);
+            }
+            case "2" -> {
+                selectedOS = "linux";
+                System.out.println(GREEN + "✔ Linux selected." + RESET);
+            }
+            default -> {
+                System.out.println(RED + "Invalid. Defaulting to Linux." + RESET);
+                selectedOS = "linux";
+            }
+        }
+    }
+
+    // OS-aware cleanup
+    private static String cleanPath(String path) {
+        path = path.trim();
+
+        // Remove quotes around drag-and-drop paths
+        path = path.replace("\"", "");
+
+        if (selectedOS.equals("linux")) {
+            return path.replace("\\ ", " "); // Clean escaped spaces
+        }
+
+        return path;
+    }
+
+    // Count total files
     private static int countFiles(File folder) {
         int count = 0;
         File[] files = folder.listFiles();
@@ -116,7 +168,7 @@ public class FolderExporter {
         }
     }
 
-    // Step-by-step menu
+    // Step-by-step interaction
     private static void handleStepInteraction(PrintWriter writer, File[] files, int currentIndex, String indent) throws IOException {
         System.out.println(GREEN + "\n✅ Wrote: " + files[currentIndex].getName() + RESET);
         if (currentIndex + 1 < files.length) {
@@ -141,9 +193,6 @@ public class FolderExporter {
             case "1" -> {
                 writer.println(indent + "  ⚠️ Skipped: " + files[currentIndex + 1].getName());
                 System.out.println(YELLOW + "⏭️ Skipping " + files[currentIndex + 1].getName() + RESET);
-                if (currentIndex + 2 < files.length) {
-                    System.out.println(CYAN + "➡️ Next file after skip: " + files[currentIndex + 2].getName() + RESET);
-                }
             }
             case "2" -> {
                 System.out.println(GREEN + "🚀 Continuing automatically till end..." + RESET);
@@ -160,7 +209,7 @@ public class FolderExporter {
 
     // Progress bar display
     private static void printProgressBar(int current, int total) {
-        int width = 30; // bar length
+        int width = 30;
         double progress = (double) current / total;
         int filled = (int) (progress * width);
 

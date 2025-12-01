@@ -1,10 +1,10 @@
-# ai_core/agent.py - UNIFIED AGENT (NEURAL-ENABLED)
+# ai_core/agent.py - UNIFIED AGENT (NEURAL-ENABLED) - LANGUAGE FIXED
 """
 Unified NPC Agent implementation with integrated neural stack:
 - World Model (Dreamer-style)
-- Transformer Language Model (GPT-style, nontraditional multimodal wrapper)
+- Transformer Language Learning (TRUE learning, not chatbot wrapper)
 - Personality, Emotion, Memory, Cognitive Planning
-- Full BrainCapsule persistence (world_model + transformer_lm)
+- Full BrainCapsule persistence
 """
 import torch
 import numpy as np
@@ -21,10 +21,6 @@ from ai_core.brain_core import BrainCore
 from ai_core.planner import CognitivePlanner
 from ai_core.config_loader import get_section, get_device
 
-
-# New import for LM integration
-from ai_core.transformer_lm import TransformerLM
-
 log = logging.getLogger("agent")
 
 
@@ -34,9 +30,9 @@ class NPCAgent:
     - Personality (including gender)
     - Emotions
     - Memory
-    - AI brain
+    - AI brain with TRUE transformer language learning
     - Client process info (if spawned)
-    - Neural stack (WorldModel + TransformerLM)
+    - Neural stack (WorldModel + optional extensions)
     """
 
     def __init__(self,
@@ -79,13 +75,21 @@ class NPCAgent:
         self.world_model = None
         self.world_model_trainer = None
         self.world_model_buffer = None
-        self.lm: Optional[TransformerLM] = None
         self._neural_integrated = False
 
         # Metadata for children/breeding
         self.metadata = {}
 
+        # Initialize TRUE transformer-based language learning
+        self._init_language()
+
         log.info(f"NPCAgent initialized: {agent_id} (gender: {gender})")
+
+    def _init_language(self):
+        """Initialize transformer-based language learning (not chatbot)"""
+        from ai_core.brain_language import add_language_to_brain
+        add_language_to_brain(self.brain)
+        log.info(f"[{self.agent_id}] Transformer language learning initialized")
 
     # ================================================================
     # =============== CORE INITIALIZATION METHODS ====================
@@ -118,11 +122,10 @@ class NPCAgent:
     # ==================== NEURAL STACK INTEGRATION ==================
     # ================================================================
 
-    def integrate_neural_stack(self, lm_config: Optional[dict] = None, force: bool = False):
+    def integrate_neural_stack(self, force: bool = False):
         """
-        Attach world_model + transformer LM to this NPCAgent instance lazily.
-        - lm_config: dict passed to TransformerLM(...) constructor.
-        - force=True reinitializes even if already integrated.
+        Attach world_model to this NPCAgent instance lazily.
+        Language is already integrated in __init__ via brain_language.py
         """
         if self._neural_integrated and not force:
             return
@@ -145,52 +148,8 @@ class NPCAgent:
         except Exception as e:
             log.exception(f"[{self.agent_id}] Failed to attach world_model: {e}")
 
-        # ----------------- LANGUAGE MODEL --------------
-        try:
-            if self.lm is None or force:
-                # Load LM config from global config.yml if not provided
-                lm_cfg = get_section("language_model", {})
-                if lm_config:
-                    lm_cfg.update(lm_config)  # runtime overrides
-                lm_cfg["device"] = get_device()
-
-                self.lm = TransformerLM(**lm_cfg)
-
-
-                # attach LM-based functions to brain
-                if hasattr(self, "brain") and self.brain:
-                    def generate_text(prompt, memory=None, world_model=None, **kwargs):
-                        return self.lm.generate(prompt,
-                                                memory=memory,
-                                                world_model=world_model or self.world_model,
-                                                **kwargs)
-
-                    def summarize_memory(max_tokens=128):
-                        mem = getattr(self, "brain", None) and getattr(self.brain, "memory", None)
-                        if not mem:
-                            return ""
-                        last = list(mem)[-16:]
-                        prompt = "Summarize the following memories briefly:\n\n" + "\n".join(last)
-                        return generate_text(prompt, memory=None, max_new_tokens=max_tokens)
-
-                    def fine_tune_on_texts(texts, output_dir, **kwargs):
-                        return self.lm.fine_tune_on_texts(texts, output_dir, **kwargs)
-
-                    def score_text(text, context=None):
-                        return self.lm.score(text, context=context)
-
-                    # attach to brain
-                    self.brain.generate_text = generate_text
-                    self.brain.summarize_memory = summarize_memory
-                    self.brain.fine_tune_lm = fine_tune_on_texts
-                    self.brain.score_text = score_text
-
-                    log.info(f"[{self.agent_id}] TransformerLM attached.")
-        except Exception as e:
-            log.exception(f"[{self.agent_id}] Failed to attach TransformerLM: {e}")
-
         self._neural_integrated = True
-        log.info(f"[{self.agent_id}] Neural stack integrated (WorldModel + LM).")
+        log.info(f"[{self.agent_id}] Neural stack integrated (WorldModel).")
 
     # ================================================================
     # ===================== PERCEPTION & ACTION ======================
@@ -249,7 +208,7 @@ class NPCAgent:
         return obs_array
 
     def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
-        """Make decision based on observation (11,)"""
+        """Make decision based on observation"""
         if self.policy is None:
             action = np.random.randn(11) * 0.3
             return np.clip(action, -1.0, 1.0)
@@ -347,6 +306,10 @@ class NPCAgent:
             'dominant_emotion': self.emotion.dominant_emotion()
         }
 
+        # Add language progress
+        if hasattr(self.brain, 'language'):
+            info['language'] = self.brain.get_language_progress()
+
         if self.client_process:
             info['backend_url'] = self.client_process.backend_url
             info['server'] = self.client_process.server_addr
@@ -357,36 +320,18 @@ class NPCAgent:
         return info
 
     # ================================================================
-    # ========================== SAVE ================================
+    # ========================== SAVE/LOAD ===========================
     # ================================================================
 
     def save(self, path: str):
-        """Save agent state with neural components and language persistence"""
+        """Save agent state with neural components and TRUE transformer language"""
         from ai_core.brain_capsule import BrainCapsule
         import time
 
-        # Prepare language state
+        # Get TRUE transformer language state (not old hardcoded system)
         language_state = None
-        if hasattr(self.brain, 'language') and self.brain.language:
-            language_state = {
-                'language_stage': self.brain.language.language_stage,
-                'vocabulary_size': self.brain.language.vocabulary_size,
-                'language_experience_count': self.brain.language.language_experience_count,
-                'word_frequencies': dict(self.brain.language.word_frequencies),
-                'word_to_concept': {
-                    word: [concept.tolist() for concept in concepts]
-                    for word, concepts in self.brain.language.word_to_concept.items()
-                },
-                'sentence_patterns': [
-                    pattern for pattern in self.brain.language.sentence_patterns
-                ],
-                'invented_symbols': {
-                    symbol: concept.tolist()
-                    for symbol, concept in self.brain.language.invented_symbols.items()
-                },
-                'symbol_counter': self.brain.language.symbol_counter,
-                'pattern_count': len(self.brain.language.sentence_patterns)
-            }
+        if hasattr(self.brain, 'language'):
+            language_state = self.brain.language.state_dict()
 
         capsule = BrainCapsule(
             metadata={
@@ -419,8 +364,6 @@ class NPCAgent:
                     extra_model_state['world_model'] = self.world_model.export_to_braincapsule_dict()
                 else:
                     extra_model_state['world_model'] = {"repr": repr(self.world_model)}
-            if getattr(self, "lm", None) is not None:
-                extra_model_state['transformer_lm'] = self.lm.state_dict()
         except Exception as e:
             log.exception(f"[{self.agent_id}] Error serializing neural stack: {e}")
 
@@ -435,14 +378,9 @@ class NPCAgent:
         capsule.save(path)
         log.info(f"[{self.agent_id}] Saved to {path}")
 
-    # ================================================================
-    # =========================== LOAD ===============================
-    # ================================================================
-
     def load(self, path: str):
-        """Load agent state with neural components"""
+        """Load agent state with neural components and TRUE transformer language"""
         from ai_core.brain_capsule import BrainCapsule
-        import numpy as np
 
         capsule = BrainCapsule.load(path)
 
@@ -459,32 +397,17 @@ class NPCAgent:
             for event in capsule.memory_snapshot:
                 self.memory.remember(event)
 
-        # Restore language state
+        # Restore TRUE transformer language state
         if capsule.language_state:
-            from ai_core.brain_language import add_language_to_brain
-            if not hasattr(self.brain, 'language'):
-                add_language_to_brain(self.brain)
-            lang = self.brain.language
-            lang.language_stage = capsule.language_state.get('language_stage', 0)
-            lang.vocabulary_size = capsule.language_state.get('vocabulary_size', 0)
-            lang.language_experience_count = capsule.language_state.get('language_experience_count', 0)
-            lang.symbol_counter = capsule.language_state.get('symbol_counter', 0)
-            for word, freq in capsule.language_state.get('word_frequencies', {}).items():
-                lang.word_frequencies[word] = freq
-            for word, concept_lists in capsule.language_state.get('word_to_concept', {}).items():
-                lang.word_to_concept[word] = [
-                    np.array(concept, dtype=np.float32) for concept in concept_lists
-                ]
-            lang.sentence_patterns = list(capsule.language_state.get('sentence_patterns', []))
-            for symbol, concept_list in capsule.language_state.get('invented_symbols', {}).items():
-                lang.invented_symbols[symbol] = np.array(concept_list, dtype=np.float32)
-            log.info(f"[{self.agent_id}] Language restored.")
+            if hasattr(self.brain, 'language'):
+                self.brain.language.load_state_dict(capsule.language_state)
+                log.info(f"[{self.agent_id}] Transformer language restored.")
 
         # Restore model weights
         if capsule.model_state and self.policy:
             self.policy.load_state_dict(capsule.model_state)
 
-        # Restore neural stack (world_model + LM)
+        # Restore neural stack (world_model)
         try:
             saved_state = getattr(capsule, "model_state", {}) or {}
             if 'world_model' in saved_state:
@@ -497,15 +420,6 @@ class NPCAgent:
                     self.world_model = wm_module.WorldModel(agent_id=self.agent_id)
                     if hasattr(self.world_model, "load_state_dict"):
                         self.world_model.load_state_dict(wm_state)
-            if 'transformer_lm' in saved_state:
-                lm_state = saved_state['transformer_lm']
-                model_name = lm_state.get("meta", {}).get("model_name_or_path", "gpt2")
-                self.lm = TransformerLM(model_name_or_path=model_name,
-                                        device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-                try:
-                    self.lm.load_state_dict(lm_state)
-                except Exception:
-                    self.lm = TransformerLM.create_from_braincapsule_dict(lm_state)
         except Exception as e:
             log.exception(f"[{self.agent_id}] Failed to restore neural stack: {e}")
 

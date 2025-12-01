@@ -1,0 +1,100 @@
+
+.app-layout {
+  display: flex;
+  height: 100vh;
+  font-family: sans-serif;
+}
+
+/* Chat side */
+.chat-container {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  border-right: 2px solid #ccc;
+}
+
+.chat-header {
+  background: #20232a;
+  color: white;
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chat-window {
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+  background: #f4f4f4;
+}
+
+.msg {
+  margin: 5px 0;
+  padding: 5px 10px;
+  border-radius: 6px;
+}
+
+.msg.user {
+  background: #d1ffd1;
+  align-self: flex-end;
+}
+
+.msg.agent {
+  background: #d1e0ff;
+  align-self: flex-start;
+}
+
+.msg.system {
+  background: #ffe1d1;
+  text-align: center;
+}
+
+.chat-footer {
+  padding: 10px;
+  display: flex;
+  gap: 5px;
+  background: #ddd;
+}
+
+.brain-indicator.chat {
+  background: green;
+  color: white;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.brain-indicator.controller {
+  background: red;
+  color: white;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+/* Thoughts side */
+.thoughts-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #fafafa;
+}
+
+.thoughts-header {
+  background: #444;
+  color: white;
+  padding: 10px;
+}
+
+.thoughts-window {
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.thought {
+  background: #e9e9ff;
+  margin: 5px 0;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-style: italic;
+}

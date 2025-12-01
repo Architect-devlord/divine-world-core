@@ -1,0 +1,72 @@
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'maven-publish'
+    id 'net.minecraftforge.gradle' version '[6.0.24,6.2)'         // ForgeGradle
+    id 'org.parchmentmc.librarian.forgegradle' version '1.+'
+}
+
+group = 'com.divineworld.client'
+version = '1.0.0'
+base {
+    archivesName = 'dwclientbot'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.minecraftforge.net/' }
+}
+
+dependencies {
+    // Forge + mappings
+    minecraft "net.minecraftforge:forge:1.21.8-58.1.6"
+
+    // Extra libraries
+    implementation "com.google.code.gson:gson:2.10.1"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    implementation "org.java-websocket:Java-WebSocket:1.5.7"
+}
+
+minecraft {
+    // Use the latest available parchment release for 1.21.8
+    mappings channel: 'parchment', version: '2025.09.14-1.21.8'
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.console.level', 'info'
+        }
+        server {
+            workingDirectory project.file('run-server')
+            property 'forge.logging.console.level', 'info'
+            args '--nogui'
+        }
+        data {
+            workingDirectory project.file('run-data')
+            args '--mod', archivesBaseName, '--all',
+                    '--output', file('src/generated/resources/'),
+                    '--existing', file('src/main/resources/')
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+jar {
+    manifest {
+        attributes(
+                'Specification-Title': 'DWClientBot',
+                'Specification-Version': project.version,
+                'Implementation-Title': project.name,
+                'Implementation-Version': project.version
+        )
+    }
+}

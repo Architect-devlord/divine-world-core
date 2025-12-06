@@ -1,6 +1,7 @@
-# py_backend/main.py - PRODUCTION VERSION v2.1.0
+# py_backend/main.py 
+## there is an admin endpoint to list queued files and processing status.
 """
-Production-ready Divine World Backend with:
+Divine World Backend with:
 - Binary WebSocket protocol for video/images
 - Multi-agent port allocation
 - Pattern recognition integration
@@ -13,6 +14,7 @@ Production-ready Divine World Backend with:
 import time
 import asyncio
 import sys
+import os
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, Request, HTTPException, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +49,14 @@ from communication_protocol import (
     ActionFrame
 )
 from utils.validation import ChatRequest, FileUploadRequest
+
+# Optional S3/MinIO support
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+    S3_AVAILABLE = True
+except Exception:
+    S3_AVAILABLE = False
 
 log = logging.getLogger("dw_backend")
 logging.basicConfig(
@@ -110,6 +120,18 @@ class EnhancedAgentManager:
             # Create agent
             agent = NPCAgent(agent_id)
             agent.mode = 'chat'
+            # Attach unified memory (Scylla-backed if available)
+            try:
+                from ai_core.unified_memory import UnifiedMemoryStore
+                agent.memory = UnifiedMemoryStore(
+                    agent_id=agent_id,
+                    capacity=10000,
+                    use_scylla=True,
+                    scylla_hosts=['127.0.0.1']
+                )
+                log.info(f"✅ UnifiedMemory attached for {agent_id}")
+            except Exception as e:
+                log.debug(f"UnifiedMemory not available: {e}")
             
             # CRITICAL FIX: Ensure language capabilities are initialized
             if not hasattr(agent.brain, 'language') or agent.brain.language is None:
@@ -166,6 +188,30 @@ class EnhancedAgentManager:
 
 
 agent_manager = EnhancedAgentManager()
+
+# Initialize S3/MinIO client if available
+s3_client = None
+if S3_AVAILABLE:
+    try:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=Config.MINIO_ENDPOINT,
+            aws_access_key_id=Config.MINIO_ACCESS_KEY,
+            aws_secret_access_key=Config.MINIO_SECRET_KEY,
+            region_name=os.getenv('AWS_REGION', 'us-east-1')
+        )
+        # Ensure bucket exists
+        try:
+            s3_client.head_bucket(Bucket=Config.MINIO_BUCKET)
+        except ClientError:
+            try:
+                s3_client.create_bucket(Bucket=Config.MINIO_BUCKET)
+            except Exception as e:
+                log.warning(f"Could not create bucket {Config.MINIO_BUCKET}: {e}")
+    except Exception as e:
+        log.warning(f"S3 client initialization failed: {e}")
+        s3_client = None
+
 
 # ==================== BINARY WEBSOCKET ENDPOINT ====================
 
@@ -371,14 +417,14 @@ async def handle_chat(chat_request: ChatRequest):
 # ==================== FILE UPLOAD ENDPOINT ====================
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...), agent_id: str = "demo"):
-    """Handle file uploads with validation"""
+async def upload_file(file: UploadFile = File(...), agent_id: str = "demo", filetype: str = None, sync: bool = False):
+    """Handle file uploads with validation and cognitive loop integration"""
     try:
         # Validate using Pydantic
         file_request = FileUploadRequest(
             filename=file.filename,
             agent_id=agent_id,
-            filetype=file.content_type or "application/octet-stream"
+            filetype=filetype or file.content_type or "application/octet-stream"
         )
         
         upload_dir = Config.get_agent_upload_dir(file_request.agent_id)
@@ -393,26 +439,112 @@ async def upload_file(file: UploadFile = File(...), agent_id: str = "demo"):
                 detail=f"File too large (max {Config.MAX_UPLOAD_SIZE_MB}MB)"
             )
         
-        with open(file_path, "wb") as f:
-            f.write(content)
-        
-        log.info(f"[Upload] Saved {file_request.filename} for {agent_id} ({len(content)} bytes)")
-        
-        agent = agent_manager.get_or_create_demo_agent(agent_id)
-        
-        # Use brain's language intelligence to learn from file
-        summary = agent.brain.learn_from_file(str(file_path), file_request.filetype)
-        
+        # Schedule background processing: write to disk, upload to S3 (optional), record memory, and queue for cognitive loop
+        async def _background_handle_upload(agent_id_inner, file_request_inner, content_inner, file_path_inner, sync_inner):
+            try:
+                agent_inner = agent_manager.get_or_create_demo_agent(agent_id_inner)
+
+                # Ensure upload directory exists
+                Path(file_path_inner).parent.mkdir(parents=True, exist_ok=True)
+
+                # Write file to disk in thread to avoid blocking event loop
+                try:
+                    await asyncio.to_thread(lambda: open(file_path_inner, 'wb').write(content_inner))
+                    log.info(f"[Upload][BG] Saved {file_request_inner.filename} for {agent_id_inner} ({len(content_inner)} bytes)")
+                except Exception as e:
+                    log.error(f"[Upload][BG] Failed to write file {file_path_inner}: {e}")
+
+                # Upload to S3/MinIO if available
+                s3_url_inner = None
+                if s3_client:
+                    try:
+                        key = f"uploads/{agent_id_inner}/{file_request_inner.filename}"
+                        s3_client.put_object(Bucket=Config.MINIO_BUCKET, Key=key, Body=content_inner)
+                        s3_url_inner = f"{Config.MINIO_ENDPOINT.rstrip('/')}/{Config.MINIO_BUCKET}/{key}"
+                        log.info(f"[Upload][BG] Uploaded {file_request_inner.filename} to object storage: {s3_url_inner}")
+                    except Exception as e:
+                        log.warning(f"[Upload][BG] S3 upload failed for {file_request_inner.filename}: {e}")
+
+                # Record upload in memory
+                try:
+                    agent_inner.memory.remember({
+                        'type': 'file_uploaded',
+                        'filename': file_request_inner.filename,
+                        'path': str(file_path_inner),
+                        'filetype': file_request_inner.filetype,
+                        'size': len(content_inner),
+                        'timestamp': time.time(),
+                        'agent_id': agent_id_inner,
+                        's3_url': s3_url_inner
+                    })
+                except Exception:
+                    log.debug("[Upload][BG] Agent memory not available to record upload")
+
+                file_meta_inner = {
+                    'path': str(file_path_inner),
+                    'filename': file_request_inner.filename,
+                    'filetype': file_request_inner.filetype,
+                    'size': len(content_inner),
+                    'timestamp': time.time(),
+                    's3_url': s3_url_inner
+                }
+
+                # If client did not request sync processing, queue for cognitive loop
+                if not sync_inner:
+                    try:
+                        if not hasattr(agent_inner, 'cognitive_loop') or agent_inner.cognitive_loop is None:
+                            if hasattr(agent_inner, '_init_cognitive_loop'):
+                                agent_inner._init_cognitive_loop()
+
+                        if hasattr(agent_inner, 'cognitive_loop') and agent_inner.cognitive_loop:
+                            agent_inner.cognitive_loop.receive_file(file_meta_inner)
+                            log.info(f"[Upload][BG] Queued {file_request_inner.filename} for cognitive processing")
+
+                            if not getattr(agent_inner.cognitive_loop, 'running', False):
+                                if hasattr(agent_inner, 'start_autonomous_mode'):
+                                    try:
+                                        await agent_inner.start_autonomous_mode()
+                                    except Exception as e:
+                                        log.debug(f"[Upload][BG] Failed to start cognitive loop for {agent_id_inner}: {e}")
+                    except Exception as e:
+                        log.error(f"[Upload][BG] Failed to queue file for cognitive loop: {e}")
+                else:
+                    # If sync requested, perform learning in a thread so even learning doesn't block the request-response cycle
+                    try:
+                        if hasattr(agent_inner.brain, 'learn_from_file'):
+                            summary_inner = await asyncio.to_thread(agent_inner.brain.learn_from_file, str(file_path_inner), file_request_inner.filetype)
+                            try:
+                                agent_inner.memory.remember({
+                                    'type': 'file_processed',
+                                    'filename': file_request_inner.filename,
+                                    'path': str(file_path_inner),
+                                    'filetype': file_request_inner.filetype,
+                                    'size': len(content_inner),
+                                    'timestamp': time.time(),
+                                    'agent_id': agent_id_inner,
+                                    'summary': summary_inner,
+                                    's3_url': s3_url_inner
+                                })
+                            except Exception:
+                                log.debug("[Upload][BG] Failed to record file_processed in agent memory")
+                    except Exception as e:
+                        log.debug(f"[Upload][BG] Synchronous (background) learn_from_file failed: {e}")
+
+            except Exception as e:
+                log.error(f"[Upload][BG] Unexpected error handling upload: {e}", exc_info=True)
+
+        # Schedule the background task and return immediately
+        try:
+            asyncio.create_task(_background_handle_upload(agent_id, file_request, content, str(file_path), sync))
+        except Exception as e:
+            log.error(f"Failed to schedule background upload task: {e}")
+
         return {
-            "status": "success",
+            "status": "accepted",
+            "message": "Upload scheduled for background processing",
             "filename": file_request.filename,
             "path": str(file_path),
-            "size": len(content),
-            "summary": summary,
-            "language_progress": {
-                "stage": agent.brain.language.language_stage,
-                "vocabulary": agent.brain.language.vocabulary_size
-            }
+            "size": len(content)
         }
         
     except Exception as e:
@@ -586,6 +718,38 @@ async def health_check_detailed():
         checks["status"] = "degraded"
     
     return checks
+
+
+# ==================== ADMIN: QUEUED FILES ====================
+@app.get("/admin/files")
+async def list_queued_files():
+    """Return queued files and processing status across demo agents"""
+    data = {}
+    for agent_id, agent in agent_manager.demo_agents.items():
+        try:
+            qlen = 0
+            peek = []
+            if hasattr(agent, 'cognitive_loop') and agent.cognitive_loop:
+                qlen = len(agent.cognitive_loop.file_buffer)
+                peek = list(agent.cognitive_loop.file_buffer)[:10]
+            # Also check memory for file_uploaded events
+            recent = []
+            try:
+                recent = agent.memory.recall(10)
+            except Exception:
+                recent = []
+
+            uploads = [e for e in recent if e.get('type') == 'file_uploaded']
+
+            data[agent_id] = {
+                'queue_length': qlen,
+                'queue_peek': peek,
+                'recent_uploads': uploads
+            }
+        except Exception as e:
+            data[agent_id] = {'error': str(e)}
+
+    return {'agents': data}
 
 # ==================== CONTINUAL LEARNING ENDPOINTS ====================
 

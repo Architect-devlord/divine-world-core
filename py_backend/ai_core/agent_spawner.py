@@ -3,7 +3,7 @@
 Centralized agent spawning system - FIXED VERSION
 Handles all spawning logic for NPCs and God-tier entities.
 Each spawned agent is completely independent and standalone.
-Supports operation without Minecraft client (chat/learning mode only).
+Should support operation without Minecraft client (chat/learning mode only).
 """
 import subprocess
 import socket

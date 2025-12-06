@@ -1,4 +1,4 @@
-# ai_core/world_model.py - NEURAL WORLD MODEL FOR AGI
+# ai_core/world_model.py - NEURAL WORLD MODEL FOR THE DW_AGENT
 """
 Transformer-based World Model for Divine World AGI
 ====================================================

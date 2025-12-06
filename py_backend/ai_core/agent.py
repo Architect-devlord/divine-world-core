@@ -26,11 +26,11 @@ log = logging.getLogger("agent")
 
 class NPCAgent:
     """
-    Unified NPC agent with:
+    NPC agent with:
     - Personality (including gender)
     - Emotions
     - Memory
-    - AI brain with TRUE transformer language learning
+    - AI brain with transformer language learning
     - Client process info (if spawned)
     - Neural stack (WorldModel + optional extensions)
     """

@@ -1,5 +1,5 @@
 # ------------------------------------------------------------------------------
-# ai_core/actuators.py - Action execution (no deps on agent)
+# ai_core/actuators.py - Action execution 
 # ------------------------------------------------------------------------------
 import socket
 import threading

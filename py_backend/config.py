@@ -140,6 +140,12 @@ class Config:
         upload_dir = cls.UPLOADS_DIR / agent_id
         upload_dir.mkdir(parents=True, exist_ok=True)
         return upload_dir
+
+    # ==================== OBJECT STORAGE (MINIO/S3) ====================
+    MINIO_ENDPOINT = os.getenv('DW_MINIO_ENDPOINT', 'http://127.0.0.1:9000')
+    MINIO_ACCESS_KEY = os.getenv('DW_MINIO_ACCESS_KEY', 'minioadmin')
+    MINIO_SECRET_KEY = os.getenv('DW_MINIO_SECRET_KEY', 'minioadmin')
+    MINIO_BUCKET = os.getenv('DW_MINIO_BUCKET', 'divine-world')
     
     @classmethod
     def get_package_dir(cls, agent_id: str) -> Path:

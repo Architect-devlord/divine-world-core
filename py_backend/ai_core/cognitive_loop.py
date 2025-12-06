@@ -49,6 +49,7 @@ class CognitiveLoop:
         self.audio_buffer = deque(maxlen=5)
         self.state_buffer = deque(maxlen=20)
         self.event_buffer = deque(maxlen=50)
+        self.file_buffer = deque(maxlen=20)  # Files to process
         
         # Cognitive state
         self.state = CognitiveState()
@@ -240,7 +241,7 @@ class CognitiveLoop:
         }
         
         # === Quick Check: Is anything interesting? ===
-        if perception['novelty'] < self.think_threshold and perception['urgency'] < 0.5:
+        if perception['novelty'] < self.think_threshold and perception['urgency'] < 0.5 and not self.file_buffer:
             # Nothing significant, light processing only
             return thoughts
         
@@ -288,6 +289,36 @@ class CognitiveLoop:
         
         # === Pattern Analysis ===
         thoughts['patterns'] = self.agent.brain.get_pattern_summary()
+        
+        # === File Processing ===
+        # If nothing queued explicitly, look for recent uploaded files in memory
+        if not self.file_buffer:
+            try:
+                recent_events = []
+                if hasattr(self.agent, 'memory') and hasattr(self.agent.memory, 'recall'):
+                    recent_events = self.agent.memory.recall(50)
+                for ev in reversed(recent_events):
+                    if ev.get('type') == 'file_uploaded':
+                        fn = ev.get('filename')
+                        # Skip if already processed
+                        already = any((e.get('type') == 'file_processed' and e.get('filename') == fn) for e in recent_events)
+                        if not already:
+                            self.file_buffer.append({
+                                'path': ev.get('path'),
+                                'filename': fn,
+                                'filetype': ev.get('filetype'),
+                                'size': ev.get('size'),
+                                'timestamp': ev.get('timestamp')
+                            })
+                            log.info(f"[Thinking] Queued uploaded file from memory: {fn}")
+                            break
+            except Exception:
+                pass
+
+        if self.file_buffer:
+            file_info = self.file_buffer[0]  # Peek at oldest file
+            thoughts['file_to_process'] = file_info
+            log.info(f"[Thinking] File available for processing: {file_info['filename']}")
         
         # === Language Activation ===
         if hasattr(self.agent.brain, 'language') and self.agent.brain.language:
@@ -471,6 +502,46 @@ class CognitiveLoop:
     
     async def _act(self, decision: Dict[str, Any], perception: Dict[str, Any]):
         """Execute the decided action"""
+        # If there are files queued, prioritize processing one file now
+        if self.file_buffer:
+            file_info = self.file_buffer.popleft()
+            try:
+                # Run potentially blocking file learning in a thread
+                if hasattr(self.agent.brain, 'learn_from_file'):
+                    summary = await asyncio.to_thread(
+                        self.agent.brain.learn_from_file,
+                        file_info['path'],
+                        file_info.get('filetype')
+                    )
+                    log.info(f"[CognitiveLoop] Processed file {file_info['filename']}: {str(summary)[:120]}")
+                    # Remember the file processing event in memory
+                    self.agent.memory.remember({
+                        'type': 'file_processed',
+                        'filename': file_info['filename'],
+                        'path': file_info['path'],
+                        'filetype': file_info.get('filetype'),
+                        'summary': summary,
+                        'timestamp': time.time()
+                    })
+                    try:
+                        from unified_chat_system import chat_system
+                        await chat_system.send_message(
+                            self.agent.agent_id,
+                            f"Processed file: {file_info['filename']}\nSummary: {summary}",
+                            target='both',
+                            sender='agent'
+                        )
+                    except Exception:
+                        # It's optional to notify frontend
+                        pass
+            except Exception as e:
+                log.error(f"[CognitiveLoop] Error processing file {file_info.get('filename')}: {e}")
+                # If processing failed, don't drop it silently — keep a short retry window
+                # push back to buffer for a later attempt
+                self.file_buffer.append(file_info)
+                await asyncio.sleep(0.5)
+            # After processing a file, return early to avoid doing other actions this cycle
+            return
         
         if decision['type'] == 'speak':
             await self._execute_speech(perception)
@@ -681,6 +752,11 @@ class CognitiveLoop:
     def receive_event(self, event: Dict[str, Any]):
         """Receive custom event"""
         self.event_buffer.append(event)
+    
+    def receive_file(self, file_info: Dict[str, Any]):
+        """Receive file for cognitive processing (from upload endpoint)"""
+        self.file_buffer.append(file_info)
+        log.info(f"[CognitiveLoop] File queued for processing: {file_info['filename']}")
     
     # ==================== STATUS ====================
     

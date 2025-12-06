@@ -1,0 +1,28 @@
+version: '3.8'
+services:
+  scylla:
+    image: scylladb/scylla:5.3.5
+    container_name: divine_scylla
+    ports:
+      - "9042:9042"
+      - "9180:9180"
+    volumes:
+      - scylla-data:/var/lib/scylla
+    command: ["--smp", "1", "--memory", "1G"]
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-01T00-00-00Z
+    container_name: divine_minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - minio-data:/data
+
+volumes:
+  scylla-data:
+  minio-data:

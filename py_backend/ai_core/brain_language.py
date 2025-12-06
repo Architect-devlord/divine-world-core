@@ -1,6 +1,6 @@
-# ai_core/brain_language.py - TRUE TRANSFORMER-BASED LANGUAGE LEARNING
+# ai_core/brain_language.pY TRANSFORMER-BASED LANGUAGE LEARNING
 """
-Brain Language Extension - Real Transformer-based Language Intelligence
+Brain Language Extension - Transformer-based Language Intelligence
 ------------------------------------------------------------------------
 Uses transformer architecture for:
 - Multimodal understanding (vision + language grounding)
@@ -666,9 +666,4 @@ def add_language_to_brain(brain_instance):
     
     log.info("Language capabilities added to BrainCore")
 
-
-# ============================================================================
-# REMOVE transformer_lm.py - IT'S DEPRECATED
-# ============================================================================
-# transformer_lm.py was a chatbot wrapper - DELETE IT
-# This file (brain_language.py) is the TRUE transformer-based learning system
+# This file (brain_language.py) is the transformer-based learning system

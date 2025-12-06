@@ -1,0 +1,24 @@
+modLoader="javafml"
+loaderVersion="[58,)"
+license="MIT"
+
+[[mods]]
+modId="divineworld"
+version="1.0.0"
+displayName="DivineWorld"
+description='Divine World - AI NPC integration for Minecraft'
+authors="Devlord the Architect"
+
+[[dependencies.divineworld]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.21.8,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.divineworld]]
+    modId="forge"
+    mandatory=true
+    versionRange="[58,)"
+    ordering="NONE"
+    side="BOTH"

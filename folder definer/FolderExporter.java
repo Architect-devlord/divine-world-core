@@ -1,4 +1,7 @@
 import java.io.*;
+import java.util.HashSet;
+import java.util.Set;
+
 
 public class FolderExporter {
     // ANSI colors
@@ -14,6 +17,8 @@ public class FolderExporter {
     private static boolean includeContents = false;
     private static boolean stepByStep = false;
     private static boolean autoContinue = false;
+
+    private static final Set<String> skipNames = new HashSet<>();
 
     private static final BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
 
@@ -138,10 +143,18 @@ public class FolderExporter {
 
         for (int i = 0; i < files.length; i++) {
             File f = files[i];
-            if (f.isDirectory()) {
-                System.out.println(BLUE + "📂 Folder: " + f.getName() + RESET);
-                writeFolder(f, writer, depth + 1);
+            // Skip by name
+        if (skipNames.contains(f.getName()) || skipNames.contains(folder.getName())) {
+            writer.println(indent + "  ⚠️ Skipped by name: " + f.getName());
+            System.out.println(YELLOW + "⏭️ Skipped (name match): " + f.getName() + RESET);
+            continue;
+        }
+
+        if (f.isDirectory()) {
+            System.out.println(BLUE + "📂 Folder: " + f.getName() + RESET);
+            writeFolder(f, writer, depth + 1);
             } else {
+
                 processedFiles++;
                 printProgressBar(processedFiles, totalFiles);
 
@@ -183,8 +196,10 @@ public class FolderExporter {
             [1] Skip next file
             [2] Write remaining without stopping
             [3] Continue step-by-step
-            [4] Exit
+            [4] Add skip-by-name rules
+            [5] Exit
             """ + RESET);
+
 
         System.out.print(YELLOW + "👉 Your choice: " + RESET);
         String choice = reader.readLine().trim();
@@ -200,29 +215,60 @@ public class FolderExporter {
             }
             case "3" -> System.out.println(CYAN + "🔁 Continuing step-by-step..." + RESET);
             case "4" -> {
+                collectSkipNames();  // <-- NEW FEATURE
+                System.out.println(GREEN + "✔ Skip rules added." + RESET);
+                }
+            case "5" -> {
                 System.out.println(RED + "👋 Exiting early." + RESET);
                 System.exit(0);
-            }
+                }
             default -> System.out.println(RED + "⚠️ Invalid input — continuing step-by-step by default." + RESET);
         }
     }
 
-    // Progress bar display
+    // Clean and stable progress bar (cross-platform)
     private static void printProgressBar(int current, int total) {
-        int width = 30;
+        int width = 40;
+
         double progress = (double) current / total;
         int filled = (int) (progress * width);
-
-        StringBuilder bar = new StringBuilder();
-        bar.append(BOLD).append("[");
-        for (int i = 0; i < width; i++) {
-            bar.append(i < filled ? "#" : "-");
-        }
-        bar.append("]").append(RESET);
-
         int percent = (int) (progress * 100);
-        System.out.print("\r" + CYAN + "Progress: " + bar + " " + percent + "% (" + current + "/" + total + ")" + RESET);
 
-        if (current == total) System.out.println();
+        String bar = "[" +
+                "#".repeat(filled) +
+                "-".repeat(width - filled) +
+                "]";
+
+        String output = String.format(
+                "\r%sProgress:%s %s %3d%% (%d/%d)%s",
+                CYAN, RESET, bar, percent, current, total, RESET
+        );
+
+        System.out.print(output);
+
+        if (current == total) {
+            System.out.println(); // move to next line at finish
+        }
+    }   
+
+    // Collect skip names from user
+    private static void collectSkipNames() throws IOException {
+    while (true) {
+        System.out.print(YELLOW + "Enter file/folder name to skip: " + RESET);
+        String name = reader.readLine().trim();
+
+        if (!name.isEmpty()) {
+            skipNames.add(name);
+            System.out.println(GREEN + "✔ Added to skip list: " + name + RESET);
+        }
+
+        System.out.print(YELLOW + "Add more? (y/n): " + RESET);
+        String more = reader.readLine().trim().toLowerCase();
+
+        if (!more.equals("y")) {
+            System.out.println(CYAN + "Skip list: " + skipNames + RESET);
+            break;
+        }
     }
+}
 }

@@ -1,4 +1,4 @@
-package com.divineworld.client.network;
+package com.divineworld.network;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.network.NetworkEvent;

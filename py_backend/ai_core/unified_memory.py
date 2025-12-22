@@ -1,109 +1,366 @@
-# ai_core/unified_memory.py - FIXED ARCHITECTURE
+# ai_core/unified_memory.py - UNIFIED MEMORY SYSTEM
 """
-Unified Memory System with ScyllaDB Backend
-Solves the memory fragmentation problem between agent and language
+Unified Memory System with Complete ScyllaDB Integration
+Replaces both memory.py and provides enhanced unified_memory functionality
 """
 
 import time
+import uuid
 import numpy as np
 import torch
-from typing import Dict, Any, List, Optional
-from collections import deque
 import logging
+from typing import Dict, Any, List, Optional, Tuple
+from collections import deque, defaultdict
 
-# Optional ScyllaDB integration
+# ScyllaDB/Cassandra imports
 try:
     from cassandra.cluster import Cluster
-    from cassandra.query import SimpleStatement
-    SCYLLA_AVAILABLE = True
+    from cassandra.query import SimpleStatement, BatchStatement, ConsistencyLevel
+    from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
+    CASSANDRA_AVAILABLE = True
 except ImportError:
-    SCYLLA_AVAILABLE = False
+    CASSANDRA_AVAILABLE = False
+    Cluster = None
+    SimpleStatement = None
 
 log = logging.getLogger("unified_memory")
 
 
-class UnifiedMemoryStore:
+class ScyllaMemoryBackend:
     """
-    Single source of truth for ALL agent memories.
-    Replaces fragmented memory systems with unified storage.
-    
-    Features:
-    - Tag-based retrieval (existing tag system)
-    - Semantic search via embeddings
-    - Temporal queries
-    - ScyllaDB backend for scale
+    High-performance ScyllaDB backend for agent memories.
+    Optimized for fast writes and retrieval with proper indexing.
     """
     
-    def __init__(self, agent_id: str, capacity: int = 10000, 
-                 use_scylla: bool = False, scylla_hosts: List[str] = None):
-        self.agent_id = agent_id
-        self.capacity = capacity
+    def __init__(self, contact_points: List[str] = None, port: int = 9042, 
+                 keyspace: str = 'divine_world_memories'):
+        if not CASSANDRA_AVAILABLE:
+            self.disabled = True
+            log.warning("ScyllaDB driver not available - using in-memory only")
+            return
         
-        # In-memory storage (fast access)
-        self.events: deque = deque(maxlen=capacity)
-        self.event_index = 0
+        self.disabled = False
+        self.keyspace = keyspace
+        contact_points = contact_points or ['127.0.0.1']
         
-        # Tag index for fast retrieval
-        self.tag_index: Dict[str, List[int]] = {}
-        
-        # Embedding cache for semantic search
-        self.embeddings: Dict[int, np.ndarray] = {}
-        
-        # ScyllaDB backend (optional)
-        self.use_scylla = use_scylla and SCYLLA_AVAILABLE
-        self.scylla_session = None
-        
-        if self.use_scylla:
-            self._init_scylla(scylla_hosts or ['127.0.0.1'])
-        
-        log.info(f"UnifiedMemoryStore initialized for {agent_id}")
-        log.info(f"  Backend: {'ScyllaDB' if self.use_scylla else 'In-Memory'}")
-    
-    def _init_scylla(self, hosts: List[str]):
-        """Initialize ScyllaDB connection"""
         try:
-            cluster = Cluster(hosts)
-            self.scylla_session = cluster.connect()
+            # Create cluster with optimized policies
+            self.cluster = Cluster(
+                contact_points,
+                port=port,
+                load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
+                protocol_version=4
+            )
+            self.session = self.cluster.connect()
             
-            # Create keyspace
-            self.scylla_session.execute(f"""
-                CREATE KEYSPACE IF NOT EXISTS agent_memories
-                WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 3}}
-            """)
+            self._ensure_keyspace()
+            self._ensure_tables()
             
-            self.scylla_session.set_keyspace('agent_memories')
+            log.info(f"✅ ScyllaDB connected: {contact_points}")
             
-            # Create table with proper indexing
-            self.scylla_session.execute(f"""
+        except Exception as e:
+            log.error(f"ScyllaDB initialization failed: {e}")
+            self.disabled = True
+    
+    def _ensure_keyspace(self):
+        """Create keyspace with proper replication"""
+        try:
+            cql = f"""
+                CREATE KEYSPACE IF NOT EXISTS {self.keyspace}
+                WITH replication = {{
+                    'class': 'NetworkTopologyStrategy',
+                    'replication_factor': 3
+                }}
+                AND durable_writes = true
+            """
+            self.session.execute(cql)
+            self.session.set_keyspace(self.keyspace)
+            log.info(f"Keyspace ensured: {self.keyspace}")
+        except Exception as e:
+            log.error(f"Keyspace creation error: {e}")
+    
+    def _ensure_tables(self):
+        """Create optimized memory tables"""
+        try:
+            # Main memories table with time-series optimization
+            self.session.execute(f"""
                 CREATE TABLE IF NOT EXISTS memories (
                     agent_id text,
-                    event_id bigint,
+                    bucket bigint,
+                    event_id timeuuid,
                     timestamp double,
                     event_type text,
                     tags set<text>,
+                    text text,
                     payload text,
                     embedding blob,
-                    PRIMARY KEY ((agent_id), timestamp, event_id)
+                    PRIMARY KEY ((agent_id, bucket), timestamp, event_id)
+                ) WITH CLUSTERING ORDER BY (timestamp DESC)
+                AND compaction = {{
+                    'class': 'TimeWindowCompactionStrategy',
+                    'compaction_window_unit': 'DAYS',
+                    'compaction_window_size': 1
+                }}
+            """)
+            
+            # Tag index for fast tag-based queries
+            self.session.execute(f"""
+                CREATE TABLE IF NOT EXISTS memories_by_tag (
+                    agent_id text,
+                    tag text,
+                    timestamp double,
+                    event_id timeuuid,
+                    PRIMARY KEY ((agent_id, tag), timestamp, event_id)
                 ) WITH CLUSTERING ORDER BY (timestamp DESC)
             """)
             
-            # Create secondary indexes for common queries
-            self.scylla_session.execute("""
-                CREATE INDEX IF NOT EXISTS ON memories (event_type)
+            # Type index for event type queries
+            self.session.execute(f"""
+                CREATE TABLE IF NOT EXISTS memories_by_type (
+                    agent_id text,
+                    event_type text,
+                    timestamp double,
+                    event_id timeuuid,
+                    PRIMARY KEY ((agent_id, event_type), timestamp, event_id)
+                ) WITH CLUSTERING ORDER BY (timestamp DESC)
             """)
             
-            log.info("âœ… ScyllaDB initialized")
+            # Embedding index for semantic search (simplified)
+            self.session.execute(f"""
+                CREATE TABLE IF NOT EXISTS memory_embeddings (
+                    agent_id text,
+                    event_id timeuuid,
+                    embedding_type text,
+                    embedding blob,
+                    timestamp double,
+                    PRIMARY KEY (agent_id, event_id)
+                )
+            """)
+            
+            log.info("Memory tables ensured")
             
         except Exception as e:
-            log.error(f"ScyllaDB init failed: {e}")
-            self.use_scylla = False
+            log.error(f"Table creation error: {e}")
     
-    def remember(self, event: Dict[str, Any], tags: List[str] = None, 
+    def save_event(self, agent_id: str, event: Dict[str, Any], 
+                   embedding: Optional[np.ndarray] = None):
+        """Save event with batch optimization"""
+        if self.disabled:
+            return
+        
+        try:
+            import json
+            
+            event_id = uuid.uuid1()  # Time-based UUID
+            timestamp = event.get('timestamp', time.time())
+            
+            # Time bucketing (1 day buckets)
+            bucket = int(timestamp // 86400)
+            
+            # Prepare data
+            tags = set(event.get('tags', []))
+            event_type = event.get('type', 'unknown')
+            text = event.get('text', '')
+            
+            # Serialize payload
+            payload_data = {
+                k: v for k, v in event.items()
+                if k not in ['timestamp', 'type', 'tags', 'text', 'event_id']
+            }
+            payload_json = json.dumps(payload_data)
+            
+            # Serialize embedding
+            embedding_bytes = embedding.tobytes() if embedding is not None else None
+            
+            # Batch insert for performance
+            batch = BatchStatement(consistency_level=ConsistencyLevel.LOCAL_QUORUM)
+            
+            # Main table
+            batch.add(SimpleStatement("""
+                INSERT INTO memories (agent_id, bucket, event_id, timestamp, event_type, tags, text, payload, embedding)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """), (agent_id, bucket, event_id, timestamp, event_type, tags, text, payload_json, embedding_bytes))
+            
+            # Tag indexes
+            for tag in tags:
+                batch.add(SimpleStatement("""
+                    INSERT INTO memories_by_tag (agent_id, tag, timestamp, event_id)
+                    VALUES (?, ?, ?, ?)
+                """), (agent_id, tag, timestamp, event_id))
+            
+            # Type index
+            batch.add(SimpleStatement("""
+                INSERT INTO memories_by_type (agent_id, event_type, timestamp, event_id)
+                VALUES (?, ?, ?, ?)
+            """), (agent_id, event_type, timestamp, event_id))
+            
+            # Embedding table (if provided)
+            if embedding_bytes:
+                batch.add(SimpleStatement("""
+                    INSERT INTO memory_embeddings (agent_id, event_id, embedding_type, embedding, timestamp)
+                    VALUES (?, ?, ?, ?, ?)
+                """), (agent_id, event_id, 'default', embedding_bytes, timestamp))
+            
+            self.session.execute(batch)
+            
+        except Exception as e:
+            log.error(f"Save event error: {e}")
+    
+    def query_recent(self, agent_id: str, limit: int = 10, 
+                     since: Optional[float] = None) -> List[Dict]:
+        """Query recent memories with time filter"""
+        if self.disabled:
+            return []
+        
+        try:
+            import json
+            
+            # Calculate bucket range
+            current_bucket = int(time.time() // 86400)
+            bucket_range = range(current_bucket - 7, current_bucket + 1)  # Last 7 days
+            
+            results = []
+            
+            for bucket in reversed(list(bucket_range)):
+                if len(results) >= limit:
+                    break
+                
+                if since:
+                    query = """
+                        SELECT * FROM memories 
+                        WHERE agent_id = ? AND bucket = ? AND timestamp > ?
+                        LIMIT ?
+                    """
+                    rows = self.session.execute(query, (agent_id, bucket, since, limit - len(results)))
+                else:
+                    query = """
+                        SELECT * FROM memories 
+                        WHERE agent_id = ? AND bucket = ?
+                        LIMIT ?
+                    """
+                    rows = self.session.execute(query, (agent_id, bucket, limit - len(results)))
+                
+                for row in rows:
+                    event = json.loads(row.payload) if row.payload else {}
+                    event.update({
+                        'event_id': str(row.event_id),
+                        'timestamp': row.timestamp,
+                        'type': row.event_type,
+                        'tags': list(row.tags) if row.tags else [],
+                        'text': row.text or ''
+                    })
+                    results.append(event)
+            
+            # Sort by timestamp descending
+            results.sort(key=lambda x: x['timestamp'], reverse=True)
+            
+            return results[:limit]
+            
+        except Exception as e:
+            log.error(f"Query recent error: {e}")
+            return []
+    
+    def query_by_tags(self, agent_id: str, tags: List[str], 
+                      limit: int = 10) -> List[Dict]:
+        """Query memories by tags"""
+        if self.disabled:
+            return []
+        
+        try:
+            import json
+            
+            # Query each tag and merge results
+            all_event_ids = set()
+            
+            for tag in tags:
+                query = """
+                    SELECT event_id FROM memories_by_tag
+                    WHERE agent_id = ? AND tag = ?
+                    LIMIT ?
+                """
+                rows = self.session.execute(query, (agent_id, tag, limit * 2))
+                all_event_ids.update(str(row.event_id) for row in rows)
+            
+            if not all_event_ids:
+                return []
+            
+            # Fetch full events (batch)
+            results = []
+            for event_id in list(all_event_ids)[:limit]:
+                # This is simplified - in production, use batch queries
+                results.extend(self.query_recent(agent_id, limit=limit))
+            
+            return results[:limit]
+            
+        except Exception as e:
+            log.error(f"Query by tags error: {e}")
+            return []
+    
+    def query_by_type(self, agent_id: str, event_type: str, 
+                      limit: int = 10) -> List[Dict]:
+        """Query memories by event type"""
+        if self.disabled:
+            return []
+        
+        try:
+            query = """
+                SELECT event_id, timestamp FROM memories_by_type
+                WHERE agent_id = ? AND event_type = ?
+                LIMIT ?
+            """
+            rows = self.session.execute(query, (agent_id, event_type, limit))
+            
+            # Fetch full events
+            return self.query_recent(agent_id, limit=limit)
+            
+        except Exception as e:
+            log.error(f"Query by type error: {e}")
+            return []
+    
+    def close(self):
+        """Close connection"""
+        if not self.disabled and self.cluster:
+            self.cluster.shutdown()
+
+
+class UnifiedMemoryStore:
+    """
+    Unified memory system with ScyllaDB backend and in-memory cache.
+    Single source of truth for ALL agent memories.
+    """
+    
+    def __init__(self, agent_id: str, capacity: int = 10000,
+                 use_scylla: bool = True, scylla_hosts: List[str] = None):
+        self.agent_id = agent_id
+        self.capacity = capacity
+        
+        # In-memory cache for fast access
+        self.events: deque = deque(maxlen=capacity)
+        self.event_index = 0
+        
+        # Tag index
+        self.tag_index: Dict[str, List[int]] = defaultdict(list)
+        
+        # Type index
+        self.type_index: Dict[str, List[int]] = defaultdict(list)
+        
+        # Embedding cache
+        self.embeddings: Dict[int, np.ndarray] = {}
+        
+        # ScyllaDB backend
+        self.use_scylla = use_scylla
+        self.scylla = None
+        
+        if use_scylla:
+            self.scylla = ScyllaMemoryBackend(contact_points=scylla_hosts)
+            self.use_scylla = not self.scylla.disabled
+        
+        backend = "ScyllaDB" if self.use_scylla else "In-Memory"
+        log.info(f"UnifiedMemoryStore initialized for {agent_id} ({backend})")
+    
+    def remember(self, event: Dict[str, Any], tags: List[str] = None,
                  embedding: Optional[np.ndarray] = None) -> int:
-        """
-        Store event in unified memory.
-        Returns event_id for later retrieval.
-        """
+        """Store event in unified memory"""
         event_id = self.event_index
         self.event_index += 1
         
@@ -113,146 +370,79 @@ class UnifiedMemoryStore:
         event['tags'] = tags or event.get('tags', [])
         event['event_id'] = event_id
         
-        # Store in memory
+        # Store in memory cache
         self.events.append(event)
         
-        # Update tag index
+        # Update indexes
         for tag in event['tags']:
-            if tag not in self.tag_index:
-                self.tag_index[tag] = []
             self.tag_index[tag].append(event_id)
         
-        # Store embedding if provided
+        self.type_index[event['type']].append(event_id)
+        
+        # Store embedding
         if embedding is not None:
             self.embeddings[event_id] = embedding
         
-        # Store in ScyllaDB if enabled
-        if self.use_scylla:
-            self._store_to_scylla(event, embedding)
+        # Persist to ScyllaDB
+        if self.use_scylla and self.scylla:
+            self.scylla.save_event(self.agent_id, event, embedding)
         
         return event_id
     
-    def _store_to_scylla(self, event: Dict[str, Any], embedding: Optional[np.ndarray]):
-        """Store event to ScyllaDB"""
-        try:
-            import json
-            
-            query = """
-                INSERT INTO memories (agent_id, event_id, timestamp, event_type, tags, payload, embedding)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """
-            
-            payload_json = json.dumps({
-                k: v for k, v in event.items() 
-                if k not in ['event_id', 'timestamp', 'type', 'tags']
-            })
-            
-            embedding_bytes = embedding.tobytes() if embedding is not None else None
-            
-            self.scylla_session.execute(query, (
-                self.agent_id,
-                event['event_id'],
-                event['timestamp'],
-                event['type'],
-                set(event['tags']),
-                payload_json,
-                embedding_bytes
-            ))
-            
-        except Exception as e:
-            log.error(f"ScyllaDB store failed: {e}")
-    
-    def recall(self, n: int = 10, tags: List[str] = None, 
+    def recall(self, n: int = 10, tags: List[str] = None,
                event_type: str = None, since: float = None) -> List[Dict]:
-        """
-        Recall memories with filtering.
+        """Recall memories with filtering"""
         
-        Args:
-            n: Number of events to retrieve
-            tags: Filter by tags (OR logic)
-            event_type: Filter by event type
-            since: Only events after this timestamp
-        """
-        # For simple in-memory queries
-        if not self.use_scylla:
-            filtered = []
-            
-            for event in reversed(self.events):
-                # Apply filters
-                if since and event['timestamp'] < since:
-                    continue
-                
-                if event_type and event['type'] != event_type:
-                    continue
-                
-                if tags and not any(tag in event['tags'] for tag in tags):
-                    continue
-                
-                filtered.append(event)
-                
-                if len(filtered) >= n:
-                    break
-            
-            return filtered
+        # Try ScyllaDB first for better performance on large datasets
+        if self.use_scylla and self.scylla and len(self.events) > 1000:
+            if tags:
+                return self.scylla.query_by_tags(self.agent_id, tags, n)
+            elif event_type:
+                return self.scylla.query_by_type(self.agent_id, event_type, n)
+            elif since:
+                return self.scylla.query_recent(self.agent_id, n, since)
         
-        # ScyllaDB query for large-scale retrieval
-        else:
-            return self._recall_from_scylla(n, tags, event_type, since)
+        # Fallback to in-memory
+        filtered = []
+        
+        for event in reversed(self.events):
+            # Apply filters
+            if since and event['timestamp'] < since:
+                continue
+            
+            if event_type and event['type'] != event_type:
+                continue
+            
+            if tags and not any(tag in event['tags'] for tag in tags):
+                continue
+            
+            filtered.append(event.copy())
+            
+            if len(filtered) >= n:
+                break
+        
+        return filtered
     
-    def _recall_from_scylla(self, n: int, tags: List[str], 
-                            event_type: str, since: float) -> List[Dict]:
-        """Recall from ScyllaDB"""
-        try:
-            import json
-            
-            # Build query
-            query_parts = ["SELECT * FROM memories WHERE agent_id = ?"]
-            params = [self.agent_id]
-            
-            if since:
-                query_parts.append("AND timestamp > ?")
-                params.append(since)
-            
-            if event_type:
-                query_parts.append("AND event_type = ?")
-                params.append(event_type)
-            
-            query_parts.append(f"LIMIT {n}")
-            query = " ".join(query_parts)
-            
-            rows = self.scylla_session.execute(query, params)
-            
-            # Convert to events
-            events = []
-            for row in rows:
-                event = json.loads(row.payload)
-                event['event_id'] = row.event_id
-                event['timestamp'] = row.timestamp
-                event['type'] = row.event_type
-                event['tags'] = list(row.tags)
-                
-                # Filter by tags if specified (post-query filtering)
-                if tags and not any(tag in event['tags'] for tag in tags):
-                    continue
-                
-                events.append(event)
-            
-            return events[:n]
-            
-        except Exception as e:
-            log.error(f"ScyllaDB recall failed: {e}")
-            return []
+    def search(self, query: str, limit: int = 5) -> List[Dict]:
+        """Simple text search in memories"""
+        results = []
+        q = query.lower()
+        
+        for event in reversed(self.events):
+            text = str(event.get('text', '')).lower()
+            if q in text:
+                results.append(event.copy())
+                if len(results) >= limit:
+                    break
+        
+        return results
     
     def semantic_search(self, query_embedding: np.ndarray, k: int = 10,
                         tags: List[str] = None) -> List[Dict]:
-        """
-        Search by semantic similarity.
-        Uses cosine similarity between embeddings.
-        """
+        """Semantic search using embeddings"""
         if not self.embeddings:
             return []
         
-        # Compute similarities
         similarities = []
         for event_id, embedding in self.embeddings.items():
             similarity = np.dot(query_embedding, embedding) / (
@@ -260,22 +450,18 @@ class UnifiedMemoryStore:
             )
             similarities.append((event_id, similarity))
         
-        # Sort by similarity
         similarities.sort(key=lambda x: x[1], reverse=True)
         
-        # Retrieve top-k events
         results = []
         for event_id, similarity in similarities[:k]:
-            # Find event in memory
             for event in self.events:
                 if event['event_id'] == event_id:
-                    # Apply tag filter if specified
                     if tags and not any(tag in event['tags'] for tag in tags):
                         continue
                     
-                    event_copy = event.copy()
-                    event_copy['similarity'] = similarity
-                    results.append(event_copy)
+                    result = event.copy()
+                    result['similarity'] = similarity
+                    results.append(result)
                     break
             
             if len(results) >= k:
@@ -283,16 +469,12 @@ class UnifiedMemoryStore:
         
         return results
     
-    def get_training_batch(self, batch_size: int = 32, 
+    def get_training_batch(self, batch_size: int = 32,
                            tags: List[str] = None) -> List[Dict]:
-        """
-        Sample batch for language training.
-        Prioritizes recent and tagged experiences.
-        """
+        """Sample batch for training"""
         candidates = []
         
         if tags:
-            # Get events with specified tags
             for tag in tags:
                 if tag in self.tag_index:
                     for event_id in self.tag_index[tag]:
@@ -301,16 +483,14 @@ class UnifiedMemoryStore:
                                 candidates.append(event)
                                 break
         else:
-            # Use recent events
             candidates = list(self.events)[-1000:]
         
-        # Sample batch
         if len(candidates) <= batch_size:
             return candidates
         
         # Weighted sampling (prefer recent)
         indices = np.arange(len(candidates))
-        weights = np.exp(indices / len(candidates))  # Exponential weighting
+        weights = np.exp(indices / len(candidates))
         weights = weights / weights.sum()
         
         sampled_indices = np.random.choice(
@@ -319,347 +499,38 @@ class UnifiedMemoryStore:
         
         return [candidates[i] for i in sampled_indices]
     
+    def novelty_score(self, text: str) -> float:
+        """Compute novelty of text"""
+        if not self.events:
+            return 1.0
+        
+        low = text.lower()[:200]
+        matches = sum(
+            1 for e in self.events
+            if low in str(e.get('text', '')).lower()
+        )
+        
+        return 1.0 / (1 + matches)
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get memory statistics"""
         return {
             'total_events': len(self.events),
             'unique_tags': len(self.tag_index),
+            'unique_types': len(self.type_index),
             'embeddings_stored': len(self.embeddings),
             'backend': 'ScyllaDB' if self.use_scylla else 'In-Memory',
             'capacity': self.capacity,
             'oldest_event': self.events[0]['timestamp'] if self.events else None,
             'newest_event': self.events[-1]['timestamp'] if self.events else None
         }
+    
+    def close(self):
+        """Close connections"""
+        if self.scylla:
+            self.scylla.close()
 
 
-# =============================================================================
-# ENHANCED LANGUAGE MODULE - USES UNIFIED MEMORY
-# =============================================================================
-
-class EnhancedLanguageIntelligence:
-    """
-    Enhanced language intelligence that:
-    1. Uses unified memory (no separate context window)
-    2. Trains on ALL agent experiences (not just language)
-    3. Generates responses using full personality + context
-    """
-    
-    def __init__(self, agent_ref, memory_store: UnifiedMemoryStore):
-        self.agent = agent_ref
-        self.memory = memory_store  # UNIFIED MEMORY
-        
-        # Import existing transformer components
-        from ai_core.brain_language import (
-            MultimodalGroundingTransformer, 
-            Vocabulary
-        )
-        
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # Vocabulary
-        self.vocab = Vocabulary(max_size=5000)
-        
-        # Transformer (from existing brain_language.py)
-        self.model = MultimodalGroundingTransformer(
-            concept_dim=256,
-            context_dim=64,  # EXPANDED for personality
-            n_heads=4,
-            n_layers=2,
-            vocab_size=5000
-        ).to(self.device)
-        
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=3e-4)
-        
-        # Language development
-        self.language_stage = 0
-        self.vocabulary_size = 4  # Start with special tokens
-        
-        # Speech control
-        self.last_speech_time = 0
-        self.speech_cooldown = 10.0
-        
-        log.info("Enhanced Language Intelligence initialized with unified memory")
-    
-    def process_language_input(self, text: str, context: Dict[str, Any]) -> str:
-        """Process language using UNIFIED memory"""
-        
-        # 1. Store in unified memory
-        event = {
-            'type': 'language_input',
-            'text': text,
-            'context_snapshot': context
-        }
-        
-        self.memory.remember(event, tags=['language', 'input', 'human'])
-        
-        # 2. Add words to vocabulary
-        words = text.lower().split()
-        for word in words:
-            if len(word) > 2:
-                self.vocab.add_word(word)
-                self.vocabulary_size = self.vocab.next_id
-        
-        # 3. Train on unified memory (not just this input)
-        self._train_from_unified_memory()
-        
-        # 4. Generate response using FULL context
-        response = self._generate_contextual_response(text, context)
-        
-        # 5. Store response in memory
-        if response:
-            self.memory.remember({
-                'type': 'language_output',
-                'text': response,
-                'context_snapshot': context
-            }, tags=['language', 'output', 'agent'])
-        
-        return response
-    
-    def _train_from_unified_memory(self):
-        """Train on ALL experiences, not just language"""
-        
-        # Get diverse training batch from unified memory
-        batch_events = self.memory.get_training_batch(
-            batch_size=32,
-            tags=['language', 'action', 'perception', 'emotion']  # ALL types
-        )
-        
-        if len(batch_events) < 8:
-            return
-        
-        # Convert events to training data
-        observations = []
-        texts = []
-        
-        for event in batch_events:
-            # Extract text (from language OR describe other events)
-            if 'text' in event:
-                text = event['text']
-            else:
-                # Generate text description of non-language events
-                text = self._event_to_text(event)
-            
-            # Build multimodal context
-            context_features = self._build_context_features(
-                event.get('context_snapshot', {})
-            )
-            
-            observations.append(context_features)
-            texts.append(text)
-        
-        # Train transformer
-        self._train_transformer_batch(texts, observations)
-    
-    def _event_to_text(self, event: Dict[str, Any]) -> str:
-        """Convert non-language event to text description"""
-        etype = event['type']
-        
-        if etype == 'action':
-            return f"I performed action: {event.get('action_type', 'unknown')}"
-        
-        elif etype == 'perception':
-            return f"I perceived: {event.get('description', 'environment')}"
-        
-        elif etype == 'emotion':
-            emotion = event.get('emotion', 'neutral')
-            return f"I felt {emotion}"
-        
-        elif etype == 'reward':
-            reward = event.get('reward', 0)
-            if reward > 0:
-                return "That was good"
-            else:
-                return "That was bad"
-        
-        return "Something happened"
-    
-    def _build_context_features(self, context: Dict[str, Any]) -> torch.Tensor:
-        """Build FULL context vector including personality"""
-        features = []
-        
-        # Basic state
-        features.extend([
-            context.get('health', 20.0) / 20.0,
-            context.get('hunger', 20.0) / 20.0,
-            context.get('saturation', 5.0) / 20.0
-        ])
-        
-        # Emotions (8 dimensions)
-        if 'emotions' in context:
-            emotions = context['emotions']
-            for e in ['joy', 'fear', 'surprise', 'anger', 'sadness', 
-                      'trust', 'anticipation', 'disgust']:
-                features.append(emotions.get(e, 0.0))
-        else:
-            features.extend([0.0] * 8)
-        
-        # PERSONALITY (8 dimensions) - CRITICAL FOR AUTHENTIC SPEECH
-        if self.agent and hasattr(self.agent, 'personality'):
-            persona = self.agent.personality.as_array()
-            features.extend(persona.tolist())
-        else:
-            features.extend([0.0] * 8)
-        
-        # Recent activity (simplified)
-        features.extend([
-            context.get('recent_actions', 0) / 10.0,
-            context.get('recent_speech', 0) / 10.0,
-            len(self.memory.events) / 1000.0
-        ])
-        
-        # Pad to 64
-        while len(features) < 64:
-            features.append(0.0)
-        
-        return torch.tensor(features[:64], dtype=torch.float32, device=self.device)
-    
-    def _train_transformer_batch(self, texts: List[str], 
-                                  contexts: List[torch.Tensor]):
-        """Train transformer on batch"""
-        # Tokenize texts
-        max_len = max(len(self.vocab.tokenize(t)) for t in texts)
-        max_len = min(max_len, 32)  # Cap sequence length
-        
-        token_ids_batch = []
-        for text in texts:
-            tokens = self.vocab.tokenize(text)
-            # Pad
-            tokens = tokens + [0] * (max_len - len(tokens))
-            token_ids_batch.append(tokens[:max_len])
-        
-        token_ids = torch.tensor(token_ids_batch, dtype=torch.long, device=self.device)
-        context_batch = torch.stack(contexts)
-        
-        # Forward pass
-        self.model.train()
-        output = self.model(token_ids, context_batch)
-        
-        # Loss
-        targets = token_ids[:, 1:]  # Shifted for next-word prediction
-        targets = torch.cat([targets, torch.zeros(targets.shape[0], 1, 
-                             dtype=torch.long, device=self.device)], dim=1)
-        
-        word_logits = output['word_logits']
-        loss = torch.nn.functional.cross_entropy(
-            word_logits.reshape(-1, self.vocab.max_size),
-            targets.reshape(-1),
-            ignore_index=0
-        )
-        
-        # Optimize
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-        self.optimizer.step()
-    
-    def _generate_contextual_response(self, input_text: str, 
-                                       context: Dict[str, Any]) -> str:
-        """
-        Generate response using:
-        1. Input text
-        2. Full personality
-        3. Recent memories
-        4. Emotional state
-        """
-        if self.language_stage == 0:
-            return ""  # Pre-linguistic
-        
-        # Build FULL context vector
-        context_vector = self._build_context_features(context)
-        
-        # Retrieve relevant memories
-        relevant_memories = self.memory.recall(
-            n=5, 
-            tags=['language'],
-            since=time.time() - 300  # Last 5 minutes
-        )
-        
-        # Use recent context + personality for generation
-        self.model.eval()
-        
-        with torch.no_grad():
-            # Start with input tokens
-            input_tokens = self.vocab.tokenize(input_text)
-            seed_tokens = input_tokens[-3:] if len(input_tokens) >= 3 else [2]  # START
-            
-            current_tokens = torch.tensor([seed_tokens], dtype=torch.long, device=self.device)
-            
-            generated = []
-            for _ in range(15):  # Generate up to 15 tokens
-                output = self.model(current_tokens, context_vector.unsqueeze(0))
-                
-                # Sample next token
-                logits = output['word_logits'][0, -1, :]
-                
-                # Temperature based on personality
-                if self.agent:
-                    openness = self.agent.personality.traits.get('openness', 0.0)
-                    temperature = 0.7 + openness * 0.3  # 0.4 to 1.0
-                else:
-                    temperature = 0.8
-                
-                probs = torch.softmax(logits / temperature, dim=0)
-                next_token = torch.multinomial(probs, 1).item()
-                
-                if next_token in [0, 3]:  # PAD or END
-                    break
-                
-                generated.append(next_token)
-                
-                # Update tokens
-                current_tokens = torch.cat([
-                    current_tokens[:, -2:],
-                    torch.tensor([[next_token]], dtype=torch.long, device=self.device)
-                ], dim=1)
-            
-            if generated:
-                response = self.vocab.decode(generated)
-                return response
-        
-        return ""
-    
-    def should_speak(self) -> bool:
-        """Decide if agent should speak autonomously"""
-        if self.language_stage < 1:
-            return False
-        
-        current_time = time.time()
-        if current_time - self.last_speech_time < self.speech_cooldown:
-            return False
-        
-        # Check emotions in unified memory
-        recent_events = self.memory.recall(n=5, tags=['emotion'])
-        
-        for event in recent_events:
-            if event.get('intensity', 0) > 0.6:
-                return True
-        
-        # Personality-based
-        if self.agent:
-            sociability = self.agent.personality.traits.get('sociability', 0.0)
-            return np.random.rand() < (sociability + 1.0) / 40.0
-        
-        return False
-    
-    def generate_speech(self, context: Dict[str, Any]) -> Optional[str]:
-        """Generate autonomous speech"""
-        self.last_speech_time = time.time()
-        
-        if self.language_stage == 0:
-            return None
-        
-        # Use recent memories as context
-        recent_memories = self.memory.recall(n=10, tags=['language', 'emotion', 'action'])
-        
-        # Build prompt from recent experiences
-        prompt_words = []
-        for mem in recent_memories[-3:]:
-            if 'text' in mem:
-                prompt_words.extend(mem['text'].split()[-2:])
-        
-        if not prompt_words:
-            prompt_words = ['hello']
-        
-        prompt = ' '.join(prompt_words)
-        
-        return self._generate_contextual_response(prompt, context)
+# Legacy compatibility
+Memory = UnifiedMemoryStore
+EpisodicMemory = UnifiedMemoryStore

@@ -1,28 +1,85 @@
-version: '3.8'
-services:
-  scylla:
-    image: scylladb/scylla:5.3.5
-    container_name: divine_scylla
-    ports:
-      - "9042:9042"
-      - "9180:9180"
-    volumes:
-      - scylla-data:/var/lib/scylla
-    command: ["--smp", "1", "--memory", "1G"]
+# docker-compose.yml - Complete Divine World Stack
+# Place this in your project root directory
 
-  minio:
-    image: minio/minio:RELEASE.2025-09-01T00-00-00Z
-    container_name: divine_minio
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+services:
+  # ScyllaDB - High-performance database
+  scylladb:
+    image: scylladb/scylla:5.4
+    container_name: dw_scylla
     ports:
-      - "9000:9000"
-      - "9001:9001"
-    command: ["server", "/data", "--console-address", ":9001"]
+      - "9042:9042"   # CQL port
+      - "9160:9160"   # Thrift port
+      - "10000:10000" # REST API
     volumes:
-      - minio-data:/data
+      - scylla_data:/var/lib/scylla
+    environment:
+      - SCYLLA_CLUSTER_NAME=dw_cluster
+      - SCYLLA_SEEDS=scylladb
+    # Arch Linux: Use host network mode for better compatibility
+    command: --smp 2 --memory 2G --overprovisioned 1 --developer-mode 1
+    networks:
+      - dw_network
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # Python AI Backend
+  backend:
+    build:
+      context: ./py_backend
+      dockerfile: Dockerfile
+    container_name: dw_backend
+    ports:
+      - "11400:11400"
+    volumes:
+      - ./py_backend:/app
+      - agent_data:/app/data
+      - ./py_backend/brains:/app/data/brains
+      - ./py_backend/uploads:/app/data/uploads
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SCYLLA_HOSTS=scylladb
+      - SCYLLA_PORT=9042
+      - BACKEND_PORT=11400
+      - DATA_DIR=/app/data
+    depends_on:
+      scylladb:
+        condition: service_healthy
+    networks:
+      - dw_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11400/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./dw_agent/electron/react-app
+      dockerfile: Dockerfile
+    container_name: dw_frontend
+    ports:
+      - "8765:8765"
+    environment:
+      - VITE_BACKEND_URL=http://localhost:11400
+      - VITE_AGENT_ID=demo
+    depends_on:
+      - backend
+    networks:
+      - dw_network
+    restart: unless-stopped
+
+networks:
+  dw_network:
+    driver: bridge
 
 volumes:
-  scylla-data:
-  minio-data:
+  scylla_data:
+    driver: local
+  agent_data:
+    driver: local

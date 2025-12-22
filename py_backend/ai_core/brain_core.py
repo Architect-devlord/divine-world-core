@@ -455,5 +455,76 @@ class BrainCore:
         except Exception as e:
             print(f"[BrainCore] Language input error: {e}")
             return ""
-
+# Add to BrainCore for decision making
+class GodBrainExtension:
+    """
+    Extends BrainCore with god-specific decision making
+    """
     
+    @staticmethod
+    def decide_god_ability(
+        brain,
+        obs: np.ndarray,
+        available_abilities: Dict[str, bool]
+    ) -> int:
+        """
+        Decide which god ability to use based on observation
+        Returns ability index or -1 for none
+        """
+        if not hasattr(brain, 'god_ability_policy'):
+            return -1
+        
+        # Simple heuristic for now (can be learned)
+        # Check if in combat
+        nearby_enemies = obs[7] if len(obs) > 7 else 0.0
+        health_percent = obs[0] if len(obs) > 0 else 1.0
+        
+        ability_names = list(available_abilities.keys())
+        
+        # Combat situation
+        if nearby_enemies > 0.3:
+            # Use offensive ability
+            for i, name in enumerate(ability_names):
+                if available_abilities[name] and 'attack' in name.lower():
+                    return i
+        
+        # Low health
+        if health_percent < 0.3:
+            # Use defensive/healing ability
+            for i, name in enumerate(ability_names):
+                if available_abilities[name] and ('heal' in name.lower() or 'life' in name.lower()):
+                    return i
+        
+        return -1  # No ability
+
+
+# Reward shaping for god abilities
+def compute_god_ability_reward(
+    ability_used: str,
+    outcome: Dict[str, Any],
+    god_type: str
+) -> float:
+    """
+    Compute reward for using god abilities
+    Helps train the AI to use abilities effectively
+    """
+    reward = 0.0
+    
+    # Successful ability use
+    if outcome.get('ability_success', False):
+        reward += 2.0
+    
+    # Damage dealt with ability
+    damage = outcome.get('ability_damage', 0.0)
+    reward += damage * 0.1
+    
+    # Healing from ability
+    healing = outcome.get('ability_healing', 0.0)
+    reward += healing * 0.15
+    
+    # Tactical positioning (e.g., creaking going underground to ambush)
+    if 'underground' in ability_used or 'ceiling' in ability_used:
+        if outcome.get('surprise_attack', False):
+            reward += 5.0
+    
+    return reward

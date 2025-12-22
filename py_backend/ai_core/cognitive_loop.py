@@ -1,15 +1,12 @@
-# ai_core/cognitive_loop.py
+# ai_core/cognitive_loop.py - COMPLETE UNIFIED VERSION
 """
-Autonomous Cognitive Loop - Think, Reflect, Act
+Autonomous Cognitive Loop with Full Integration
 ================================================
-Gives agents true autonomy by continuously:
-1. PERCEIVE - Process visual/audio/state inputs
-2. THINK - Evaluate situation, retrieve memories
-3. REFLECT - Assess emotions, goals, context
-4. DECIDE - Choose whether to act/speak/learn
-5. ACT - Execute action or generate speech
-
-No external triggers needed - agent decides when to act.
+Combines best features from both cognitive_loop.py and coggnitive_loop.py:
+- True autonomous thinking and speaking
+- File processing integration
+- Unified memory usage
+- Enhanced language generation
 """
 
 import asyncio
@@ -23,7 +20,7 @@ log = logging.getLogger("cognitive_loop")
 
 
 class CognitiveState:
-    """Tracks agent's cognitive state across cycles"""
+    """Tracks agent's cognitive state"""
     
     def __init__(self):
         self.current_focus: Optional[str] = None
@@ -32,24 +29,32 @@ class CognitiveState:
         self.energy_level: float = 1.0
         self.last_significant_event: Optional[Dict] = None
         self.cycle_count: int = 0
+        self.last_speech: Optional[str] = None
+        self.speech_count: int = 0
 
 
 class CognitiveLoop:
     """
-    Autonomous cognitive cycle for agents.
-    Runs independently, processes continuous inputs, decides when to act/speak.
+    FULLY INTEGRATED Autonomous cognitive cycle.
+    
+    Features:
+    - Uses UnifiedMemoryStore
+    - Directly triggers language generation
+    - Processes files autonomously
+    - Connects to chat_system for output
+    - Full personality integration
     """
     
     def __init__(self, agent, loop_interval: float = 0.5):
         self.agent = agent
         self.loop_interval = loop_interval
         
-        # Input buffers (thread-safe deques)
+        # Input buffers
         self.visual_buffer = deque(maxlen=10)
         self.audio_buffer = deque(maxlen=5)
         self.state_buffer = deque(maxlen=20)
         self.event_buffer = deque(maxlen=50)
-        self.file_buffer = deque(maxlen=20)  # Files to process
+        self.file_buffer = deque(maxlen=20)  # CRITICAL: File processing queue
         
         # Cognitive state
         self.state = CognitiveState()
@@ -59,14 +64,8 @@ class CognitiveLoop:
         self.last_speech_time = 0
         self.last_learning_time = 0
         
-        # Thresholds for autonomous behavior
-        self.action_cooldown = 1.0  # seconds between actions
-        self.speech_cooldown = 10.0  # seconds between autonomous speech
-        self.learning_interval = 30.0  # seconds between learning updates
-        self.think_threshold = 0.3  # novelty level to trigger deep thinking
-        
-        # Behavior weights (personality-influenced)
-        self._update_behavior_weights()
+        # Thresholds (personality-adjusted)
+        self._update_thresholds()
         
         # Control
         self.running = False
@@ -74,17 +73,28 @@ class CognitiveLoop:
         
         log.info(f"CognitiveLoop initialized for {agent.agent_id}")
     
-    def _update_behavior_weights(self):
-        """Update behavior weights based on personality"""
+    def _update_thresholds(self):
+        """Update thresholds based on personality"""
         personality = self.agent.personality.traits
         
-        self.weights = {
-            'exploration': personality.get('curiosity', 0.5) * 0.7 + 0.3,
-            'social': personality.get('sociability', 0.5) * 0.8 + 0.2,
-            'cautious': personality.get('neuroticism', 0.0) * 0.5 + 0.5,
-            'reactive': personality.get('boldness', 0.5) * 0.6 + 0.4,
-            'learning': personality.get('openness', 0.5) * 0.8 + 0.2
-        }
+        # Speech cooldown shorter for extraverts
+        extraversion = personality.get('extraversion', 0.0)
+        sociability = personality.get('sociability', 0.5)
+        
+        base_cooldown = 15.0
+        self.speech_cooldown = base_cooldown * (1.0 - (extraversion + sociability) / 4.0)
+        self.speech_cooldown = max(5.0, self.speech_cooldown)
+        
+        # Action cooldown
+        boldness = personality.get('boldness', 0.5)
+        self.action_cooldown = 2.0 * (1.0 - boldness * 0.5)
+        
+        # Learning interval
+        openness = personality.get('openness', 0.5)
+        self.learning_interval = 30.0 * (1.0 - openness * 0.3)
+        
+        log.debug(f"Thresholds: speech={self.speech_cooldown:.1f}s, "
+                 f"action={self.action_cooldown:.1f}s")
     
     # ==================== CONTROL ====================
     
@@ -131,20 +141,19 @@ class CognitiveLoop:
                 # === 4. DECIDE ===
                 decision = self._decide(reflection, thoughts)
                 
-                # === 5. ACT ===
-                await self._act(decision, perception)
+                # === 5. ACT (INCLUDING SPEECH & FILES) ===
+                await self._act(decision, perception, thoughts)
                 
                 # === 6. UPDATE STATE ===
                 self._update_cognitive_state(perception, thoughts, reflection)
                 
-                # Cycle complete
                 self.state.cycle_count += 1
                 
                 # Log periodically
                 if self.state.cycle_count % 100 == 0:
                     log.info(f"[{self.agent.agent_id}] Cycle {self.state.cycle_count}: "
                             f"Focus={self.state.current_focus}, "
-                            f"Energy={self.state.energy_level:.2f}")
+                            f"Speeches={self.state.speech_count}")
                 
                 # Wait for next cycle
                 elapsed = time.time() - cycle_start
@@ -156,67 +165,42 @@ class CognitiveLoop:
             except Exception as e:
                 log.error(f"Cognitive loop error for {self.agent.agent_id}: {e}", 
                          exc_info=True)
-                await asyncio.sleep(1.0)  # Prevent tight error loop
+                await asyncio.sleep(1.0)
     
     # ==================== PERCEPTION ====================
     
     def _perceive(self) -> Dict[str, Any]:
-        """
-        Gather current sensory inputs and compute novelty.
-        Returns unified perception dict.
-        """
+        """Gather current state from unified memory"""
         perception = {
             'timestamp': time.time(),
-            'visual': None,
-            'audio': None,
-            'state': {},
-            'events': [],
+            'state': {
+                'health': self.agent.health,
+                'hunger': self.agent.hunger,
+                'emotions': self.agent.emotion.snapshot(),
+                'dominant_emotion': self.agent.emotion.dominant_emotion(),
+                'memory_size': len(self.agent.memory.events)
+            },
+            'recent_events': [],
             'novelty': 0.0,
             'urgency': 0.0
         }
         
-        # === Visual Input ===
-        if self.visual_buffer:
-            latest_visual = self.visual_buffer[-1]
-            perception['visual'] = latest_visual.get('frame')
+        # Get recent events from unified memory
+        recent = self.agent.memory.recall(n=10)
+        perception['recent_events'] = recent
+        
+        # Calculate novelty
+        if recent:
+            novelty_scores = []
+            for event in recent[-3:]:
+                event_type = event.get('type', 'unknown')
+                type_count = sum(1 for e in recent if e.get('type') == event_type)
+                novelty = 1.0 / (1.0 + type_count)
+                novelty_scores.append(novelty)
             
-            # Compute visual novelty using pattern recognizer
-            if perception['visual'] is not None:
-                pattern_result = self.agent.brain.pattern_recognizer.observe_pattern(
-                    'visual', 
-                    perception['visual']
-                )
-                perception['novelty'] = max(perception['novelty'], 
-                                           pattern_result.get('novelty', 0.0))
+            perception['novelty'] = np.mean(novelty_scores) if novelty_scores else 0.0
         
-        # === Audio Input ===
-        if self.audio_buffer:
-            latest_audio = self.audio_buffer[-1]
-            perception['audio'] = latest_audio.get('audio')
-            
-            # Audio novelty
-            if perception['audio'] is not None:
-                audio_pattern = self.agent.brain.pattern_recognizer.observe_pattern(
-                    'audio',
-                    perception['audio']
-                )
-                perception['novelty'] = max(perception['novelty'],
-                                           audio_pattern.get('novelty', 0.0))
-        
-        # === State ===
-        perception['state'] = {
-            'health': self.agent.health,
-            'hunger': self.agent.hunger,
-            'emotions': self.agent.emotion.snapshot(),
-            'dominant_emotion': self.agent.emotion.dominant_emotion(),
-            'memory_size': len(self.agent.memory.events),
-            'step_count': self.agent.step_count
-        }
-        
-        # === Events ===
-        perception['events'] = list(self.event_buffer)
-        
-        # Compute urgency (high emotion intensity or low health)
+        # Calculate urgency
         emotion_intensity = max(abs(v) for v in perception['state']['emotions'].values())
         health_urgency = 1.0 - (perception['state']['health'] / 20.0)
         perception['urgency'] = max(emotion_intensity, health_urgency)
@@ -226,46 +210,77 @@ class CognitiveLoop:
     # ==================== THINKING ====================
     
     async def _think(self, perception: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process perception through brain's cognitive systems.
-        Decides what to focus on and retrieves relevant memories.
-        """
+        """Process perception and decide what to focus on"""
         thoughts = {
             'focus': None,
-            'memories': [],
-            'patterns': {},
-            'language_activation': 0.0,
+            'language_desire': 0.0,
+            'speech_topic': None,
             'curiosity': 0.0,
             'analysis': {},
-            'should_think_deeply': False
-        }
+            'should_think_deeply': False,
+            'file_to_process': None,
+            'should_browse': False,
+            'should_simulate': False,
+            'should_think_verbally': False,
+            'should_listen': False,
+            'audio_data': None,
+            'internal_thoughts': [],  
+            'mental_workspace': None  
+    }
         
-        # === Quick Check: Is anything interesting? ===
-        if perception['novelty'] < self.think_threshold and perception['urgency'] < 0.5 and not self.file_buffer:
-            # Nothing significant, light processing only
+        # Quick check
+        if perception['novelty'] < 0.2 and perception['urgency'] < 0.3 and not self.file_buffer:
             return thoughts
         
-        # === Deep Thinking Triggered ===
         thoughts['should_think_deeply'] = True
         
-        # === Brain Evaluation ===
+        # === PROCESS AUDIO INPUT (if available) ===
+        if hasattr(self.agent, 'audio_processor'):
+            audio_result = await asyncio.to_thread(
+                lambda: self.agent.audio_processor.process_audio_chunk()
+            )
+        
+            if audio_result and audio_result.get('transcription'):
+                thoughts['audio_data'] = audio_result
+            
+                # If speech heard, trigger language processing
+                transcription = audio_result['transcription']
+            
+                # Process as language input
+                context = {
+                    'health': perception['state']['health'],
+                    'hunger': perception['state']['hunger'],
+                    'emotions': perception['state']['emotions']
+                }
+            
+                response = self.agent.brain.language.process_language_input(
+                    transcription,
+                    context
+                )
+
+                # Broadcast heard speech to frontend
+                await self._broadcast_audio_heard(transcription, audio_result.get('emotion'))
+
+                # If agent generates response, speak it
+                if response and len(response) > 0:
+                    await self._broadcast_speech(response)
+
+        # Evaluate recent events
         event = {
             'type': 'autonomous_perception',
-            'tags': ['autonomous', 'perception', 'cognitive_loop'],
+            'tags': ['autonomous', 'perception'],
             'payload': {
                 'novelty': perception['novelty'],
-                'urgency': perception['urgency'],
-                'timestamp': perception['timestamp']
+                'urgency': perception['urgency']
             }
         }
         
-        # Let brain assess situation
         reward, emotion_delta = self.agent.brain.evaluate_event(
             event, 
             perception['state']
         )
         
-        # Update emotions from brain's assessment
+        # Update emotions
         for emotion, value in emotion_delta.items():
             self.agent.emotion.add(emotion, value)
         
@@ -273,36 +288,157 @@ class CognitiveLoop:
             'reward': reward,
             'emotion_delta': emotion_delta
         }
+
+        # === AUTONOMOUS DECISION: Should I listen? ===
+        # Agent decides whether to actively listen to audio
+        if hasattr(self.agent, 'audio_processor'):
+            sociability = self.agent.personality.traits.get('sociability', 0.5)
+            openness = self.agent.personality.traits.get('openness', 0.5)
+            curiosity = self.agent.personality.traits.get('curiosity', 0.5)
+
+            listening_desire = (
+                sociability * 0.4 +  # Social agents listen more
+                openness * 0.3 +
+                curiosity * 0.2 +
+                perception['novelty'] * 0.1
+            )
+
+            # Autonomous decision
+            if listening_desire > 0.4 and np.random.rand() < listening_desire:
+                thoughts['should_listen'] = True
+
+                if not self.agent.audio_processor.is_listening:
+                    self.agent.audio_processor.start_listening()
+            else:
+                # Agent chooses not to listen
+                if self.agent.audio_processor.is_listening:
+                    self.agent.audio_processor.stop_listening()
+    
+        # === AUTONOMOUS DECISION: Should I simulate? ===
+        # Agent decides based on:
+        # - Novelty (new situations warrant mental simulation)
+        # - Urgency (dangerous situations need planning)
+        # - Curiosity trait (curious agents simulate more)
+        # - Personality (conscientious agents plan more)
+
+        curiosity = self.agent.personality.traits.get('curiosity', 0.5)
+        conscientiousness = self.agent.personality.traits.get('conscientiousness', 0.5)
+
+        simulation_desire = (
+            perception['novelty'] * 0.4 +
+            perception['urgency'] * 0.3 +
+            curiosity * 0.2 +
+            conscientiousness * 0.1
+        )
+
+        # Stochastic decision (not forced)
+        if simulation_desire > 0.5 and np.random.rand() < simulation_desire:
+            thoughts['should_simulate'] = True
+
+            # Run mental simulation
+            if hasattr(self.agent, 'imagine_scenario'):
+                scenario_data = self.agent.imagine_scenario(perception['state'])
+                thoughts['mental_workspace'] = scenario_data
+
+                # Broadcast to frontend
+                await self._broadcast_mental_workspace(scenario_data)
+
+            # === AUTONOMOUS DECISION: Should I think in words? ===
+            # Separate from simulation - agent might simulate without verbalizing
+            # or verbalize without simulating
+
+            sociability = self.agent.personality.traits.get('sociability', 0.5)
+            openness = self.agent.personality.traits.get('openness', 0.5)
+
+            # Introverted agents have more internal monologue
+            verbal_thinking_desire = (
+                (1.0 - sociability) * 0.4 +  # Introverts think more verbally
+                openness * 0.3 +
+                perception['novelty'] * 0.2 +
+                emotion_delta.get('surprise', 0) * 0.1
+            )
+
+            if verbal_thinking_desire > 0.4 and np.random.rand() < verbal_thinking_desire:
+                thoughts['should_think_verbally'] = True
+
+                # Generate internal thought
+                if hasattr(self.agent, 'generate_internal_thought'):
+                    context = {
+                        'health': perception['state']['health'],
+                        'hunger': perception['state']['hunger'],
+                        'emotions': perception['state']['emotions'],
+                        'novelty': perception['novelty'],
+                            'urgency': perception['urgency']
+                    }
+
+                    internal_thought = self.agent.generate_internal_thought(context)
+
+                    if internal_thought:
+                        # Broadcast to frontend as internal thought
+                        await self._broadcast_internal_thought(internal_thought)
         
-        # === Memory Retrieval ===
-        if perception['novelty'] > 0.5 or perception['urgency'] > 0.6:
-            # Retrieve relevant memories
-            thoughts['memories'] = self.agent.memory.recall(10)
+        # === LANGUAGE DESIRE CALCULATION ===
+        lang_factors = []
+        
+        # 1. Strong emotions trigger expression
+        emotion_intensity = max(abs(v) for v in perception['state']['emotions'].values())
+        if emotion_intensity > 0.5:
+            lang_factors.append(('strong_emotion', emotion_intensity))
+        
+        # 2. Novel experiences trigger commentary
+        if perception['novelty'] > 0.6:
+            lang_factors.append(('novelty', perception['novelty']))
+        
+        # 3. Personality traits
+        sociability = self.agent.personality.traits.get('sociability', 0.5)
+        extraversion = self.agent.personality.traits.get('extraversion', 0.0)
+        lang_factors.append(('personality', (sociability + extraversion + 2.0) / 4.0))
+        
+        # 4. Time since last speech (builds up desire)
+        time_since_speech = time.time() - self.last_speech_time
+        time_factor = min(1.0, time_since_speech / self.speech_cooldown)
+        if time_factor > 0.5:
+            lang_factors.append(('time_pressure', time_factor))
+        
+        # 5. Recent conversation context
+        recent_speech = [e for e in perception['recent_events'] 
+                        if e.get('type') in ['language_input', 'language_output']]
+        
+        if recent_speech and time_since_speech < 30:
+            lang_factors.append(('conversation_context', 0.8))
+            thoughts['speech_topic'] = 'conversation_response'
+        
+        # 6. Internal monologue (urgent thoughts)
+        if perception['urgency'] > 0.6:
+            lang_factors.append(('urgent_thoughts', perception['urgency']))
+            thoughts['speech_topic'] = 'urgent_situation'
+        
+        # Combine factors
+        if lang_factors:
+            weights = [factor[1] for factor in lang_factors]
+            thoughts['language_desire'] = np.mean(weights)
             
-            # Search for similar past experiences
-            if perception['events']:
-                recent_event = perception['events'][-1]
-                event_type = recent_event.get('type', '')
-                if event_type:
-                    similar = self.agent.memory.search(event_type, limit=5)
-                    thoughts['memories'].extend(similar)
+            log.debug(f"Language desire: {thoughts['language_desire']:.2f} "
+                     f"from {[f[0] for f in lang_factors]}")
         
-        # === Pattern Analysis ===
-        thoughts['patterns'] = self.agent.brain.get_pattern_summary()
-        
-        # === File Processing ===
-        # If nothing queued explicitly, look for recent uploaded files in memory
-        if not self.file_buffer:
+        # === FILE PROCESSING CHECK ===
+        if self.file_buffer:
+            file_info = self.file_buffer[0]
+            thoughts['file_to_process'] = file_info
+            log.info(f"[Thinking] File queued: {file_info['filename']}")
+        else:
+            # Check memory for recently uploaded files not yet processed
             try:
-                recent_events = []
-                if hasattr(self.agent, 'memory') and hasattr(self.agent.memory, 'recall'):
-                    recent_events = self.agent.memory.recall(50)
+                recent_events = self.agent.memory.recall(n=50)
                 for ev in reversed(recent_events):
                     if ev.get('type') == 'file_uploaded':
                         fn = ev.get('filename')
-                        # Skip if already processed
-                        already = any((e.get('type') == 'file_processed' and e.get('filename') == fn) for e in recent_events)
-                        if not already:
+                        # Check if already processed
+                        already_processed = any(
+                            e.get('type') == 'file_processed' and e.get('filename') == fn
+                            for e in recent_events
+                        )
+                        if not already_processed:
                             self.file_buffer.append({
                                 'path': ev.get('path'),
                                 'filename': fn,
@@ -310,47 +446,27 @@ class CognitiveLoop:
                                 'size': ev.get('size'),
                                 'timestamp': ev.get('timestamp')
                             })
-                            log.info(f"[Thinking] Queued uploaded file from memory: {fn}")
+                            thoughts['file_to_process'] = self.file_buffer[0]
+                            log.info(f"[Thinking] Found unprocessed file: {fn}")
                             break
-            except Exception:
-                pass
+            except Exception as e:
+                log.error(f"Error checking for files: {e}")
+        
+        # Check if agent wants to browse (when curious and has allowed sites)
+        if thoughts['curiosity'] > 0.6 and hasattr(self.agent, 'web_browser'):
+            browser = self.agent.web_browser
+            if browser.allowed_domains and browser.browse_queue:
+                thoughts['should_browse'] = True
 
-        if self.file_buffer:
-            file_info = self.file_buffer[0]  # Peek at oldest file
-            thoughts['file_to_process'] = file_info
-            log.info(f"[Thinking] File available for processing: {file_info['filename']}")
-        
-        # === Language Activation ===
-        if hasattr(self.agent.brain, 'language') and self.agent.brain.language:
-            # Check if agent has enough language ability and reason to speak
-            lang_stage = self.agent.brain.language.language_stage
-            vocab_size = self.agent.brain.language.vocabulary_size
-            
-            # Activation increases with:
-            # - Language development (stage/vocab)
-            # - Emotional intensity
-            # - Social personality trait
-            lang_progress = min(1.0, (lang_stage / 3.0) * (vocab_size / 50.0))
-            emotion_intensity = max(abs(v) for v in perception['state']['emotions'].values())
-            social_factor = self.weights['social']
-            
-            thoughts['language_activation'] = (
-                lang_progress * 0.5 +
-                emotion_intensity * 0.3 +
-                social_factor * 0.2
-            )
-        
-        # === Curiosity Assessment ===
-        curiosity_trait = self.agent.personality.traits.get('curiosity', 0.5)
-        thoughts['curiosity'] = perception['novelty'] * curiosity_trait * self.weights['exploration']
-        
-        # === Focus Determination ===
+        # Determine focus
         if perception['urgency'] > 0.7:
             thoughts['focus'] = 'survival'
-        elif thoughts['curiosity'] > 0.6:
+        elif thoughts['file_to_process']:
+            thoughts['focus'] = 'learning'  # Files are learning opportunities
+        elif thoughts['language_desire'] > 0.4:
+            thoughts['focus'] = 'expression'
+        elif perception['novelty'] > 0.6:
             thoughts['focus'] = 'exploration'
-        elif thoughts['language_activation'] > 0.5:
-            thoughts['focus'] = 'communication'
         else:
             thoughts['focus'] = 'observation'
         
@@ -359,325 +475,287 @@ class CognitiveLoop:
     # ==================== REFLECTION ====================
     
     def _reflect(self, thoughts: Dict[str, Any], perception: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Reflect on thoughts and internal state.
-        Decides emotional response, goals, and priorities.
-        """
+        """Decide what to do"""
         reflection = {
             'should_speak': False,
+            'speech_reason': None,
             'should_act': False,
             'should_learn': False,
-            'emotional_state': 'neutral',
-            'goal': None,
-            'urgency': perception['urgency'],
+            'should_process_file': False,
             'confidence': 0.5,
-            'reasoning': []
+            'should_browse_web': False
+
         }
-        
-        # === Emotional Assessment ===
-        emotions = self.agent.emotion.snapshot()
-        dominant = self.agent.emotion.dominant_emotion()
-        intensity = abs(emotions.get(dominant, 0.0))
-        
-        reflection['emotional_state'] = dominant
         
         current_time = time.time()
         
-        # === Speech Decision ===
-        speech_reasoning = []
+        # === FILE PROCESSING DECISION ===
+        # Files are highest priority
+        if thoughts.get('file_to_process'):
+            reflection['should_process_file'] = True
+            reflection['confidence'] = 0.95
+            return reflection  # Process file immediately
         
-        # High language activation
-        if thoughts['language_activation'] > 0.4:
-            speech_reasoning.append(f"language_activation={thoughts['language_activation']:.2f}")
+        # === SPEECH DECISION ===
+        if thoughts['language_desire'] > 0.4:
+            if current_time - self.last_speech_time > self.speech_cooldown:
+                reflection['should_speak'] = True
+                reflection['speech_reason'] = thoughts.get('speech_topic', 'general_expression')
+                
+                log.info(f"💬 {self.agent.agent_id} deciding to speak: "
+                        f"desire={thoughts['language_desire']:.2f}, "
+                        f"reason={reflection['speech_reason']}")
         
-        # Strong emotion
-        if intensity > 0.6:
-            speech_reasoning.append(f"strong_{dominant}={intensity:.2f}")
-        
-        # Social personality + time passed
-        if (self.weights['social'] > 0.6 and 
-            current_time - self.last_speech_time > self.speech_cooldown * 0.5):
-            speech_reasoning.append("social_personality")
-        
-        # Final speech decision
-        if speech_reasoning and current_time - self.last_speech_time > self.speech_cooldown:
-            # Ask brain if it actually wants to speak
-            if hasattr(self.agent.brain, 'should_speak'):
-                reflection['should_speak'] = self.agent.brain.should_speak()
-                if reflection['should_speak']:
-                    reflection['reasoning'].append(f"speech: {', '.join(speech_reasoning)}")
-        
-        # === Action Decision ===
-        action_reasoning = []
-        
-        # High curiosity
-        if thoughts['curiosity'] > 0.5:
-            action_reasoning.append(f"curiosity={thoughts['curiosity']:.2f}")
-        
-        # High urgency
-        if reflection['urgency'] > 0.6:
-            action_reasoning.append(f"urgency={reflection['urgency']:.2f}")
-        
-        # Bold personality
-        if self.weights['reactive'] > 0.6:
-            action_reasoning.append("bold_personality")
-        
-        # Time-based action
-        if current_time - self.last_action_time > self.action_cooldown:
-            if action_reasoning or thoughts['focus'] == 'survival':
+        # === ACTION DECISION ===
+        if perception['urgency'] > 0.6:
+            if current_time - self.last_action_time > self.action_cooldown:
                 reflection['should_act'] = True
-                reflection['reasoning'].append(f"action: {', '.join(action_reasoning)}")
         
-        # === Learning Decision ===
-        learning_reasoning = []
-        
-        # High novelty
-        if perception['novelty'] > 0.5:
-            learning_reasoning.append(f"novelty={perception['novelty']:.2f}")
-        
-        # Learning interval passed
-        if current_time - self.last_learning_time > self.learning_interval:
-            if learning_reasoning or len(self.agent.episodic_memory) > 32:
-                reflection['should_learn'] = True
-                reflection['reasoning'].append(f"learn: {', '.join(learning_reasoning)}")
-        
-        # === Goal Setting ===
-        if thoughts['focus'] == 'survival':
-            reflection['goal'] = 'survive'
-            reflection['confidence'] = 0.9
-        elif thoughts['focus'] == 'exploration':
-            reflection['goal'] = 'explore'
-            reflection['confidence'] = 0.7
-        elif thoughts['focus'] == 'communication':
-            reflection['goal'] = 'express'
+        # === WEB BROWSING DECISION ===
+        if thoughts.get('should_browse'):
+            reflection['should_browse_web'] = True
             reflection['confidence'] = 0.6
-        else:
-            reflection['goal'] = 'observe'
-            reflection['confidence'] = 0.5
+
+        
+        # === LEARNING DECISION ===
+        if current_time - self.last_learning_time > self.learning_interval:
+            if len(self.agent.memory.events) > 50:
+                reflection['should_learn'] = True
         
         return reflection
     
     # ==================== DECISION ====================
     
     def _decide(self, reflection: Dict[str, Any], thoughts: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Make final decision on what to do this cycle.
-        Returns action specification with priority.
-        """
+        """Final decision on what to do"""
         decision = {
             'type': 'none',
             'content': None,
-            'priority': 0.0,
-            'reasoning': reflection.get('reasoning', [])
+            'priority': 0.0
         }
         
-        # === Priority System ===
-        # 1. Survival actions (highest)
-        # 2. Speech (high - social creatures)
-        # 3. Goal-directed actions (medium)
-        # 4. Learning (low - background)
-        # 5. Idle (lowest)
-        
-        if reflection['urgency'] > 0.8 and reflection['should_act']:
-            decision['type'] = 'action'
-            decision['content'] = {'goal': 'survive'}
+        # Priority: file > speech > action > learning
+        if reflection['should_process_file']:
+            decision['type'] = 'process_file'
+            decision['content'] = thoughts.get('file_to_process')
             decision['priority'] = 1.0
-            
+        
         elif reflection['should_speak']:
             decision['type'] = 'speak'
-            decision['priority'] = 0.8
-            
+            decision['content'] = {
+                'reason': reflection['speech_reason'],
+                'language_desire': thoughts['language_desire']
+            }
+            decision['priority'] = 0.9
+        
         elif reflection['should_act']:
             decision['type'] = 'action'
-            decision['content'] = {'goal': reflection['goal']}
-            decision['priority'] = 0.6
-            
+            decision['priority'] = 0.7
+        
         elif reflection['should_learn']:
             decision['type'] = 'learn'
             decision['priority'] = 0.3
+        elif reflection.get('should_browse_web'):
+            decision['type'] = 'web_browse'
+            decision['priority'] = 0.6
         
         return decision
     
     # ==================== ACTION EXECUTION ====================
     
-    async def _act(self, decision: Dict[str, Any], perception: Dict[str, Any]):
-        """Execute the decided action"""
-        # If there are files queued, prioritize processing one file now
-        if self.file_buffer:
-            file_info = self.file_buffer.popleft()
-            try:
-                # Run potentially blocking file learning in a thread
-                if hasattr(self.agent.brain, 'learn_from_file'):
-                    summary = await asyncio.to_thread(
-                        self.agent.brain.learn_from_file,
-                        file_info['path'],
-                        file_info.get('filetype')
-                    )
-                    log.info(f"[CognitiveLoop] Processed file {file_info['filename']}: {str(summary)[:120]}")
-                    # Remember the file processing event in memory
-                    self.agent.memory.remember({
-                        'type': 'file_processed',
-                        'filename': file_info['filename'],
-                        'path': file_info['path'],
-                        'filetype': file_info.get('filetype'),
-                        'summary': summary,
-                        'timestamp': time.time()
-                    })
-                    try:
-                        from unified_chat_system import chat_system
-                        await chat_system.send_message(
-                            self.agent.agent_id,
-                            f"Processed file: {file_info['filename']}\nSummary: {summary}",
-                            target='both',
-                            sender='agent'
-                        )
-                    except Exception:
-                        # It's optional to notify frontend
-                        pass
-            except Exception as e:
-                log.error(f"[CognitiveLoop] Error processing file {file_info.get('filename')}: {e}")
-                # If processing failed, don't drop it silently — keep a short retry window
-                # push back to buffer for a later attempt
-                self.file_buffer.append(file_info)
-                await asyncio.sleep(0.5)
-            # After processing a file, return early to avoid doing other actions this cycle
-            return
+    async def _act(self, decision: Dict[str, Any], 
+                   perception: Dict[str, Any],
+                   thoughts: Dict[str, Any]):
+        """Execute decision - INCLUDING FILES"""
         
-        if decision['type'] == 'speak':
-            await self._execute_speech(perception)
-            
+        if decision['type'] == 'process_file':
+            await self._execute_file_processing(decision['content'])
+        
+        elif decision['type'] == 'speak':
+            await self._execute_autonomous_speech(perception, thoughts, decision['content'])
+        
         elif decision['type'] == 'action':
-            await self._execute_action(decision['content'], perception)
-            
+            await self._execute_action(perception)
+        
         elif decision['type'] == 'learn':
             self._execute_learning()
+        
+        elif decision['type'] == 'web_browse':
+            await self._execute_web_browsing()
     
-    async def _execute_speech(self, perception: Dict[str, Any]):
-        """Generate and send autonomous speech"""
-        if not hasattr(self.agent.brain, 'generate_speech'):
+    async def _execute_file_processing(self, file_info: Dict[str, Any]):
+        """
+        Process uploaded file autonomously.
+        CRITICAL: This is how agents learn from documents.
+        """
+        if not file_info:
             return
         
-        context = perception['state']
-        
         try:
-            speech = self.agent.brain.generate_speech(context)
+            file_path = file_info['path']
+            filename = file_info['filename']
+            filetype = file_info.get('filetype', 'text/plain')
             
-            if speech:
-                # Import here to avoid circular dependency
+            log.info(f"[{self.agent.agent_id}] 📄 Processing file: {filename}")
+            
+            # Remove from queue
+            if self.file_buffer and self.file_buffer[0] == file_info:
+                self.file_buffer.popleft()
+            
+            # Process using brain's file learning
+            if hasattr(self.agent.brain, 'learn_from_file'):
+                summary = await asyncio.to_thread(
+                    self.agent.brain.learn_from_file,
+                    file_path,
+                    filetype
+                )
+                
+                log.info(f"[{self.agent.agent_id}] ✅ File processed: {summary[:120]}")
+                
+                # Store processing result in memory
+                self.agent.memory.remember({
+                    'type': 'file_processed',
+                    'filename': filename,
+                    'path': file_path,
+                    'filetype': filetype,
+                    'summary': summary,
+                    'timestamp': time.time()
+                }, tags=['learning', 'file', 'processed'])
+                
+                # Notify via chat system
                 try:
                     from unified_chat_system import chat_system
-                    
                     await chat_system.send_message(
                         self.agent.agent_id,
-                        speech,
-                        target="both",
-                        sender="agent"
+                        f"📄 Processed file: {filename}\n\n{summary}",
+                        target='both',
+                        sender='agent'
                     )
-                    
-                    self.last_speech_time = time.time()
-                    log.info(f"[{self.agent.agent_id}] 💬 Autonomous: {speech[:60]}")
-                    
-                except ImportError:
-                    log.warning("unified_chat_system not available")
-                    
+                except Exception as e:
+                    log.debug(f"Chat notification failed: {e}")
+            
+            else:
+                log.warning(f"No file learning capability in brain")
+            
         except Exception as e:
-            log.error(f"Speech execution error: {e}")
+            log.error(f"File processing error: {e}", exc_info=True)
+            # Re-queue for retry (max 3 attempts)
+            if file_info.get('_retry_count', 0) < 3:
+                file_info['_retry_count'] = file_info.get('_retry_count', 0) + 1
+                self.file_buffer.append(file_info)
+    async def _execute_web_browsing(self):
+        """
+        Execute autonomous web browsing.
+        Just browses queued URLs - brain/memory handle learning naturally.
+        """
+        if not hasattr(self.agent, 'web_browser'):
+            return
     
-    async def _execute_action(self, action_content: Dict[str, Any], 
-                             perception: Dict[str, Any]):
-        """Generate and execute autonomous action"""
         try:
-            # Build observation
+            from ai_core.web_browser import browse_if_curious
+            await browse_if_curious(self.agent, max_pages=2)
+        
+        except Exception as e:
+            log.error(f"Web browsing error: {e}")
+    
+    async def _execute_autonomous_speech(self, perception: Dict[str, Any],
+                                         thoughts: Dict[str, Any],
+                                         content: Dict[str, Any]):
+        """
+        Generate and broadcast autonomous speech.
+        This is where the agent ACTUALLY SPEAKS on its own!
+        """
+        try:
+            # Build context for language generation
+            context = perception['state'].copy()
+            context['recent_events'] = perception['recent_events']
+            context['speech_reason'] = content['reason']
+            context['language_desire'] = content['language_desire']
+            
+            # Generate speech using language intelligence
+            speech = self.agent.brain.language.generate_speech(context)
+            
+            if speech and len(speech.strip()) > 0:
+                # Store in unified memory
+                self.agent.memory.remember({
+                    'type': 'autonomous_speech',
+                    'text': speech,
+                    'reason': content['reason'],
+                    'context_snapshot': context
+                }, tags=['language', 'output', 'autonomous', 'speech'])
+                
+                # Broadcast to chat system
+                await self._broadcast_speech(speech)
+                
+                # Update state
+                self.last_speech_time = time.time()
+                self.state.last_speech = speech
+                self.state.speech_count += 1
+                
+                log.info(f"[{self.agent.agent_id}] 💬 SPOKE: \"{speech[:60]}...\"")
+                
+        except Exception as e:
+            log.error(f"Autonomous speech error: {e}", exc_info=True)
+    
+    async def _broadcast_speech(self, speech: str):
+        """Send speech to all connected systems"""
+        try:
+            from unified_chat_system import chat_system
+            
+            await chat_system.send_message(
+                agent_id=self.agent.agent_id,
+                message=speech,
+                target="both",
+                sender="agent",
+                is_emote=False
+            )
+            
+        except ImportError:
+            log.warning("Chat system not available - speech logged only")
+        except Exception as e:
+            log.error(f"Failed to broadcast speech: {e}")
+    
+    async def _execute_action(self, perception: Dict[str, Any]):
+        """Execute physical action"""
+        try:
             obs_dict = {
                 'health': perception['state']['health'],
                 'hunger': perception['state']['hunger'],
-                'position': {'x': 0, 'y': 64, 'z': 0},  # Default if no actual position
-                'entities': []
+                'position': {'x': 0, 'y': 64, 'z': 0}
             }
             
-            # Perceive
             obs = self.agent.perceive(obs_dict)
-            
-            # Decide action based on goal
-            goal = action_content.get('goal', 'observe')
-            
-            if goal == 'survive':
-                # Survival actions: cautious, defensive
-                action_array = self._generate_survival_action(obs)
-            elif goal == 'explore':
-                # Exploration: movement-focused
-                action_array = self._generate_exploration_action(obs)
-            else:
-                # Normal decision
-                action_array = self.agent.decide(obs, deterministic=False)
-            
-            # Convert to action dict
+            action_array = self.agent.decide(obs, deterministic=False)
             action_dict = self.agent.act(action_array)
             
-            # Send to actuators if available
-            if hasattr(self.agent, 'client_process') and self.agent.client_process:
-                # Has Minecraft client - send via IPC
-                try:
-                    from ai_core.actuators import ForgeIPCClient
-                    # Client would be managed elsewhere, just log for now
-                    pass
-                except ImportError:
-                    pass
-            
             self.last_action_time = time.time()
-            log.debug(f"[{self.agent.agent_id}] ⚡ Action: {goal}")
             
         except Exception as e:
             log.error(f"Action execution error: {e}")
     
-    def _generate_survival_action(self, obs: np.ndarray) -> np.ndarray:
-        """Generate cautious survival-focused action"""
-        # Bias toward defensive actions
-        action = self.agent.decide(obs, deterministic=True)  # More predictable
-        
-        # Reduce aggression, increase caution
-        action[4] = min(action[4], 0.0)  # Reduce attack
-        action[3] = max(action[3], 0.5)  # Increase sneak
-        
-        return action
-    
-    def _generate_exploration_action(self, obs: np.ndarray) -> np.ndarray:
-        """Generate movement-focused exploration action"""
-        action = self.agent.decide(obs, deterministic=False)
-        
-        # Bias toward movement
-        action[0] = np.clip(action[0] + 0.2, -1.0, 1.0)  # More forward
-        action[2] = max(action[2], 0.3)  # Some jumping for terrain
-        
-        return action
-    
     def _execute_learning(self):
-        """Trigger continual learning update"""
+        """Trigger learning update"""
         try:
-            if not hasattr(self.agent, 'episodic_memory'):
-                return
-            
-            if len(self.agent.episodic_memory) < 32:
-                return
-            
-            # Sample batch for learning
-            batch = self.agent.episodic_memory.sample(batch_size=32)
-            
-            # Store in brain's continual buffer
-            if hasattr(self.agent.brain, 'continual_buffer'):
-                experience = {
-                    'observations': batch[0],
-                    'actions': batch[1],
-                    'rewards': batch[2],
-                    'next_observations': batch[3],
-                    'dones': batch[4],
-                    'task': self.agent.brain.current_task,
-                    'timestamp': time.time()
-                }
-                self.agent.brain.continual_buffer.append(experience)
+            # Train language on recent experiences
+            if hasattr(self.agent.brain, 'language'):
+                # Use unified memory for training
+                training_batch = self.agent.memory.get_training_batch(
+                    batch_size=32,
+                    tags=['language', 'action', 'perception']
+                )
+                
+                if training_batch:
+                    # Process batch through language system
+                    for event in training_batch:
+                        if 'text' in event:
+                            context = event.get('context_snapshot', {})
+                            self.agent.brain.language.process_language_input(
+                                event['text'],
+                                context
+                            )
             
             self.last_learning_time = time.time()
-            log.debug(f"[{self.agent.agent_id}] 📚 Learning update with batch_size=32")
+            log.debug(f"[{self.agent.agent_id}] 📚 Learning update")
             
         except Exception as e:
             log.error(f"Learning execution error: {e}")
@@ -687,29 +765,17 @@ class CognitiveLoop:
     def _update_cognitive_state(self, perception: Dict[str, Any],
                                 thoughts: Dict[str, Any],
                                 reflection: Dict[str, Any]):
-        """Update internal cognitive state for next cycle"""
-        
-        # Update focus
+        """Update internal cognitive state"""
         self.state.current_focus = thoughts.get('focus')
-        
-        # Update goal
-        self.state.active_goal = reflection.get('goal')
-        
-        # Update attention based on novelty and urgency
-        novelty_factor = perception['novelty']
-        urgency_factor = perception['urgency']
-        self.state.attention_level = (novelty_factor + urgency_factor) / 2.0
-        
-        # Energy decay (simulate fatigue)
-        self.state.energy_level *= 0.9995  # Very slow decay
-        self.state.energy_level = max(0.3, self.state.energy_level)  # Min 30%
+        self.state.attention_level = (perception['novelty'] + perception['urgency']) / 2.0
+        self.state.energy_level *= 0.9995
+        self.state.energy_level = max(0.3, self.state.energy_level)
         
         # Store significant events
         if perception['novelty'] > 0.7 or perception['urgency'] > 0.7:
             self.state.last_significant_event = {
                 'perception': perception,
                 'thoughts': thoughts,
-                'reflection': reflection,
                 'timestamp': time.time()
             }
         
@@ -719,62 +785,99 @@ class CognitiveLoop:
     # ==================== INPUT RECEPTION ====================
     
     def receive_visual_input(self, frame: np.ndarray, metadata: Optional[Dict] = None):
-        """Receive visual input from camera/game"""
-        self.visual_buffer.append({
-            'frame': frame,
-            'timestamp': time.time(),
-            'metadata': metadata or {}
-        })
+        """Receive visual input"""
+        self.agent.memory.remember({
+            'type': 'visual_input',
+            'metadata': metadata or {},
+            'frame_shape': frame.shape if frame is not None else None
+        }, tags=['perception', 'visual'])
     
     def receive_audio_input(self, audio: np.ndarray, sample_rate: int, 
                            metadata: Optional[Dict] = None):
-        """Receive audio input from microphone/game"""
-        self.audio_buffer.append({
-            'audio': audio,
+        """Receive audio input"""
+        self.agent.memory.remember({
+            'type': 'audio_input',
             'sample_rate': sample_rate,
-            'timestamp': time.time(),
-            'metadata': metadata or {}
-        })
+            'metadata': metadata or {},
+            'duration': len(audio) / sample_rate if audio is not None else 0
+        }, tags=['perception', 'audio'])
     
     def receive_state_update(self, state: Dict[str, Any]):
-        """Receive game state update"""
-        self.state_buffer.append({
-            'state': state,
-            'timestamp': time.time()
-        })
-        
-        # Update agent's direct state
+        """Receive state update"""
         if 'health' in state:
             self.agent.health = state['health']
         if 'hunger' in state:
             self.agent.hunger = state['hunger']
     
-    def receive_event(self, event: Dict[str, Any]):
-        """Receive custom event"""
-        self.event_buffer.append(event)
-    
     def receive_file(self, file_info: Dict[str, Any]):
-        """Receive file for cognitive processing (from upload endpoint)"""
+        """Receive file for processing"""
         self.file_buffer.append(file_info)
-        log.info(f"[CognitiveLoop] File queued for processing: {file_info['filename']}")
+        log.info(f"[CognitiveLoop] File queued: {file_info['filename']}")
+
+    # ==================== BROADCASTING ====================
     
+    async def _broadcast_internal_thought(self, thought: str):
+        """Send internal thought to frontend (not spoken aloud)"""
+        try:
+            from unified_chat_system import chat_system
+
+            # Mark as internal thought with special prefix
+            await chat_system.send_thought(
+                agent_id=self.agent.agent_id,
+                thought=f"💭 {thought}",
+                is_internal=True
+            )
+        except Exception as e:
+            log.debug(f"Failed to broadcast internal thought: {e}")
+
+
+    async def _broadcast_mental_workspace(self, workspace_data: Dict[str, Any]):
+        """Send world model visualization to frontend"""
+        try:
+            from unified_chat_system import chat_system
+
+            await chat_system.send_visualization(
+                agent_id=self.agent.agent_id,
+                visualization_data=workspace_data
+            )
+        except Exception as e:
+            log.debug(f"Failed to broadcast workspace: {e}")
+    
+    async def _broadcast_audio_heard(self, transcription: str, emotion: Optional[str]):
+        """Broadcast heard audio to frontend"""
+        try:
+            from unified_chat_system import chat_system
+
+            emotion_emoji = {
+                'excited': '😄',
+                'angry': '😠',
+                'sad': '😢',
+                'calm': '😌',
+                'neutral': '😐'
+            }.get(emotion, '👂')
+
+            await chat_system.send_message(
+                agent_id=self.agent.agent_id,
+                message=f"{emotion_emoji} Heard: \"{transcription}\"",
+                target='both',
+                sender='system'
+            )
+        except Exception as e:
+            log.debug(f"Failed to broadcast audio: {e}")
+
     # ==================== STATUS ====================
     
     def get_status(self) -> Dict[str, Any]:
-        """Get current cognitive loop status"""
+        """Get cognitive loop status"""
         return {
             'running': self.running,
             'cycle_count': self.state.cycle_count,
+            'speech_count': self.state.speech_count,
+            'last_speech': self.state.last_speech,
             'focus': self.state.current_focus,
-            'goal': self.state.active_goal,
             'attention': self.state.attention_level,
             'energy': self.state.energy_level,
-            'buffers': {
-                'visual': len(self.visual_buffer),
-                'audio': len(self.audio_buffer),
-                'events': len(self.event_buffer)
-            },
-            'last_action': self.last_action_time,
-            'last_speech': self.last_speech_time,
-            'last_learning': self.last_learning_time
+            'last_speech_time': self.last_speech_time,
+            'speech_cooldown': self.speech_cooldown,
+            'files_queued': len(self.file_buffer)
         }

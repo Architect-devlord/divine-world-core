@@ -17,17 +17,17 @@ class Config:
     
     # ==================== PATHS ====================
     BASE_DIR = Path(__file__).parent.parent
-    PY_BACKEND_DIR = BASE_DIR / "py_backend"
-    AI_CORE_DIR = BASE_DIR / "ai_core"
+    PY_BACKEND_DIR = Path(__file__).parent
+    AI_CORE_DIR = PY_BACKEND_DIR / "ai_core"
     
-    DATA_DIR = BASE_DIR / "data"
+    NPC_APPLICATIONS_DIR = BASE_DIR / "npc_applications"
+    # Unify storage under `npc_applications/data` for portability
+    DATA_DIR = NPC_APPLICATIONS_DIR / "data"
     BRAINS_DIR = DATA_DIR / "brains"
     UPLOADS_DIR = DATA_DIR / "uploads"
     AGENTS_DIR = DATA_DIR / "agents"
     DEMOS_DIR = DATA_DIR / "demos"
     TEACHING_DIR = DATA_DIR / "teaching_materials"
-    
-    NPC_APPLICATIONS_DIR = BASE_DIR / "npc_applications"
     
     # Frontend paths
     FRONTEND_DIR = BASE_DIR / "dw_agent" / "electron" / "react-app"

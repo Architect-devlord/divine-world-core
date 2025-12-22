@@ -158,6 +158,15 @@ class ControllerRuntime:
         self.stats = {'frames_processed': 0, 'audio_chunks_processed': 0, 'files_processed': 0, 'learning_events': 0}
         self.callback = callback
         self._lock = threading.Lock()  # Thread-safe updates for agent
+        
+        # Permission control
+        self.permission_settings = {}  # Will be set from controller activate endpoint
+        self.enabled_permissions = {
+            'camera': False,
+            'microphone': False,
+            'filesystem': False,
+            'network': False
+        }
 
     # --- Camera / Microphone Detection ---
 
@@ -210,16 +219,24 @@ class ControllerRuntime:
         return cameras[0]
 
     def start_camera(self, camera_index: Optional[int] = None, resolution: Tuple[int, int] = (640, 480), fps: int = 20):
+        # Check permission first
+        if not self.enabled_permissions.get('camera', False):
+            log.warning("❌ Camera access DENIED by permission settings")
+            return False
+        
         if self.camera and self.camera.running:
             log.warning("Camera already running")
-            return
+            return False
         if camera_index is None:
             detected = self.auto_detect_camera()
             if not detected:
                 raise RuntimeError("No cameras detected")
             camera_index = detected['index']
+        
+        log.info(f"✅ Starting camera (permission granted)")
         self.camera = CameraCapture(camera_index, fps, resolution)
         self.camera.start()
+        return True
 
     def list_microphones(self) -> List[Dict[str, Any]]:
         if sd is None:
@@ -241,13 +258,43 @@ class ControllerRuntime:
         return mics[0] if mics else None
 
     def start_microphone(self, device_index: Optional[int] = None, sample_rate: int = 16000):
+        # Check permission first
+        if not self.enabled_permissions.get('microphone', False):
+            log.warning("❌ Microphone access DENIED by permission settings")
+            return False
+        
         if sd is None:
             raise RuntimeError("sounddevice not installed")
         if self.microphone and self.microphone.running:
             log.warning("Microphone already running")
-            return
+            return False
+        
+        log.info(f"✅ Starting microphone (permission granted)")
         self.microphone = MicrophoneCapture(device_index, sample_rate)
         self.microphone.start()
+        return True
+
+    # --- Permission Checks ---
+    
+    def can_access_filesystem(self) -> bool:
+        """Check if filesystem access is permitted"""
+        return self.enabled_permissions.get('filesystem', False)
+    
+    def can_access_network(self) -> bool:
+        """Check if network access is permitted"""
+        return self.enabled_permissions.get('network', False)
+    
+    def can_use_camera(self) -> bool:
+        """Check if camera access is permitted"""
+        return self.enabled_permissions.get('camera', False)
+    
+    def can_use_microphone(self) -> bool:
+        """Check if microphone access is permitted"""
+        return self.enabled_permissions.get('microphone', False)
+    
+    def log_permission_denied(self, resource: str):
+        """Log when a resource is accessed but permission is denied"""
+        log.warning(f"🔒 Access to {resource} denied by permission settings")
 
     # --- Learning ---
 
@@ -300,6 +347,31 @@ class ControllerRuntime:
         if self.running:
             log.warning("Controller already running")
             return
+        
+        # Start camera if vision enabled and permission granted
+        if vision and self.enabled_permissions.get('camera', False):
+            try:
+                self.start_camera()
+                log.info("📹 Camera initialized with permission")
+            except Exception as e:
+                log.error(f"Failed to initialize camera: {e}")
+                vision = False
+        elif vision and not self.enabled_permissions.get('camera', False):
+            log.info("📹 Vision requested but camera permission DENIED")
+            vision = False
+        
+        # Start microphone if audio enabled and permission granted
+        if audio and self.enabled_permissions.get('microphone', False):
+            try:
+                self.start_microphone()
+                log.info("🎤 Microphone initialized with permission")
+            except Exception as e:
+                log.error(f"Failed to initialize microphone: {e}")
+                audio = False
+        elif audio and not self.enabled_permissions.get('microphone', False):
+            log.info("🎤 Audio requested but microphone permission DENIED")
+            audio = False
+        
         self.running = True
         if vision and self.camera:
             self.vision_thread = threading.Thread(target=self._vision_loop, daemon=True)

@@ -4,7 +4,8 @@ Request validation and sanitization with Pydantic.
 Prevents injection attacks and ensures data integrity.
 """
 
-from pydantic import BaseModel, Field, validator
+from ast import pattern
+from pydantic import BaseModel, Field, field_validator, validator
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 import re
@@ -12,9 +13,9 @@ import re
 class ChatRequest(BaseModel):
     """Chat message validation"""
     message: str = Field(..., min_length=1, max_length=10000)
-    agent_id: str = Field(default="demo", regex="^[a-zA-Z0-9_-]+$")
+    agent_id: str = Field(default="demo", pattern="^[a-zA-Z0-9_-]+$")
     
-    @validator('message')
+    @field_validator('message')
     def sanitize_message(cls, v):
         """Remove dangerous characters and limit formatting"""
         # Strip leading/trailing whitespace
@@ -31,7 +32,7 @@ class ChatRequest(BaseModel):
         
         return v
     
-    @validator('agent_id')
+    @field_validator('agent_id')
     def validate_agent_id(cls, v):
         """Ensure agent_id is safe"""
         if len(v) > 100:
@@ -47,10 +48,10 @@ class ChatRequest(BaseModel):
 class FileUploadRequest(BaseModel):
     """File upload validation"""
     filename: str = Field(..., max_length=255)
-    agent_id: str = Field(default="demo", regex="^[a-zA-Z0-9_-]+$")
+    agent_id: str = Field(default="demo", pattern="^[a-zA-Z0-9_-]+$")
     filetype: str = Field(default="application/octet-stream")
     
-    @validator('filename')
+    @field_validator('filename')
     def safe_filename(cls, v):
         """Prevent path traversal and sanitize filename"""
         # Get just the filename (no path components)
@@ -77,7 +78,7 @@ class FileUploadRequest(BaseModel):
         
         return safe_name
     
-    @validator('filetype')
+    @field_validator('filetype')
     def validate_filetype(cls, v):
         """Ensure valid MIME type"""
         allowed_types = [
@@ -94,13 +95,13 @@ class FileUploadRequest(BaseModel):
 
 class AgentSpawnRequest(BaseModel):
     """Agent spawn validation"""
-    agent_id: str = Field(..., regex="^[a-zA-Z0-9_-]+$", min_length=3, max_length=50)
-    gender: Optional[str] = Field(default=None, regex="^(male|female|dual)$")
-    agent_type: str = Field(default="npc", regex="^(npc|god_[a-z]+)$")
+    agent_id: str = Field(..., pattern="^[a-zA-Z0-9_-]+$", min_length=3, max_length=50)
+    gender: Optional[str] = Field(default=None, pattern="^(male|female|dual)$")
+    agent_type: str = Field(default="npc", pattern="^(npc|god_[a-z]+)$")
     server_addr: str = Field(default="127.0.0.1:25565")
     persona_traits: Optional[Dict[str, float]] = None
     
-    @validator('server_addr')
+    @field_validator('server_addr')
     def validate_server(cls, v):
         """Validate server address format"""
         # Must be host:port or IP:port
@@ -116,7 +117,7 @@ class AgentSpawnRequest(BaseModel):
         
         return v
     
-    @validator('persona_traits')
+    @field_validator('persona_traits')
     def validate_traits(cls, v):
         """Validate personality traits"""
         if v is None:
@@ -144,7 +145,7 @@ class AgentSpawnRequest(BaseModel):
 
 class ControllerActivationRequest(BaseModel):
     """Controller mode activation validation"""
-    agent_id: str = Field(..., regex="^[a-zA-Z0-9_-]+$")
+    agent_id: str = Field(..., pattern="^[a-zA-Z0-9_-]+$")
     permissions: List[str] = Field(default_factory=list)
     acknowledged: bool = Field(default=False)
     camera_index: Optional[int] = Field(default=None, ge=0, le=10)
@@ -153,13 +154,13 @@ class ControllerActivationRequest(BaseModel):
     fps: int = Field(default=20, ge=1, le=60)
     mic_sample_rate: int = Field(default=16000, ge=8000, le=48000)
     
-    @validator('permissions')
+    @field_validator('permissions')
     def validate_permissions(cls, v):
         """Ensure only valid permissions"""
         valid = ['camera', 'microphone', 'filesystem', 'network']
         return [p for p in v if p in valid]
     
-    @validator('resolution')
+    @field_validator('resolution')
     def validate_resolution(cls, v):
         """Ensure valid resolution"""
         if len(v) != 2:
@@ -180,7 +181,7 @@ class TaskSwitchRequest(BaseModel):
     """Continual learning task switch validation"""
     task_id: int = Field(..., ge=0, le=1000)
     
-    @validator('task_id')
+    @field_validator('task_id')
     def validate_task_id(cls, v):
         """Ensure reasonable task ID"""
         if v < 0:
@@ -192,12 +193,12 @@ class TaskSwitchRequest(BaseModel):
 
 class PlayerEventRequest(BaseModel):
     """Player event validation"""
-    agent_id: str = Field(..., regex="^[a-zA-Z0-9_-]+$")
-    player_uuid: str = Field(..., regex="^[a-f0-9-]+$")
+    agent_id: str = Field(..., pattern="^[a-zA-Z0-9_-]+$")
+    player_uuid: str = Field(..., pattern="^[a-f0-9-]+$")
     agent_type: str = Field(default="npc")
-    event: str = Field(..., regex="^(connected|disconnected)$")
-    
-    @validator('player_uuid')
+    event: str = Field(..., pattern="^(connected|disconnected)$")
+
+    @field_validator('player_uuid')
     def validate_uuid(cls, v):
         """Validate UUID format"""
         # Standard UUID format: 8-4-4-4-12

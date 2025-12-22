@@ -1,60 +1,85 @@
-# ai_core/agent.py - UNIFIED AGENT (NEURAL-ENABLED) - LANGUAGE FIXED
+# ai_core/agent.py - COMPLETE UNIFIED VERSION
 """
-Unified NPC Agent implementation with integrated neural stack:
-- World Model (Dreamer-style)
-- Transformer Language Learning (TRUE learning, not chatbot wrapper)
-- Personality, Emotion, Memory, Cognitive Planning
-- Full BrainCapsule persistence
+Unified NPC Agent with Full Integration
+========================================
+Merges agent.py and aggent.py into single comprehensive implementation:
+- UnifiedMemoryStore (ScyllaDB backend)
+- Complete autonomous cognitive loop
+- Transformer language learning
+- World model integration
+- Full persistence with BrainCapsule
 """
+
 import torch
 import numpy as np
 import time
 import logging
+import asyncio
+import sys
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
+# Add parent directory to path so ai_core can be imported
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from ai_core.personality import Personality, GenderType
 from ai_core.emotion import EmotionSystem
-from ai_core.memory import Memory, EpisodicMemory
 from ai_core.reward_system import ImprovedRewardSystem
 from ai_core.brain_core import BrainCore
 from ai_core.planner import CognitivePlanner
-from ai_core.config_loader import get_section, get_device
+
+# UNIFIED MEMORY
+from ai_core.unified_memory import UnifiedMemoryStore
+
+# COGNITIVE LOOP
+from ai_core.cognitive_loop import CognitiveLoop
 
 log = logging.getLogger("agent")
 
 
 class NPCAgent:
     """
-    NPC agent with:
-    - Personality (including gender)
-    - Emotions
-    - Memory
-    - AI brain with transformer language learning
-    - Client process info (if spawned)
-    - Neural stack (WorldModel + optional extensions)
+    Fully autonomous NPC agent with:
+    - UnifiedMemoryStore (ScyllaDB backend)
+    - Cognitive loop (autonomous thinking)
+    - Transformer language learning
+    - World model integration
+    - Complete persistence
     """
 
     def __init__(self,
                  agent_id: str,
                  gender: Optional[GenderType] = None,
                  persona_traits: Optional[Dict[str, float]] = None,
-                 client_process=None):
+                 client_process=None,
+                 autonomous: bool = True,
+                 use_scylla: bool = True):
+        
         self.agent_id = agent_id
+        self.autonomous_mode = autonomous
 
-        # Core components with gender
+        # Core components
         if gender is None:
             from ai_core.personality import assign_npc_gender
             gender = assign_npc_gender()
 
         self.personality = Personality(gender=gender, traits=persona_traits)
         self.emotion = EmotionSystem()
-        self.memory = Memory(capacity=10000)
-        self.episodic_memory = EpisodicMemory(capacity=10000)
-
-        # Cognitive components
+        
+        # UNIFIED MEMORY with ScyllaDB
+        self.memory = UnifiedMemoryStore(
+            agent_id=agent_id,
+            capacity=10000,
+            use_scylla=use_scylla,
+            scylla_hosts=['127.0.0.1']
+        )
+        
+        # Brain
         self.brain = BrainCore(agent_ref=self)
         self.planner = CognitivePlanner(brain=self.brain)
+        
+        # Initialize language intelligence
+        self._init_language()
 
         # State
         self.health = 20.0
@@ -63,33 +88,92 @@ class NPCAgent:
         self.last_action = None
         self.step_count = 0
 
-        # Client process info (if spawned with Minecraft client)
+        # Client process info
         self.client_process = client_process
-        self.agent_type = 'npc'  # or 'god_wither', etc.
-
+        self.agent_type = 'npc'
+        
         # AI components (lazy loading)
         self.policy = None
         self.reward_system = None
-
+        
         # Neural stack placeholders
         self.world_model = None
         self.world_model_trainer = None
         self.world_model_buffer = None
         self._neural_integrated = False
-
-        # Metadata for children/breeding
+        
+        # Metadata
         self.metadata = {}
-
-        # Initialize TRUE transformer-based language learning
-        self._init_language()
-
-        log.info(f"NPCAgent initialized: {agent_id} (gender: {gender})")
+        
+        # COGNITIVE LOOP
+        self.cognitive_loop = None
+        self._init_world_model()
+        self._init_audio_processor()
+        if self.autonomous_mode:
+            self._init_cognitive_loop()
+        
+        log.info(f"NPCAgent initialized: {agent_id} (gender: {gender}, autonomous: {autonomous})")
+        
+        try:
+            from ai_core.web_browser import add_web_browsing_to_agent
+            add_web_browsing_to_agent(self)
+            log.info(f"[{self.agent_id}] Web browsing initialized")
+        except Exception as e:
+            log.warning(f"Web browsing not available: {e}")
 
     def _init_language(self):
-        """Initialize transformer-based language learning (not chatbot)"""
+        """Initialize transformer-based language learning"""
         from ai_core.brain_language import add_language_to_brain
         add_language_to_brain(self.brain)
         log.info(f"[{self.agent_id}] Transformer language learning initialized")
+
+    def _init_cognitive_loop(self):
+        """Initialize autonomous cognitive loop"""
+        self.cognitive_loop = CognitiveLoop(
+            agent=self,
+            loop_interval=0.5
+        )
+        log.info(f"🧠 Cognitive loop initialized for {self.agent_id}")
+
+    def _init_world_model(self):
+        """Initialize world model for mental simulation"""
+        try:
+            from ai_core.world_model import integrate_world_model_with_agent
+            integrate_world_model_with_agent(self)
+            log.info(f"[{self.agent_id}] World model integrated")
+        except Exception as e:
+            log.warning(f"World model not available: {e}")
+    
+    def _init_audio_processor(self):
+        """Initialize audio processing for listening"""
+        try:
+            from ai_core.audio_processors import add_audio_processing_to_agent
+            add_audio_processing_to_agent(self)
+            log.info(f"[{self.agent_id}] Audio processing initialized")
+        except Exception as e:
+            log.warning(f"Audio processing not available: {e}")
+
+    # ================================================================
+    # ==================== AUTONOMOUS CONTROL ========================
+    # ================================================================
+
+    async def start_autonomous_mode(self):
+        """Start fully autonomous operation"""
+        if not self.cognitive_loop:
+            self._init_cognitive_loop()
+        
+        await self.cognitive_loop.start()
+        log.info(f"✅ {self.agent_id} is now FULLY AUTONOMOUS")
+
+    async def stop_autonomous_mode(self):
+        """Stop autonomous operation"""
+        if self.cognitive_loop:
+            await self.cognitive_loop.stop()
+        log.info(f"🛑 {self.agent_id} autonomous mode stopped")
+
+    def is_autonomous(self) -> bool:
+        """Check if agent is running autonomously"""
+        return self.cognitive_loop and self.cognitive_loop.running
 
     # ================================================================
     # =============== CORE INITIALIZATION METHODS ====================
@@ -123,20 +207,16 @@ class NPCAgent:
     # ================================================================
 
     def integrate_neural_stack(self, force: bool = False):
-        """
-        Attach world_model to this NPCAgent instance lazily.
-        Language is already integrated in __init__ via brain_language.py
-        """
+        """Attach world_model to this NPCAgent instance"""
         if self._neural_integrated and not force:
             return
 
-        # Lazy import to avoid circular deps
         try:
             from ai_core import world_model as wm_module
         except Exception:
             wm_module = None
 
-        # ----------------- WORLD MODEL -----------------
+        # World Model
         try:
             if wm_module:
                 if hasattr(wm_module, "integrate_world_model_with_agent"):
@@ -149,7 +229,7 @@ class NPCAgent:
             log.exception(f"[{self.agent_id}] Failed to attach world_model: {e}")
 
         self._neural_integrated = True
-        log.info(f"[{self.agent_id}] Neural stack integrated (WorldModel).")
+        log.info(f"[{self.agent_id}] Neural stack integrated.")
 
     # ================================================================
     # ===================== PERCEPTION & ACTION ======================
@@ -198,15 +278,98 @@ class NPCAgent:
 
         # Memory state (2)
         obs_parts.append(len(self.memory.events) / 1000.0)
-        obs_parts.append(len(self.episodic_memory) / 1000.0)
+        obs_parts.append(0.0)  # Placeholder for episodic memory
 
         while len(obs_parts) < 50:
             obs_parts.append(0.0)
 
         obs_array = np.array(obs_parts[:50], dtype=np.float32)
         self.last_obs = obs_array
+        
+        # Feed to cognitive loop
+        if self.cognitive_loop and self.cognitive_loop.running:
+            self.cognitive_loop.receive_state_update({
+                'health': self.health,
+                'hunger': self.hunger,
+                'raw_observation': raw_observation
+            })
+        
         return obs_array
+    
+    def imagine_scenario(self, scenario: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Use world model to mentally simulate a scenario.
+        Returns visualization data for frontend.
+        Called ONLY when cognitive loop decides to simulate.
+        """
+        if not hasattr(self, 'world_model'):
+            return {'type': 'thought_flow', 'label': 'No World Model'}
 
+        try:
+            # Get mental workspace from world model
+            workspace = None
+
+            # Try world model first
+            if hasattr(self.world_model, 'mental_workspace'):
+                workspace = self.world_model.mental_workspace
+            # Fallback to reasoning core
+            elif hasattr(self.brain, 'reasoning') and hasattr(self.brain.reasoning, 'mental_workspace'):
+                workspace = self.brain.reasoning.mental_workspace
+
+            if workspace:
+                # Extract objects for visualization
+                objects = []
+                for obj in workspace.objects:
+                    objects.append({
+                        'id': obj.get('id'),
+                        'type': obj.get('type', 'unknown'),
+                        'position': obj.get('position', [0, 0, 0]),
+                        'properties': obj.get('properties', {})
+                    })
+
+                return {'type': 'world_model','label': 'Mental Simulation','objects': objects}
+
+        except Exception as e:
+            log.error(f"Mental simulation error: {e}")
+
+        return {'type': 'thought_flow', 'label': 'Thinking...'}
+
+    def generate_internal_thought(self, context: Dict[str, Any]) -> Optional[str]:
+        """
+        Generate internal monologue when cognitive loop decides agent should think.
+        Returns None if agent decides not to think in words.
+        """
+        try:
+            # Only if language system exists and is advanced enough
+            if not hasattr(self.brain, 'language'):
+                return None
+
+            if self.brain.language.language_stage < 1:
+                return None  # Pre-linguistic, can't think in words yet
+
+            # Agent autonomously decides if it wants to think in words
+            # Based on personality and situation
+            sociability = self.personality.traits.get('sociability', 0.5)
+            openness = self.personality.traits.get('openness', 0.5)
+
+            # Introverted agents think more internally
+            think_probability = (1.0 - sociability + openness) / 2.0
+
+            if np.random.rand() > think_probability:
+                return None  # Agent chooses not to verbalize thoughts
+
+            # Generate internal thought
+            internal = self.brain.language.generate_speech(context)
+
+            # Only return if meaningful
+            if internal and len(internal.strip()) > 2:
+                return internal
+
+        except Exception as e:
+            log.error(f"Internal thought generation error: {e}")
+
+        return None    
+    
     def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         """Make decision based on observation"""
         if self.policy is None:
@@ -260,11 +423,14 @@ class NPCAgent:
             obs_t, action_t, next_obs_t, outcome
         )
 
-        self.episodic_memory.store(
-            obs=obs, action=action, reward=reward,
-            next_obs=next_obs, done=outcome.get('is_dead', False),
-            importance=abs(reward)
-        )
+        # Store in UNIFIED MEMORY
+        self.memory.remember({
+            'type': 'experience',
+            'obs': obs.tolist(),
+            'action': action.tolist(),
+            'reward': reward,
+            'outcome': outcome
+        }, tags=['learning', 'experience', 'rl'])
 
         self._update_emotions(reward, reward_info)
         self.emotion.decay()
@@ -303,12 +469,20 @@ class NPCAgent:
             'personality': self.personality.to_dict(),
             'emotions': self.emotion.snapshot(),
             'memory_size': len(self.memory.events),
-            'dominant_emotion': self.emotion.dominant_emotion()
+            'dominant_emotion': self.emotion.dominant_emotion(),
+            'autonomous': self.is_autonomous()
         }
 
-        # Add language progress
+        # Language progress
         if hasattr(self.brain, 'language'):
             info['language'] = self.brain.get_language_progress()
+
+        # Cognitive loop status
+        if self.cognitive_loop:
+            info['cognitive_status'] = self.cognitive_loop.get_status()
+
+        # Memory stats
+        info['memory_stats'] = self.memory.get_stats()
 
         if self.client_process:
             info['backend_url'] = self.client_process.backend_url
@@ -324,11 +498,10 @@ class NPCAgent:
     # ================================================================
 
     def save(self, path: str):
-        """Save agent state with neural components and TRUE transformer language"""
+        """Save agent state with neural components"""
         from ai_core.brain_capsule import BrainCapsule
-        import time
 
-        # Get TRUE transformer language state (not old hardcoded system)
+        # Get language state
         language_state = None
         if hasattr(self.brain, 'language'):
             language_state = self.brain.language.state_dict()
@@ -339,7 +512,8 @@ class NPCAgent:
                 'agent_type': self.agent_type,
                 'gender': self.personality.gender,
                 'step_count': self.step_count,
-                'saved_at': time.time()
+                'saved_at': time.time(),
+                'autonomous': self.autonomous_mode
             },
             personality=self.personality.to_dict(),
             emotion_snapshot=self.emotion.snapshot(),
@@ -351,7 +525,7 @@ class NPCAgent:
         if self.policy:
             capsule.model_state = self.policy.state_dict()
 
-        # ----------------- Neural stack persistence -----------------
+        # Neural stack persistence
         extra_model_state = {}
 
         try:
@@ -360,14 +534,10 @@ class NPCAgent:
                     extra_model_state['world_model'] = {
                         k: v.cpu() for k, v in self.world_model.state_dict().items()
                     }
-                elif hasattr(self.world_model, "export_to_braincapsule_dict"):
-                    extra_model_state['world_model'] = self.world_model.export_to_braincapsule_dict()
-                else:
-                    extra_model_state['world_model'] = {"repr": repr(self.world_model)}
         except Exception as e:
             log.exception(f"[{self.agent_id}] Error serializing neural stack: {e}")
 
-        # merge into capsule
+        # Merge into capsule
         try:
             capsule_model_state = getattr(capsule, "model_state", {}) or {}
             capsule_model_state.update(extra_model_state)
@@ -379,7 +549,7 @@ class NPCAgent:
         log.info(f"[{self.agent_id}] Saved to {path}")
 
     def load(self, path: str):
-        """Load agent state with neural components and TRUE transformer language"""
+        """Load agent state with neural components"""
         from ai_core.brain_capsule import BrainCapsule
 
         capsule = BrainCapsule.load(path)
@@ -395,19 +565,19 @@ class NPCAgent:
         # Restore memory
         if capsule.memory_snapshot:
             for event in capsule.memory_snapshot:
-                self.memory.remember(event)
+                self.memory.remember(event, tags=event.get('tags', []))
 
-        # Restore TRUE transformer language state
+        # Restore language
         if capsule.language_state:
             if hasattr(self.brain, 'language'):
                 self.brain.language.load_state_dict(capsule.language_state)
-                log.info(f"[{self.agent_id}] Transformer language restored.")
+                log.info(f"[{self.agent_id}] Language restored.")
 
         # Restore model weights
         if capsule.model_state and self.policy:
             self.policy.load_state_dict(capsule.model_state)
 
-        # Restore neural stack (world_model)
+        # Restore neural stack
         try:
             saved_state = getattr(capsule, "model_state", {}) or {}
             if 'world_model' in saved_state:
@@ -415,6 +585,7 @@ class NPCAgent:
                     from ai_core import world_model as wm_module
                 except Exception:
                     wm_module = None
+                
                 wm_state = saved_state['world_model']
                 if wm_module and hasattr(wm_module, "WorldModel"):
                     self.world_model = wm_module.WorldModel(agent_id=self.agent_id)
@@ -426,5 +597,84 @@ class NPCAgent:
         # Metadata
         self.step_count = capsule.metadata.get('step_count', 0)
         self.agent_type = capsule.metadata.get('agent_type', 'npc')
+        self.autonomous_mode = capsule.metadata.get('autonomous', True)
 
         log.info(f"[{self.agent_id}] Loaded from {path}")
+
+    # ================================================================
+    # ====================== CLEANUP =================================
+    # ================================================================
+
+    async def shutdown(self):
+        """Graceful shutdown"""
+        # Stop cognitive loop
+        if self.cognitive_loop:
+            await self.stop_autonomous_mode()
+        
+        # Save state
+        brain_path = Path(f"data/brains/{self.agent_id}/brain.pcap")
+        brain_path.parent.mkdir(parents=True, exist_ok=True)
+        self.save(str(brain_path))
+        
+        # Close memory backend
+        if hasattr(self.memory, 'close'):
+            self.memory.close()
+        
+        log.info(f"[{self.agent_id}] Shutdown complete")
+
+
+# =============================================================================
+# HELPER: Run agent autonomously
+# =============================================================================
+
+async def run_autonomous_agent(agent: NPCAgent, duration: Optional[float] = None):
+    """
+    Run agent in fully autonomous mode.
+    
+    Args:
+        agent: NPCAgent instance
+        duration: How long to run (None = indefinite)
+    """
+    print(f"\n{'='*70}")
+    print(f"  🧠 STARTING AUTONOMOUS AGENT: {agent.agent_id}")
+    print(f"{'='*70}")
+    print(f"  Personality: {agent.personality.to_dict()}")
+    print(f"  Memory Backend: {agent.memory.get_stats()['backend']}")
+    if hasattr(agent.brain, 'language'):
+        print(f"  Language Stage: {agent.brain.language.language_stage}")
+        print(f"  Vocabulary: {agent.brain.language.vocab.next_id} words")
+    print(f"  Memory: {len(agent.memory.events)} events")
+    print(f"{'='*70}\n")
+    
+    await agent.start_autonomous_mode()
+    
+    start_time = time.time()
+    
+    try:
+        while True:
+            # Check duration
+            if duration and (time.time() - start_time) >= duration:
+                break
+            
+            # Auto-save every 5 minutes
+            if (time.time() - start_time) % 300 < 1:
+                brain_path = Path(f"data/brains/{agent.agent_id}/brain.pcap")
+                brain_path.parent.mkdir(parents=True, exist_ok=True)
+                agent.save(str(brain_path))
+                log.info(f"💾 Auto-saved {agent.agent_id}")
+            
+            await asyncio.sleep(1)
+            
+    except KeyboardInterrupt:
+        print("\n\n🛑 Stopping agent...")
+    
+    finally:
+        await agent.shutdown()
+        
+        print(f"\n{'='*70}")
+        print(f"  ✅ AGENT STOPPED: {agent.agent_id}")
+        print(f"  Total runtime: {time.time() - start_time:.1f}s")
+        print(f"  Final memory: {len(agent.memory.events)} events")
+        if hasattr(agent.brain, 'language'):
+            print(f"  Final vocabulary: {agent.brain.language.vocab.next_id} words")
+        print(f"{'='*70}\n")

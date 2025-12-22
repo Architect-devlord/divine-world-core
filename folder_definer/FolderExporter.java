@@ -1,4 +1,10 @@
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -32,7 +38,7 @@ public class FolderExporter {
         try {
             selectOS();
 
-            System.out.print(CYAN + "📂 Drag and drop the folder here: " + RESET);
+            System.out.print(CYAN + "📂 Drag and drop the folder here or type the absolute folder path: " + RESET);
             String input = reader.readLine();
 
             input = cleanPath(input);

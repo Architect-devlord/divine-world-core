@@ -418,3 +418,30 @@ async def handle_minecraft_frame(agent_id: str, frame_data: np.ndarray,
 async def start_agent_autonomous_speech(agent_id: str):
     """Start autonomous speech - brain controls timing and content"""
     await chat_system.start_autonomous_speech(agent_id)
+
+async def send_thought(self, agent_id: str, thought: str, is_internal: bool = True):
+    '''Send thought to frontend (appears in thoughts panel)'''
+    # This will be handled by the bridge
+    if agent_id in self.gui_connections:
+        try:
+            await self.gui_connections[agent_id].send(json.dumps({
+                "type": "agent_thought" if is_internal else "internal_thought",
+                "agent_id": agent_id,
+                "internal_thought": thought,
+                "timestamp": time.time()
+        }))
+        except Exception as e:
+            log.debug(f"Failed to send thought: {e}")
+    
+async def send_visualization(self, agent_id: str, visualization_data: Dict[str, Any]):
+    '''Send visualization to frontend (3D mental workspace)'''
+    if agent_id in self.gui_connections:
+        try:
+            await self.gui_connections[agent_id].send(json.dumps({
+                "type": "visualization_update",
+                "agent_id": agent_id,
+                "data": visualization_data,
+                "timestamp": time.time()
+            }))
+        except Exception as e:
+            log.debug(f"Failed to send visualization: {e}")

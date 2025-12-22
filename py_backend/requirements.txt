@@ -16,6 +16,10 @@ fastapi>=0.100.0
 uvicorn>=0.23.0
 python-multipart>=0.0.6
 websockets>=11.0
+python-dotenv>=1.0.0
+pydantic>=2.10.0
+aiofiles>=24.1.0
+opencv-python-headless>=4.10.0
 
 # Vision/Audio
 opencv-python>=4.10.0
@@ -42,3 +46,12 @@ sounddevice>=0.4.6
 # Object storage and Scylla/Cassandra driver
 boto3>=1.28.0
 cassandra-driver>=3.25.0
+scylla-driver>=3.26.11
+msgpack>=1.0.5
+aiohttp>=3.8.5
+beautifulsoup4>=4.12.2
+lxml>=4.9.3
+pyaudio>=0.2.13
+SpeechRecognition>=3.11.0
+librosa>=0.10.0
+soundfile>=0.12.1

@@ -1,6 +1,0 @@
-{
-  "pack": {
-    "description": "DWClientBot resources",
-    "pack_format": 34
-  }
-}

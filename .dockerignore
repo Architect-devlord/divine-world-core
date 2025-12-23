@@ -1,5 +1,5 @@
-DivineWorld/
-DWClient/
+# Node modules
+node_modules/
 folder_definer/
 # Build output (will be created during build)
 dist/

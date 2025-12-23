@@ -28,14 +28,6 @@ public static void register() {
         ChatPacket::new,             // Deserialize
         ChatPacket::handle           // Handle on client
     );
-    
-    INSTANCE.registerMessage(
-        id(),
-        ChatSayPacket.class,         // Client → Server
-        ChatSayPacket::encode,
-        ChatSayPacket::decode,
-        ChatSayPacketHandler::handle // Handle on server
-    );
   }
 }
 

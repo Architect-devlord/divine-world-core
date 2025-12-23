@@ -1,6 +1,5 @@
-package com.divineworld.commands;
+/**package com.divineworld.commands;
 
-import com.divineworld.entity.god.DWGodEntity;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.CommandDispatcher;
 import net.minecraft.commands.CommandSourceStack;
@@ -32,3 +31,4 @@ public class GodCommand {
         );
     }
 }
+**/

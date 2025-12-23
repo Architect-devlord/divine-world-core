@@ -12,7 +12,7 @@ import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.event.RegisterCommandsEvent;
-import net.minecraftforge.eventbus.api.listener.SubscribeEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 
 import java.util.Arrays;
@@ -66,7 +66,7 @@ public class OracleCommandRegistrar {
                         }
                         
                         String endpoint = "http://localhost:11434";
-                        this.oracleBrain = new LLMOracleBrain(newModel, endpoint);
+                        this.oracleBrain = new LLMOracleBrain(newModel, endpoint,true);
                         DWMod.getInstance().setOracleBrain(this.oracleBrain);
                         oracleSystem.setOracleBrain(this.oracleBrain);
                         

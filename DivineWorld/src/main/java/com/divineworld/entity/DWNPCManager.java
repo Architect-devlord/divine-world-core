@@ -1,4 +1,3 @@
-// com/divineworld/entity/DWNPCManager.java
 package com.divineworld.entity;
 
 import com.divineworld.DWMod;
@@ -16,9 +15,11 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * Manager for AI-controlled player entities.
+ * Manager for AI-controlled ServerPlayer entities.
  * AI agents join as normal ServerPlayer instances via their own Minecraft clients.
  * This class handles tagging, chat bubbles, and differentiation from real players.
+ *
+ * SIMPLIFIED: No custom entities - all agents are ServerPlayer with tags
  */
 public class DWNPCManager {
 
@@ -26,7 +27,7 @@ public class DWNPCManager {
     private static final Map<UUID, Integer> chatCooldowns = new HashMap<>();
 
     /**
-     * Register a ServerPlayer as AI-controlled.
+     * Register a ServerPlayer as AI-controlled (normal agent).
      * Called when an AI agent's Minecraft client joins the server.
      */
     public static void registerAIPlayer(ServerPlayer player, String agentId) {
@@ -40,6 +41,7 @@ public class DWNPCManager {
 
     /**
      * Register a god-tier player entity.
+     * Gods are ServerPlayer with special tags and permissions.
      */
     public static void registerGodPlayer(ServerPlayer player, String agentId, String godType) {
         // Tag as both NPC and God
@@ -175,5 +177,43 @@ public class DWNPCManager {
             DWMod.LOGGER.info("Unregistered AI player: {} (Agent ID: {})",
                     player.getName().getString(), agentId);
         }
+    }
+
+    /**
+     * Grant god permissions to a player.
+     * Useful for promoting an existing AI to god status.
+     */
+    public static void promoteToGod(ServerPlayer player, String godType) {
+        if (!isAIPlayer(player)) {
+            DWMod.LOGGER.warn("Cannot promote non-AI player to god: {}",
+                    player.getName().getString());
+            return;
+        }
+
+        TaggedEntitySystem.tagEntity(player, TaggedEntitySystem.TAG_DW_GOD);
+        TaggedEntitySystem.setGodType(player, godType);
+        TaggedEntitySystem.setDivinePower(player, 100);
+        TaggedEntitySystem.makeGenesisImmune(player);
+
+        DWMod.LOGGER.info("Promoted {} to God ({})",
+                player.getName().getString(), godType);
+    }
+
+    /**
+     * Revoke god status from a player.
+     */
+    public static void demoteFromGod(ServerPlayer player) {
+        if (!isGodPlayer(player)) {
+            return;
+        }
+
+        // Remove god tag (keep NPC tag)
+        player.getPersistentData().remove(TaggedEntitySystem.TAG_DW_GOD);
+        player.getPersistentData().remove(TaggedEntitySystem.TAG_GOD_TYPE);
+        player.getPersistentData().remove(TaggedEntitySystem.TAG_DIVINE_POWER);
+        player.getPersistentData().remove(TaggedEntitySystem.TAG_GENESIS_IMMUNE);
+
+        DWMod.LOGGER.info("Demoted {} from God status",
+                player.getName().getString());
     }
 }

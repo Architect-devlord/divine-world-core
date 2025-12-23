@@ -1,7 +1,6 @@
 package com.divineworld.commands;
-
+/**
 import com.divineworld.DWMod;
-import com.divineworld.entity.DWNPCWithChat;
 import com.divineworld.utils.TaggedEntitySystem;
 import com.google.gson.JsonObject;
 import com.mojang.brigadier.CommandDispatcher;
@@ -303,3 +302,4 @@ public class NPCCommand {
         }
     }
 }
+ **/

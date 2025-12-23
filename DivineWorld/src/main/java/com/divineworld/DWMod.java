@@ -2,7 +2,7 @@ package com.divineworld;
 
 import com.divineworld.commands.CommandRegistrar;
 import com.divineworld.commands.OracleCommandRegistrar;
-import com.divineworld.entity.BreedingEventHandler;
+import com.divineworld.events.BreedingDetector;
 import com.divineworld.entity.ModEntities;
 import com.divineworld.network.NetworkHandler;
 import com.divineworld.oracle.LLMOracleBrain;
@@ -13,8 +13,7 @@ import com.divineworld.utils.TaggedEntitySystem;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
-
-import net.minecraftforge.eventbus.api.listener.SubscribeEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
@@ -54,12 +53,13 @@ public class DWMod {
         modBus.addListener(this::setup);
 
         // Register Forge event handlers
-        forgeBus.register(BreedingEventHandler.class);
+        forgeBus.register(BreedingDetector.class);
         forgeBus.register(TaggedEntitySystem.class);
         forgeBus.register(GenesisManager.class);
+        forgeBus.register(this);
 
         LOGGER.info("=".repeat(60));
-        LOGGER.info("  Divine World Mod v2.0 Loading");
+        LOGGER.info("  Divine World Mod v2.1 Loading (1.20.1)");
         LOGGER.info("=".repeat(60));
         LOGGER.info("Features:");
         LOGGER.info("  ✅ NPC Breeding System");
@@ -68,6 +68,7 @@ public class DWMod {
         LOGGER.info("  ✅ Genesis Divine Reset");
         LOGGER.info("  ✅ God Entity System");
         LOGGER.info("  ✅ Oracle System");
+        LOGGER.info("  ✅ AI Player Management");
         LOGGER.info("=".repeat(60));
     }
 
@@ -81,7 +82,7 @@ public class DWMod {
         LOGGER.info("[DivineWorld] Server starting - initializing Oracle System");
 
         // Initialize oracle brain and system
-        oracleBrain = new LLMOracleBrain("gemma3:1b", "http://127.0.0.1:11434");
+        oracleBrain = new LLMOracleBrain("gemma3:1b", "http://127.0.0.1:11434", false);
         oracleSystem = new OracleSystem(oracleBrain);
         MinecraftForge.EVENT_BUS.register(oracleSystem);
 
@@ -121,7 +122,11 @@ public class DWMod {
     }
 
     public void scheduleTask(Runnable task, long delayTicks) {
-        scheduler.schedule(() -> server.execute(task), delayTicks * 50L, TimeUnit.MILLISECONDS);
+        scheduler.schedule(() -> {
+            if (server != null) {
+                server.execute(task);
+            }
+        }, delayTicks * 50L, TimeUnit.MILLISECONDS);
     }
 
     public void scheduleRepeatingTask(java.util.function.BooleanSupplier task, long delayTicks, long periodTicks) {

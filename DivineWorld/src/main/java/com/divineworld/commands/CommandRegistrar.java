@@ -1,6 +1,5 @@
 package com.divineworld.commands;
 
-import com.divineworld.entity.DWNPCWithChat;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.CommandSourceStack;
@@ -11,8 +10,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraftforge.event.RegisterCommandsEvent;
-import net.minecraftforge.eventbus.api.listener.SubscribeEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -24,7 +23,7 @@ public class CommandRegistrar {
 
     public static void register() {
         MinecraftForge.EVENT_BUS.register(new CommandRegistrar());
-        MinecraftForge.EVENT_BUS.addListener((RegisterCommandsEvent e) -> GodCommand.register(e.getDispatcher()));
+        //MinecraftForge.EVENT_BUS.addListener((RegisterCommandsEvent e) -> GodCommand.register(e.getDispatcher()));
 
     }
 
@@ -67,7 +66,7 @@ public class CommandRegistrar {
                         )
         );
 
-        // Add to onRegisterCommands method:
+        /* Add to onRegisterCommands method:
 
         disp.register(
                 Commands.literal("npcsay")
@@ -96,6 +95,6 @@ public class CommandRegistrar {
                                 })
                         )
         );
-
+    */
     }
 }

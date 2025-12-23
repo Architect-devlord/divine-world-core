@@ -1,11 +1,11 @@
+// src/main/java/com/divineworld/utils/TaggedEntitySystem.java
 package com.divineworld.utils;
 
 import com.divineworld.DWMod;
-import com.divineworld.entity.god.DWGodEntity;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -13,6 +13,11 @@ import net.minecraftforge.fml.common.Mod;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Tagged Entity System - FIXED
+ * No references to custom god entities
+ * All agents are ServerPlayer with tags
+ */
 @Mod.EventBusSubscriber(modid = DWMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class TaggedEntitySystem {
 
@@ -23,8 +28,8 @@ public class TaggedEntitySystem {
     public static final String TAG_DIVINE_POWER = "dw_divine_power";
     public static final String TAG_GENESIS_IMMUNE = "dw_genesis_immune";
 
-    private static final Map TRACKED_ENTITIES = new ConcurrentHashMap<>();
-    private static final Map TAG_INDEX = new ConcurrentHashMap<>();
+    private static final Map<UUID, TaggedEntity> TRACKED_ENTITIES = new ConcurrentHashMap<>();
+    private static final Map<String, Set<UUID>> TAG_INDEX = new ConcurrentHashMap<>();
 
     public static void tagEntity(Entity entity, String... tags) {
         CompoundTag nbt = entity.getPersistentData();
@@ -40,7 +45,7 @@ public class TaggedEntitySystem {
         tracked.tags.addAll(Arrays.asList(tags));
         TRACKED_ENTITIES.put(entity.getUUID(), tracked);
 
-        DWMod.LOGGER.debug("Tagged entity " + entity.getUUID() + " with: " + String.join(", ", tags));
+        DWMod.LOGGER.debug("Tagged entity {} with: {}", entity.getUUID(), String.join(", ", tags));
     }
 
     public static void setAIID(Entity entity, String aiId) {
@@ -52,7 +57,7 @@ public class TaggedEntitySystem {
             tracked.aiId = aiId;
         }
 
-        DWMod.LOGGER.info("Linked entity " + entity.getUUID() + " to AI: " + aiId);
+        DWMod.LOGGER.info("Linked entity {} to AI: {}", entity.getUUID(), aiId);
     }
 
     public static String getAIID(Entity entity) {
@@ -64,9 +69,9 @@ public class TaggedEntitySystem {
         return entity.getPersistentData().getBoolean(tag);
     }
 
-    public static List getEntitiesWithTag(ServerLevel world, String tag) {
-        Set entityIds = TAG_INDEX.getOrDefault(tag, Collections.emptySet());
-        List result = new ArrayList<>();
+    public static List<Entity> getEntitiesWithTag(ServerLevel world, String tag) {
+        Set<UUID> entityIds = TAG_INDEX.getOrDefault(tag, Collections.emptySet());
+        List<Entity> result = new ArrayList<>();
 
         for (UUID id : entityIds) {
             Entity entity = world.getEntity(id);
@@ -78,15 +83,15 @@ public class TaggedEntitySystem {
         return result;
     }
 
-    public static List getAllNPCs(ServerLevel world) {
+    public static List<Entity> getAllNPCs(ServerLevel world) {
         return getEntitiesWithTag(world, TAG_DW_NPC);
     }
 
-    public static List getAllGods(ServerLevel world) {
+    public static List<Entity> getAllGods(ServerLevel world) {
         return getEntitiesWithTag(world, TAG_DW_GOD);
     }
 
-    public static List getGenesisImmuneEntities(ServerLevel world) {
+    public static List<Entity> getGenesisImmuneEntities(ServerLevel world) {
         return getEntitiesWithTag(world, TAG_GENESIS_IMMUNE);
     }
 
@@ -122,45 +127,30 @@ public class TaggedEntitySystem {
         tagEntity(entity, TAG_GENESIS_IMMUNE);
     }
 
-    @SubscribeEvent
-    public static void onEntityJoin(EntityJoinLevelEvent event) {
-        if (event.getLevel().isClientSide()) return;
-
-        Entity entity = event.getEntity();
-
-        if (entity instanceof DWGodEntity) {
-            DWGodEntity god = (DWGodEntity) entity;
-            tagEntity(god, TAG_DW_GOD);
-            setGodType(god, god.getGodFormType().name());
-            setDivinePower(god, 100);
-            makeGenesisImmune(god);
-
-            DWMod.LOGGER.info("Auto-tagged DW God: " + god.getGodFormType());
-        }
-    }
+    // REMOVED: onEntityJoin event (no custom god entities to auto-tag)
 
     public static void cleanupRemovedEntities(ServerLevel world) {
-        Iterator<Map.Entry> it = TRACKED_ENTITIES.entrySet().iterator();
+        Iterator<Map.Entry<UUID, TaggedEntity>> it = TRACKED_ENTITIES.entrySet().iterator();
 
         while (it.hasNext()) {
-            Map.Entry entry = it.next();
+            Map.Entry<UUID, TaggedEntity> entry = it.next();
             Entity entity = world.getEntity(entry.getKey());
 
             if (entity == null || entity.isRemoved()) {
                 for (String tag : entry.getValue().tags) {
-                    Set tagSet = TAG_INDEX.get(tag);
+                    Set<UUID> tagSet = TAG_INDEX.get(tag);
                     if (tagSet != null) {
                         tagSet.remove(entry.getKey());
                     }
                 }
 
                 it.remove();
-                DWMod.LOGGER.debug("Cleaned up tracked entity: " + entry.getKey());
+                DWMod.LOGGER.debug("Cleaned up tracked entity: {}", entry.getKey());
             }
         }
     }
 
-    public static List getAllTrackedEntities() {
+    public static List<TaggedEntity> getAllTrackedEntities() {
         return new ArrayList<>(TRACKED_ENTITIES.values());
     }
 
@@ -170,7 +160,7 @@ public class TaggedEntitySystem {
         public String aiId;
         public String godType;
         public int divinePower;
-        public Set tags;
+        public Set<String> tags;
         public long trackedSince;
 
         public TaggedEntity(UUID entityId, String entityType) {

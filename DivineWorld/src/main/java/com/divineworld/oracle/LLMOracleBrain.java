@@ -9,8 +9,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 public class LLMOracleBrain {
-    private final String modelName;
-    private final String endpoint;
+    private String modelName;
+    private String endpoint;
     private final OkHttpClient http;
     private final boolean isSecondOracle;
 

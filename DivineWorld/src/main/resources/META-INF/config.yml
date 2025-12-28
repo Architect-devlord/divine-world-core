@@ -1,9 +1,12 @@
 oracle:
+  context_tokens: 2048
+  temperature: 0.4
   endpoint: "http://localhost:11434"
-  active-model: "gemma3:1b"
+  active-model: "phi3:mini"
   models:
-    - "gemma3:1b"
-    - "deepseek-r1:8b"
+    -phi3:mini
+    #- "gemma3:1b"
+    #- "deepseek-r1:8b"
 
 agents:
   max_concurrent: 50

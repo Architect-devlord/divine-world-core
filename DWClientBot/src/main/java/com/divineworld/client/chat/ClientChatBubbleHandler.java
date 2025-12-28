@@ -1,6 +1,7 @@
-// src/main/java/com/divineworld/network/ClientChatHandler.java
-package com.divineworld.network;
+// src/main/java/com/divineworld/client/chat/ClientChatBubbleHandler.java
+package com.divineworld.client.chat;
 
+import com.divineworld.client.DWClientMod;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.entity.Entity;
@@ -8,20 +9,23 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 
-import java.util.UUID;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Client-side chat bubble manager - OPTIMIZED
- * Caches entity lookups for better performance
+ * Client-side chat bubble handler
+ * Receives ChatPacket from server and stores messages for rendering
  */
 @OnlyIn(Dist.CLIENT)
-public class ClientChatHandler {
+public class ClientChatBubbleHandler {
 
     private static final Map<UUID, ChatBubble> ACTIVE_BUBBLES = new ConcurrentHashMap<>();
     private static final Map<UUID, Integer> ENTITY_ID_CACHE = new ConcurrentHashMap<>();
 
+    /**
+     * Called when ChatPacket is received from server
+     */
     public static void showMessage(UUID entityId, String message) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) return;
@@ -48,13 +52,16 @@ public class ClientChatHandler {
                 // Cache the entity ID for faster future lookups
                 ENTITY_ID_CACHE.put(entityId, entity.getId());
             } else {
-                return; // Entity not found
+                DWClientMod.LOGGER.warn("Entity not found for chat bubble: {}", entityId);
+                return;
             }
         }
 
         // Create chat bubble
         ChatBubble bubble = new ChatBubble(message, System.currentTimeMillis() + 3000);
         ACTIVE_BUBBLES.put(entityId, bubble);
+
+        DWClientMod.LOGGER.debug("Chat bubble added for {}: {}", entity.getName().getString(), message);
     }
 
     /**
@@ -78,6 +85,9 @@ public class ClientChatHandler {
         return null;
     }
 
+    /**
+     * Tick to clean up expired bubbles
+     */
     public static void tick() {
         long now = System.currentTimeMillis();
 

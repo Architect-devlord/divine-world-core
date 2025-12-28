@@ -1,3 +1,4 @@
+// src/main/java/com/divineworld/client/DWClientMod.java
 package com.divineworld.client;
 
 import com.divineworld.client.entity.ModEntities;
@@ -14,16 +15,20 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
- * Divine World Client Mod - PRODUCTION VERSION
+ * Divine World Client Mod - PRODUCTION VERSION WITH RENDERING
  *
- * Integrates with Python backend via binary WebSocket protocol.
- * Supports both normal agents and god entities.
+ * Features:
+ * - WebSocket communication with Python backend
+ * - Vision capture for AI perception
+ * - God entity rendering with transformations
+ * - Custom Creaking entity with full model
+ * - Player abilities for all agents
+ * - Chat bubbles for AI speech
  *
- * FIXED:
- * - Proper entity registration
- * - Thread-safe WebSocket
- * - Vision capture optimization
- * - God entity spawning
+ * UPDATED:
+ * - Added rendering system initialization
+ * - Added transformation tracking
+ * - Added god ability visual effects
  */
 @Mod(DWClientMod.MOD_ID)
 public class DWClientMod {
@@ -53,34 +58,49 @@ public class DWClientMod {
         // Register to event bus
         MinecraftForge.EVENT_BUS.register(this);
 
-        LOGGER.info("Divine World Client Mod initializing for: {}", agentId);
+        // Register client-side event handlers
+        MinecraftForge.EVENT_BUS.register(ClientEventHandler.class);
+        MinecraftForge.EVENT_BUS.register(TransformationHandler.class);
+        MinecraftForge.EVENT_BUS.register(GodAbilityVisualHandler.class);
+
+        LOGGER.info("=".repeat(60));
+        LOGGER.info("  Divine World Client Mod v2.2 (CLIENT-SIDE)");
+        LOGGER.info("=".repeat(60));
+        LOGGER.info("Agent Configuration:");
+        LOGGER.info("  Agent ID: {}", agentId);
         LOGGER.info("  Mode: {}", isGodAgent ? "GOD (" + godType + ")" : "NORMAL");
         LOGGER.info("  Backend: {}:{}", backendUrl, backendPort);
+        LOGGER.info("=".repeat(60));
+        LOGGER.info("Features:");
+        LOGGER.info("  ✅ WebSocket Communication");
+        LOGGER.info("  ✅ Vision Capture System");
+        LOGGER.info("  ✅ God Entity Rendering");
+        LOGGER.info("  ✅ Custom Creaking Model");
+        LOGGER.info("  ✅ Transformation System");
+        LOGGER.info("  ✅ Player Abilities");
+        LOGGER.info("  ✅ Chat Bubbles");
+        LOGGER.info("=".repeat(60));
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
-        LOGGER.info("Common setup phase");
+        LOGGER.info("[CommonSetup] Initializing network handlers...");
 
         // Register network handlers
         NetworkHandler.register();
+
+        LOGGER.info("[CommonSetup] ✅ Network handlers registered");
     }
 
     private void clientSetup(final FMLClientSetupEvent event) {
-        LOGGER.info("Client setup phase");
+        LOGGER.info("[ClientSetup] Initializing client components...");
 
         event.enqueueWork(() -> {
-            // Post-setup initialization
-            initializeClientComponents();
+            // Client components are registered via @Mod.EventBusSubscriber
+            // See: ClientSetup.java for entity renderers
+            // See: ClientEventHandler.java for game events
+
+            LOGGER.info("[ClientSetup] ✅ Client components initialized");
         });
-    }
-
-    private void initializeClientComponents() {
-        LOGGER.info("Initializing client components...");
-
-        // Components will be initialized when player joins world
-        // See ClientEventHandler.onPlayerJoinWorld
-
-        LOGGER.info("Client components registered");
     }
 
     private void loadConfiguration() {
@@ -108,11 +128,6 @@ public class DWClientMod {
             LOGGER.error("No agent ID provided! Using fallback.");
             agentId = "DW_AGENT_" + System.currentTimeMillis();
         }
-
-        LOGGER.info("Configuration loaded:");
-        LOGGER.info("  Agent ID: {}", agentId);
-        LOGGER.info("  Backend: {}:{}", backendUrl, backendPort);
-        LOGGER.info("  God Type: {}", godType != null ? godType : "N/A");
     }
 
     // Public getters
@@ -138,5 +153,26 @@ public class DWClientMod {
 
     public static ResourceLocation id(String path) {
         return new ResourceLocation(MOD_ID, path);
+    }
+
+    /**
+     * Check if an entity is a god entity (client-side helper)
+     */
+    public static boolean isGodEntity(net.minecraft.world.entity.Entity entity) {
+        return entity.getPersistentData().contains("dw_god");
+    }
+
+    /**
+     * Check if a god is disguised (client-side helper)
+     */
+    public static boolean isDisguised(net.minecraft.world.entity.Entity entity) {
+        return entity.getPersistentData().getBoolean("dw_disguised");
+    }
+
+    /**
+     * Get god type from entity (client-side helper)
+     */
+    public static String getEntityGodType(net.minecraft.world.entity.Entity entity) {
+        return entity.getPersistentData().getString("dw_god_type");
     }
 }

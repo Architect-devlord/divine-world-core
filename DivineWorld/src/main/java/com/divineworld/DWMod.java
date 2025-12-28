@@ -1,15 +1,18 @@
 package com.divineworld;
 
 import com.divineworld.commands.CommandRegistrar;
+import com.divineworld.commands.DivineCommands;
 import com.divineworld.commands.OracleCommandRegistrar;
-import com.divineworld.events.BreedingDetector;
 import com.divineworld.entity.ModEntities;
+import com.divineworld.events.BreedingEventHandler;
 import com.divineworld.network.NetworkHandler;
 import com.divineworld.oracle.LLMOracleBrain;
+import com.divineworld.oracle.OllamaManager;
 import com.divineworld.oracle.OracleSystem;
 import com.divineworld.utils.Config;
 import com.divineworld.utils.GenesisManager;
 import com.divineworld.utils.TaggedEntitySystem;
+import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -46,6 +49,9 @@ public class DWMod {
         // Load config
         Config.load();
 
+        // CRITICAL: Initialize Oracle BEFORE any events
+        initializeOracle();
+
         // Register entities
         ModEntities.ENTITIES.register(modBus);
 
@@ -53,23 +59,99 @@ public class DWMod {
         modBus.addListener(this::setup);
 
         // Register Forge event handlers
-        forgeBus.register(BreedingDetector.class);
+        forgeBus.register(BreedingEventHandler.class);
         forgeBus.register(TaggedEntitySystem.class);
         forgeBus.register(GenesisManager.class);
         forgeBus.register(this);
 
         LOGGER.info("=".repeat(60));
-        LOGGER.info("  Divine World Mod v2.1 Loading (1.20.1)");
+        LOGGER.info("  Divine World Mod v2.2 Loading (1.20.1)");
         LOGGER.info("=".repeat(60));
         LOGGER.info("Features:");
         LOGGER.info("  ✅ NPC Breeding System");
         LOGGER.info("  ✅ Auto-Packaging Support");
         LOGGER.info("  ✅ Tag-Based Entity Tracking");
-        LOGGER.info("  ✅ Genesis Divine Reset");
+        LOGGER.info("  ✅ Genesis & Divine Reset");
         LOGGER.info("  ✅ God Entity System");
-        LOGGER.info("  ✅ Oracle System");
+        LOGGER.info("  ✅ Oracle System (ENHANCED)");
         LOGGER.info("  ✅ AI Player Management");
         LOGGER.info("=".repeat(60));
+    }
+
+    /**
+     * ENHANCED: Initialize Oracle with better error handling
+     * Assumes Ollama daemon is already running
+     */
+    private void initializeOracle() {
+        try {
+            String model = Config.getOracleModel();
+            String endpoint = Config.getOracleEndpoint();
+
+            LOGGER.info("[DivineWorld] ╔════════════════════════════════════╗");
+            LOGGER.info("[DivineWorld] Initializing Oracle System");
+            LOGGER.info("[DivineWorld]   Model: {}", model);
+            LOGGER.info("[DivineWorld]   Endpoint: {}", endpoint);
+            LOGGER.info("[DivineWorld] ╚════════════════════════════════════╝");
+
+            // Initialize Ollama connection (assumes daemon is running)
+            OllamaManager.initialize(model);
+
+            // Check if Ollama is accessible
+            if (!OllamaManager.isOllamaRunning()) {
+                LOGGER.error("[DivineWorld] ❌ Cannot connect to Ollama!");
+                LOGGER.error("[DivineWorld] Make sure Ollama daemon is running");
+                LOGGER.error("[DivineWorld] Oracle features will be LIMITED");
+                LOGGER.error("[DivineWorld] Use /oracle restart to reconnect");
+
+                // Create Oracle with warning
+                oracleBrain = new LLMOracleBrain(model, endpoint, false);
+                oracleSystem = new OracleSystem(oracleBrain);
+                return;
+            }
+
+            // Check model availability
+            OllamaManager.ModelStatus status = OllamaManager.checkModelStatus(model);
+
+            switch (status) {
+                case AVAILABLE:
+                    LOGGER.info("[DivineWorld] ✅ Model '{}' verified and ready", model);
+                    break;
+
+                case NOT_DOWNLOADED:
+                    LOGGER.warn("[DivineWorld] ⚠️ Model '{}' is NOT downloaded!", model);
+                    LOGGER.warn("[DivineWorld] ");
+                    LOGGER.warn("[DivineWorld] Oracle will NOT work until you download it:");
+                    LOGGER.warn("[DivineWorld]   In-game: /oracle pull {}", model);
+                    LOGGER.warn("[DivineWorld]   Or terminal: ollama pull {}", model);
+                    LOGGER.warn("[DivineWorld] ");
+                    LOGGER.warn("[DivineWorld] Available models: /oracle list_models");
+                    break;
+
+                case OLLAMA_NOT_RUNNING:
+                    LOGGER.error("[DivineWorld] ❌ Cannot verify model - Ollama not responding");
+                    break;
+
+                case ERROR:
+                    LOGGER.error("[DivineWorld] ❌ Error checking model status");
+                    break;
+            }
+
+            // Create Oracle Brain and System
+            oracleBrain = new LLMOracleBrain(model, endpoint, false);
+            oracleSystem = new OracleSystem(oracleBrain);
+
+            LOGGER.info("[DivineWorld] ✅ Oracle System initialized");
+            LOGGER.info("[DivineWorld] ╚════════════════════════════════════╝");
+
+        } catch (Exception e) {
+            LOGGER.error("[DivineWorld] ❌ Failed to initialize Oracle System", e);
+
+            // Create fallback
+            oracleBrain = new LLMOracleBrain("phi3:mini", "http://localhost:11434", false);
+            oracleSystem = new OracleSystem(oracleBrain);
+
+            LOGGER.warn("[DivineWorld] Using fallback Oracle configuration");
+        }
     }
 
     public static DWMod getInstance() {
@@ -79,20 +161,34 @@ public class DWMod {
     @SubscribeEvent
     public void onServerStarting(ServerStartingEvent evt) {
         this.server = evt.getServer();
-        LOGGER.info("[DivineWorld] Server starting - initializing Oracle System");
+        LOGGER.info("[DivineWorld] Server starting - registering Oracle handlers");
 
-        // Initialize oracle brain and system
-        oracleBrain = new LLMOracleBrain("gemma3:1b", "http://127.0.0.1:11434", false);
-        oracleSystem = new OracleSystem(oracleBrain);
         MinecraftForge.EVENT_BUS.register(oracleSystem);
 
-        // Register Oracle commands
-        MinecraftForge.EVENT_BUS.register(new OracleCommandRegistrar(oracleSystem, oracleBrain));
+        LOGGER.info("[DivineWorld] Oracle handlers registered");
+    }
 
-        // Register standard commands
-        CommandRegistrar.register();
+    @SubscribeEvent
+    public void onRegisterCommands(RegisterCommandsEvent event) {
+        LOGGER.info("[DivineWorld] Registering commands...");
 
-        LOGGER.info("[DivineWorld] Oracle System initialized successfully");
+        // Verify Oracle is initialized
+        if (oracleSystem == null || oracleBrain == null) {
+            LOGGER.error("[DivineWorld] ❌ Oracle not initialized! Reinitializing...");
+            initializeOracle();
+        }
+
+        LOGGER.info("[DivineWorld] Oracle status - System: {}, Brain: {}",
+                (oracleSystem != null ? "✅" : "❌"),
+                (oracleBrain != null ? "✅" : "❌"));
+
+        // Register Divine Commands
+        DivineCommands.register(event.getDispatcher());
+        LOGGER.info("[DivineWorld] ✅ Divine commands registered");
+
+        // Register Oracle Commands
+        OracleCommandRegistrar.registerCommands(event.getDispatcher(), oracleSystem, oracleBrain);
+        LOGGER.info("[DivineWorld] ✅ Oracle commands registered");
     }
 
     @SubscribeEvent
@@ -106,10 +202,10 @@ public class DWMod {
         // Initialize network handler
         NetworkHandler.register();
 
-        // Commands registration can be deferred to server start
+        // Commands registration happens via RegisterCommandsEvent
         event.enqueueWork(() -> {
             CommandRegistrar.register();
-            LOGGER.info("[DivineWorld] Commands registered in setup");
+            LOGGER.info("[DivineWorld] CommandRegistrar setup complete");
         });
 
         LOGGER.info("[DivineWorld] Common setup complete");
@@ -117,6 +213,10 @@ public class DWMod {
 
     public void shutdown() {
         LOGGER.info("[DivineWorld] Shutting down mod...");
+
+        // Shutdown Ollama connection
+        OllamaManager.shutdown();
+
         scheduler.shutdownNow();
         LOGGER.info("[DivineWorld] Shutdown complete");
     }
@@ -134,7 +234,7 @@ public class DWMod {
             if (server != null) {
                 server.execute(() -> {
                     if (!task.getAsBoolean()) {
-                        // Stop repeating if the task returns false
+                        // Stop repeating if task returns false
                     }
                 });
             }
@@ -142,8 +242,28 @@ public class DWMod {
     }
 
     // Getters and setters
-    public OracleSystem getOracleSystem() { return oracleSystem; }
-    public LLMOracleBrain getOracleBrain() { return oracleBrain; }
-    public void setOracleBrain(LLMOracleBrain brain) { this.oracleBrain = brain; }
+    public OracleSystem getOracleSystem() {
+        if (oracleSystem == null) {
+            LOGGER.warn("[DivineWorld] Oracle system accessed before initialization!");
+            initializeOracle();
+        }
+        return oracleSystem;
+    }
+
+    public LLMOracleBrain getOracleBrain() {
+        if (oracleBrain == null) {
+            LOGGER.warn("[DivineWorld] Oracle brain accessed before initialization!");
+            initializeOracle();
+        }
+        return oracleBrain;
+    }
+
+    public void setOracleBrain(LLMOracleBrain brain) {
+        this.oracleBrain = brain;
+        if (oracleSystem != null) {
+            oracleSystem.setOracleBrain(brain);
+        }
+    }
+
     public MinecraftServer getServer() { return server; }
 }

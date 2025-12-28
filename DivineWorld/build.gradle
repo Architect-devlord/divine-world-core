@@ -4,6 +4,7 @@ plugins {
     id 'maven-publish'
     id 'net.minecraftforge.gradle' version '[6.0,6.2)'
     id 'org.parchmentmc.librarian.forgegradle' version '1.+'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
 }
 
 version = mod_version
@@ -122,6 +123,12 @@ repositories {
     //     dir 'libs'
     // }
 }
+//added
+configurations {
+    shade
+    implementation.extendsFrom shade
+}
+
 
 dependencies {
     // Specify the version of Minecraft to use.
@@ -134,6 +141,21 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:4.12.0"
     implementation "com.squareup.okio:okio-jvm:3.6.0"
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.22"
+    implementation "com.fasterxml.jackson.core:jackson-core:2.15.2"
+    implementation "com.fasterxml.jackson.core:jackson-annotations:2.15.2"
+    implementation "com.fasterxml.jackson.core:jackson-databind:2.15.2"
+    implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.2"
+
+    shade "com.squareup.okhttp3:okhttp:4.12.0"
+    shade "com.squareup.okio:okio-jvm:3.6.0"
+    shade "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
+    shade "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.22"
+    shade "com.fasterxml.jackson.core:jackson-core:2.15.2"
+    shade "com.fasterxml.jackson.core:jackson-annotations:2.15.2"
+    shade "com.fasterxml.jackson.core:jackson-databind:2.15.2"
+    shade "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.2"
+
     // Example mod dependency with JEI - using fg.deobf() ensures the dependency is remapped to your development mappings
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     // compileOnly fg.deobf("mezz.jei:jei-${mc_version}-common-api:${jei_version}")
@@ -208,4 +230,39 @@ publishing {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
+}
+//added
+jar {
+    archiveClassifier = 'slim'
+}
+
+shadowJar {
+    archiveClassifier = 'all'
+    configurations = [project.configurations.shade]
+
+    // Don't relocate - try without relocation first
+    // If you need relocation later, add it back after confirming it works
+
+    // Ensure dependencies are included
+    dependencies {
+        include(dependency('com.squareup.okhttp3:okhttp:.*'))
+        include(dependency('com.squareup.okio:okio-jvm:.*'))
+        include(dependency('org.jetbrains.kotlin:kotlin-stdlib:.*'))
+        include(dependency('org.jetbrains.kotlin:kotlin-stdlib-common:.*'))
+        include(dependency('org.jetbrains.kotlin:kotlin-stdlib-common:.*'))
+        include(dependency('com.fasterxml.jackson.core:jackson-core:.*'))
+        include(dependency('com.fasterxml.jackson.core:jackson-annotations:.*'))
+        include(dependency('com.fasterxml.jackson.core:jackson-databind:.*'))
+        include(dependency('com.fasterxml.jackson.datatype:jackson-datatype-jsr310:.*'))
+    }
+
+    mergeServiceFiles()
+
+    finalizedBy 'reobfShadowJar'
+}
+
+tasks.build.dependsOn(shadowJar)
+
+reobf {
+    shadowJar {}
 }

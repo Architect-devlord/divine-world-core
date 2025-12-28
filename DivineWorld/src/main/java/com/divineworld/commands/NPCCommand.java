@@ -1,305 +1,262 @@
+// src/main/java/com/divineworld/commands/NPCCommand.java
 package com.divineworld.commands;
-/**
-import com.divineworld.DWMod;
-import com.divineworld.utils.TaggedEntitySystem;
+
 import com.google.gson.JsonObject;
+
+import com.divineworld.DWMod;
+import com.divineworld.entity.DWNPCManager;
+import com.divineworld.integration.PythonBackendClient;
+import com.divineworld.utils.TaggedEntitySystem;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.List;
-import java.util.Random;
-import java.util.concurrent.CompletableFuture;
 
+/**
+ * NPC Management Commands - Fixed for Forge 1.20.1
+ * Handles spawning, listing, removing, and info about AI-controlled NPCs
+ */
 public class NPCCommand {
-    
-    private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
-    private static final String PYTHON_BACKEND = "http://127.0.0.1:11400";
-    private static final Random RANDOM = new Random();
-    
-    public static void register(CommandDispatcher dispatcher) {
+
+    /**
+     * Register all NPC commands under /dw npc
+     */
+    public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("dw")
-            .requires(src -> src.hasPermission(2))
-            .then(Commands.literal("npc")
-                .then(Commands.literal("spawn")
-                    .then(Commands.argument("name", StringArgumentType.string())
-                        .executes(NPCCommand::spawnNPC)
-                    )
+                .requires(src -> src.hasPermission(2))
+                .then(Commands.literal("npc")
+
+                        // /dw npc spawn <name>
+                        .then(Commands.literal("spawn")
+                                .then(Commands.argument("name", StringArgumentType.string())
+                                        .executes(NPCCommand::spawnNPC)
+                                )
+                        )
+
+                        // /dw npc list
+                        .then(Commands.literal("list")
+                                .executes(NPCCommand::listNPCs)
+                        )
+
+                        // /dw npc remove <name>
+                        .then(Commands.literal("remove")
+                                .then(Commands.argument("name", StringArgumentType.string())
+                                        .executes(NPCCommand::removeNPC)
+                                )
+                        )
+
+                        // /dw npc info <name>
+                        .then(Commands.literal("info")
+                                .then(Commands.argument("name", StringArgumentType.string())
+                                        .executes(NPCCommand::getNPCInfo)
+                                )
+                        )
                 )
-                .then(Commands.literal("list")
-                    .executes(NPCCommand::listNPCs)
-                )
-                .then(Commands.literal("remove")
-                    .then(Commands.argument("name", StringArgumentType.string())
-                        .executes(NPCCommand::removeNPC)
-                    )
-                )
-                .then(Commands.literal("info")
-                    .then(Commands.argument("name", StringArgumentType.string())
-                        .executes(NPCCommand::getNPCInfo)
-                    )
-                )
-            )
         );
+
+        DWMod.LOGGER.info("[NPCCommand] Registered /dw npc commands");
     }
-    
-    private static int spawnNPC(CommandContext ctx) {
+
+    /**
+     * Spawn a new NPC agent via Python backend
+     */
+    private static int spawnNPC(CommandContext<CommandSourceStack> ctx) {
         try {
-            CommandSourceStack source = ctx.getSource();
-            ServerPlayer player = source.getPlayerOrException();
-            ServerLevel world = source.getLevel();
+            ServerPlayer player = ctx.getSource().getPlayerOrException();
+            ServerLevel level = ctx.getSource().getLevel();
             String name = StringArgumentType.getString(ctx, "name");
-            
-            String agentId = "npc_" + name.toLowerCase() + "_" + System.currentTimeMillis();
-            
-            BlockPos playerPos = player.blockPosition();
-            BlockPos spawnPos = playerPos.relative(player.getDirection(), 2);
-            
-            source.sendSuccess(
-                () -> Component.literal("§6[DW] §eSpawning NPC: " + name),
-                false
+
+            // Generate agent ID
+            String agentId = "npc_" + name.toLowerCase().replace(" ", "_") + "_" + System.currentTimeMillis();
+
+            // Calculate spawn position (in front of player)
+            BlockPos spawnPos = player.blockPosition().relative(player.getDirection(), 3);
+            spawnPos = getSafeSpawnPosition(level, spawnPos);
+
+            player.sendSystemMessage(Component.literal("§d[DW] §eSpawning NPC: " + name));
+            player.sendSystemMessage(Component.literal("§7Agent ID: " + agentId));
+
+            // Notify Python backend to spawn agent
+            // Note: This uses Genesis spawn endpoint with single agent
+            PythonBackendClient.spawnGenesisAgents(
+                    player.getName().getString(),
+                    level.dimension().location().toString(),
+                    spawnPos,
+                    spawnPos.offset(1, 0, 0) // Dummy second position
             );
-            
-            JsonObject personality = new JsonObject();
-            personality.addProperty("curiosity", RANDOM.nextDouble() * 2 - 1);
-            personality.addProperty("boldness", RANDOM.nextDouble() * 2 - 1);
-            personality.addProperty("sociability", RANDOM.nextDouble() * 2 - 1);
-            personality.addProperty("agreeableness", RANDOM.nextDouble() * 2 - 1);
-            personality.addProperty("conscientiousness", RANDOM.nextDouble() * 2 - 1);
-            
-            CompletableFuture.runAsync(() -> {
-                try {
-                    spawnNPCAI(agentId, name, personality, world, spawnPos, player);
-                } catch (Exception e) {
-                    DWMod.LOGGER.error("Failed to spawn NPC AI: " + e.getMessage());
-                }
-            });
-            
-            source.sendSuccess(
-                () -> Component.literal("§6[DW] §aAI system initializing for: " + name),
-                false
-            );
-            source.sendSuccess(
-                () -> Component.literal("§7Agent ID: " + agentId),
-                false
-            );
-            
+
+            player.sendSystemMessage(Component.literal("§a[DW] Agent system initializing..."));
+            player.sendSystemMessage(Component.literal("§7The NPC will connect shortly."));
+
+            DWMod.LOGGER.info("Spawning NPC '{}' (Agent: {}) at {} for player {}",
+                    name, agentId, spawnPos, player.getName().getString());
+
             return 1;
-            
+
         } catch (Exception e) {
-            DWMod.LOGGER.error("NPC spawn failed", e);
+            DWMod.LOGGER.error("NPC spawn command failed", e);
+            ctx.getSource().sendFailure(Component.literal("§c[DW] Spawn failed: " + e.getMessage()));
             return 0;
         }
     }
-    
-    private static void spawnNPCAI(String agentId, String name, JsonObject personality,
-                                   ServerLevel world, BlockPos pos, ServerPlayer spawner) 
-            throws IOException, InterruptedException {
-        
-        JsonObject request = new JsonObject();
-        request.addProperty("agent_id", agentId);
-        request.addProperty("spawn_type", "command");
-        request.add("persona_traits", personality);
-        request.addProperty("server", "127.0.0.1:25565");
-        
-        JsonObject metadata = new JsonObject();
-        metadata.addProperty("spawned_by", spawner.getName().getString());
-        metadata.addProperty("spawn_location", pos.toShortString());
-        metadata.addProperty("world", world.dimension().location().toString());
-        metadata.addProperty("display_name", name);
-        request.add("metadata", metadata);
-        
-        HttpRequest httpRequest = HttpRequest.newBuilder()
-            .uri(URI.create(PYTHON_BACKEND + "/api/agents/spawn"))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(request.toString()))
-            .build();
-        
-        HttpResponse response = HTTP_CLIENT.send(
-            httpRequest,
-            HttpResponse.BodyHandlers.ofString()
-        );
-        
-        if (response.statusCode() == 200) {
-            DWMod.LOGGER.info("✅ NPC AI spawned: " + agentId);
-            
-            DWNPCWithChat npcEntity = new DWNPCWithChat(
-                EntityType.VILLAGER, 
-                world
-            );
-            npcEntity.setPos(pos.getX(), pos.getY(), pos.getZ());
-            npcEntity.setCustomName(Component.literal(name));
-            
-            TaggedEntitySystem.tagEntity(npcEntity, TaggedEntitySystem.TAG_DW_NPC);
-            TaggedEntitySystem.setAIID(npcEntity, agentId);
-            
-            world.addFreshEntity(npcEntity);
-            
-            DWMod.LOGGER.info("✅ NPC entity created and tagged: " + name);
-        } else {
-            DWMod.LOGGER.error("❌ Failed to spawn NPC AI: " + response.body());
-        }
-    }
-    
-    private static int listNPCs(CommandContext ctx) {
+
+    /**
+     * List all AI-controlled NPCs in the world
+     */
+    private static int listNPCs(CommandContext<CommandSourceStack> ctx) {
         try {
-            CommandSourceStack source = ctx.getSource();
-            ServerLevel world = source.getLevel();
-            
-            List npcs = TaggedEntitySystem.getAllNPCs(world);
-            
-            source.sendSuccess(
-                () -> Component.literal("§6[DW] §eNPCs in world: " + npcs.size()),
-                false
-            );
-            
-            for (net.minecraft.world.entity.Entity npc : npcs) {
-                String aiId = TaggedEntitySystem.getAIID(npc);
-                String displayName = npc.hasCustomName() ? 
-                    npc.getCustomName().getString() : 
-                    "Unknown";
-                
-                source.sendSuccess(
-                    () -> Component.literal(
-                        "§7- " + displayName + " §8(AI: " + aiId + ")"
-                    ),
-                    false
-                );
+            ServerPlayer player = ctx.getSource().getPlayerOrException();
+            ServerLevel level = ctx.getSource().getLevel();
+
+            List<ServerPlayer> npcs = DWNPCManager.getAIPlayers(level);
+            List<ServerPlayer> gods = DWNPCManager.getGodPlayers(level);
+
+            int regularNPCs = npcs.size() - gods.size();
+
+            player.sendSystemMessage(Component.literal("§5[DW] §eNPCs in world: " + regularNPCs));
+
+            for (ServerPlayer npc : npcs) {
+                if (DWNPCManager.isGodPlayer(npc)) {
+                    continue; // Skip gods
+                }
+
+                String agentId = DWNPCManager.getAgentId(npc);
+                String displayName = npc.getName().getString();
+                BlockPos pos = npc.blockPosition();
+
+                player.sendSystemMessage(Component.literal(
+                        "§7- " + displayName + " §8(ID: " + agentId + ") §7at " + pos.toShortString()
+                ));
             }
-            
-            return npcs.size();
-            
+
+            if (regularNPCs == 0) {
+                player.sendSystemMessage(Component.literal("§7No NPCs found. Use §b/dw npc spawn <name>"));
+            }
+
+            return regularNPCs;
+
         } catch (Exception e) {
-            DWMod.LOGGER.error("List NPCs failed", e);
+            DWMod.LOGGER.error("List NPCs command failed", e);
             return 0;
         }
     }
-    
-    private static int removeNPC(CommandContext ctx) {
+
+    /**
+     * Remove an NPC by name
+     */
+    private static int removeNPC(CommandContext<CommandSourceStack> ctx) {
         try {
-            CommandSourceStack source = ctx.getSource();
-            ServerLevel world = source.getLevel();
+            ServerPlayer player = ctx.getSource().getPlayerOrException();
+            ServerLevel level = ctx.getSource().getLevel();
             String name = StringArgumentType.getString(ctx, "name");
-            
-            List npcs = TaggedEntitySystem.getAllNPCs(world);
-            
-            for (net.minecraft.world.entity.Entity npc : npcs) {
-                if (npc.hasCustomName() && 
-                    npc.getCustomName().getString().equalsIgnoreCase(name)) {
-                    
-                    String aiId = TaggedEntitySystem.getAIID(npc);
-                    
-                    npc.remove(net.minecraft.world.entity.Entity.RemovalReason.DISCARDED);
-                    
-                    CompletableFuture.runAsync(() -> {
-                        try {
-                            despawnNPCAI(aiId);
-                        } catch (Exception e) {
-                            DWMod.LOGGER.error("Failed to despawn AI: " + e.getMessage());
-                        }
-                    });
-                    
-                    source.sendSuccess(
-                        () -> Component.literal("§6[DW] §aRemoved NPC: " + name),
-                        false
-                    );
-                    
+
+            List<ServerPlayer> npcs = DWNPCManager.getAIPlayers(level);
+
+            for (ServerPlayer npc : npcs) {
+                if (npc.getName().getString().equalsIgnoreCase(name)) {
+
+                    // Skip if it's a god
+                    if (DWNPCManager.isGodPlayer(npc)) {
+                        player.sendSystemMessage(Component.literal(
+                                "§c[DW] Cannot remove gods via this command. Use /divine_reset instead."
+                        ));
+                        return 0;
+                    }
+
+                    String agentId = DWNPCManager.getAgentId(npc);
+
+                    // Disconnect the NPC (Python backend will be notified via player disconnect event)
+                    npc.connection.disconnect(Component.literal("§c[DW] Removed by administrator"));
+
+                    player.sendSystemMessage(Component.literal("§a[DW] Removed NPC: " + name));
+
+                    DWMod.LOGGER.info("NPC '{}' (Agent: {}) removed by {}",
+                            name, agentId, player.getName().getString());
+
                     return 1;
                 }
             }
-            
-            source.sendFailure(
-                Component.literal("§6[DW] §cNPC not found: " + name)
-            );
-            
+
+            player.sendSystemMessage(Component.literal("§c[DW] NPC not found: " + name));
+            player.sendSystemMessage(Component.literal("§7Use §b/dw npc list §7to see all NPCs"));
+
             return 0;
-            
+
         } catch (Exception e) {
-            DWMod.LOGGER.error("Remove NPC failed", e);
+            DWMod.LOGGER.error("Remove NPC command failed", e);
             return 0;
         }
     }
-    
-    private static void despawnNPCAI(String agentId) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(PYTHON_BACKEND + "/api/agents/" + agentId))
-            .DELETE()
-            .build();
-        
-        HttpResponse response = HTTP_CLIENT.send(
-            request,
-            HttpResponse.BodyHandlers.ofString()
-        );
-        
-        if (response.statusCode() == 200) {
-            DWMod.LOGGER.info("✅ NPC AI despawned: " + agentId);
-        } else {
-            DWMod.LOGGER.error("❌ Failed to despawn NPC AI: " + response.body());
-        }
-    }
-    
-    private static int getNPCInfo(CommandContext ctx) {
+
+    /**
+     * Get detailed information about an NPC
+     */
+    private static int getNPCInfo(CommandContext<CommandSourceStack> ctx) {
         try {
-            CommandSourceStack source = ctx.getSource();
-            ServerLevel world = source.getLevel();
+            ServerPlayer player = ctx.getSource().getPlayerOrException();
+            ServerLevel level = ctx.getSource().getLevel();
             String name = StringArgumentType.getString(ctx, "name");
-            
-            List npcs = TaggedEntitySystem.getAllNPCs(world);
-            
-            for (net.minecraft.world.entity.Entity npc : npcs) {
-                if (npc.hasCustomName() && 
-                    npc.getCustomName().getString().equalsIgnoreCase(name)) {
-                    
-                    String aiId = TaggedEntitySystem.getAIID(npc);
+
+            List<ServerPlayer> npcs = DWNPCManager.getAIPlayers(level);
+
+            for (ServerPlayer npc : npcs) {
+                if (npc.getName().getString().equalsIgnoreCase(name)) {
+
+                    String agentId = DWNPCManager.getAgentId(npc);
+                    boolean isGod = DWNPCManager.isGodPlayer(npc);
                     BlockPos pos = npc.blockPosition();
-                    
-                    source.sendSuccess(
-                        () -> Component.literal("§6[DW] §eNPC Information:"),
-                        false
-                    );
-                    source.sendSuccess(
-                        () -> Component.literal("§7Name: " + name),
-                        false
-                    );
-                    source.sendSuccess(
-                        () -> Component.literal("§7AI ID: " + aiId),
-                        false
-                    );
-                    source.sendSuccess(
-                        () -> Component.literal("§7Position: " + pos.toShortString()),
-                        false
-                    );
-                    source.sendSuccess(
-                        () -> Component.literal("§7Type: NPC"),
-                        false
-                    );
-                    
+
+                    player.sendSystemMessage(Component.literal("§5[DW] §eNPC Information:"));
+                    player.sendSystemMessage(Component.literal("§7Name: " + name));
+                    player.sendSystemMessage(Component.literal("§7Agent ID: " + agentId));
+                    player.sendSystemMessage(Component.literal("§7Position: " + pos.toShortString()));
+                    player.sendSystemMessage(Component.literal("§7Type: " + (isGod ? "§cGod" : "§aNPC")));
+
+                    if (isGod) {
+                        String godType = TaggedEntitySystem.getGodType(npc);
+                        int divinePower = TaggedEntitySystem.getDivinePower(npc);
+                        player.sendSystemMessage(Component.literal("§7God Type: §d" + godType));
+                        player.sendSystemMessage(Component.literal("§7Divine Power: §d" + divinePower));
+                    }
+
+                    player.sendSystemMessage(Component.literal("§7Health: §c" +
+                            String.format("%.1f", npc.getHealth()) + "/" +
+                            String.format("%.1f", npc.getMaxHealth())));
+
                     return 1;
                 }
             }
-            
-            source.sendFailure(
-                Component.literal("§6[DW] §cNPC not found: " + name)
-            );
-            
+
+            player.sendSystemMessage(Component.literal("§c[DW] NPC not found: " + name));
+            player.sendSystemMessage(Component.literal("§7Use §b/dw npc list §7to see all NPCs"));
+
             return 0;
-            
+
         } catch (Exception e) {
-            DWMod.LOGGER.error("Get NPC info failed", e);
+            DWMod.LOGGER.error("Get NPC info command failed", e);
             return 0;
         }
+    }
+
+    /**
+     * Find a safe spawn position (solid ground, air above)
+     */
+    private static BlockPos getSafeSpawnPosition(ServerLevel level, BlockPos pos) {
+        for (int i = 0; i < 10; i++) {
+            if (level.getBlockState(pos).isAir() &&
+                    level.getBlockState(pos.above()).isAir() &&
+                    level.getBlockState(pos.below()).isSolid()) {
+                return pos;
+            }
+            pos = pos.above();
+        }
+        return pos; // Fallback
     }
 }
- **/

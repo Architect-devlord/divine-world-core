@@ -24,12 +24,8 @@ import java.nio.file.*;
 import java.util.*;
 
 /**
- * Oracle System - FIXED for Minecraft 1.20.1 Forge with Parchment Mappings
- *
- * Fixes:
- * - Uses correct entity creation method (spawn() instead of deprecated create())
- * - Fixed pattern matching instanceof syntax
- * - Proper ServerLevel casting
+ * Oracle System - FIXED Chat Response Display
+ * Enhanced logging and proper message delivery
  */
 public class OracleSystem {
 
@@ -45,7 +41,7 @@ public class OracleSystem {
 
     private final String personaTemplate =
             "You are the Oracle of a divine world. You are wise, slightly mysterious, patient, and respond concisely. " +
-                    "Occasionally sprinkle subtle humor and metaphors. Answer wisely and helpfully.";
+                    "Occasionally sprinkle subtle humor and metaphors. Answer wisely and helpfully in 1-3 sentences maximum.";
 
     public OracleSystem(LLMOracleBrain brain) {
         this.brain = brain;
@@ -54,7 +50,7 @@ public class OracleSystem {
             if (!Files.exists(memoryFolder)) Files.createDirectories(memoryFolder);
             loadAllMemory();
         } catch (IOException e) {
-            e.printStackTrace();
+            DWMod.LOGGER.error("[Oracle] Failed to create memory folder", e);
         }
     }
 
@@ -64,10 +60,10 @@ public class OracleSystem {
     }
 
     /**
-     * FIXED: Spawn oracle using proper Forge 1.20.1 entity creation
+     * Spawn oracle using proper Forge 1.20.1 entity creation
      */
     public Mob spawnOracle(ServerPlayer player) {
-        ServerLevel serverLevel = player.serverLevel(); // FIXED: Use serverLevel() instead of casting
+        ServerLevel serverLevel = player.serverLevel();
         BlockPos pos = player.blockPosition().offset(
                 (int)(player.getLookAngle().x * 3),
                 0,
@@ -82,24 +78,20 @@ public class OracleSystem {
                 pos.getX() + 0.5, pos.getY() + 1, pos.getZ() + 0.5, 30, 0.5, 1, 0.5, 0.2);
         serverLevel.playSound(null, pos, SoundEvents.ILLUSIONER_CAST_SPELL, SoundSource.NEUTRAL, 1f, 1.2f);
 
-        // FIXED: Use spawn() method instead of deprecated create()
-        // This is the correct way in Forge 1.20.1
+        // Spawn Oracle entity
         Mob oracle = EntityType.WANDERING_TRADER.spawn(
-                serverLevel,                    // ServerLevel
-                pos,                            // BlockPos
-                MobSpawnType.COMMAND            // MobSpawnType (was EntitySpawnReason in older versions)
+                serverLevel,
+                pos,
+                MobSpawnType.COMMAND
         );
 
         if (oracle != null) {
-            // Configure oracle
             oracle.setPos(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
             oracle.setCustomName(Component.literal("§dOracle"));
             oracle.setCustomNameVisible(true);
             oracle.setNoAi(true);
             oracle.setInvulnerable(true);
             oracle.getPersistentData().putBoolean("is_oracle", true);
-
-            // Already added to world by spawn(), no need to call addFreshEntity()
 
             activeOracles.put(player.getUUID(), oracle);
             lookAt(oracle, player.position().add(0, 1.6, 0));
@@ -118,7 +110,7 @@ public class OracleSystem {
         Mob oracle = activeOracles.get(player.getUUID());
         if (oracle != null && !oracle.isRemoved()) {
             BlockPos pos = oracle.blockPosition();
-            ServerLevel level = (ServerLevel) oracle.level(); // Safe cast since we know it's server-side
+            ServerLevel level = (ServerLevel) oracle.level();
 
             // Despawn particles
             level.sendParticles(ParticleTypes.ELECTRIC_SPARK,
@@ -135,6 +127,7 @@ public class OracleSystem {
 
     public void setOracleBrain(LLMOracleBrain newBrain) {
         this.brain = newBrain;
+        DWMod.LOGGER.info("[Oracle] Brain switched to: {}", newBrain.getModelName());
     }
 
     public LLMOracleBrain getOracleBrain() {
@@ -143,7 +136,6 @@ public class OracleSystem {
 
     @SubscribeEvent
     public void onPlayerJoin(PlayerEvent.PlayerLoggedInEvent event) {
-        // FIXED: Removed pattern matching as it's redundant
         if (!(event.getEntity() instanceof ServerPlayer)) return;
         ServerPlayer player = (ServerPlayer) event.getEntity();
 
@@ -154,12 +146,15 @@ public class OracleSystem {
 
     @SubscribeEvent
     public void onPlayerChat(net.minecraftforge.event.ServerChatEvent event) {
-        // FIXED: Removed pattern matching
         ServerPlayer player = event.getPlayer();
         if (player == null) return;
 
         String message = event.getMessage().getString().trim();
+
+        // Only process if Oracle is active for this player
         if (!activeOracles.containsKey(player.getUUID())) return;
+
+        DWMod.LOGGER.info("[Oracle] Processing chat from {}: '{}'", player.getName().getString(), message);
 
         // Prevent the original message from being broadcast
         event.setMessage(Component.literal(""));
@@ -178,32 +173,75 @@ public class OracleSystem {
         }
 
         // Handle conversation with Oracle
+        DWMod.LOGGER.info("[Oracle] Starting LLM query for player: {}", player.getName().getString());
+
         OracleMemory memory = memoryMap.computeIfAbsent(player.getUUID(), k -> new OracleMemory());
         memory.conversation.add("Player: " + message);
         memory.lastAccess = System.currentTimeMillis();
 
-        player.sendSystemMessage(Component.literal("§7[Oracle is thinking...]"));
+        // Show "thinking" message
+        player.sendSystemMessage(Component.literal("§d[Oracle] §7Consulting the divine wisdom..."));
 
         StringBuilder prompt = new StringBuilder(personaTemplate).append("\n\n");
-        for (String line : memory.conversation) {
-            prompt.append(line).append("\n");
+
+        // Add recent conversation history (last 5 exchanges)
+        int startIdx = Math.max(0, memory.conversation.size() - 10);
+        for (int i = startIdx; i < memory.conversation.size(); i++) {
+            prompt.append(memory.conversation.get(i)).append("\n");
         }
         prompt.append("Oracle:");
 
+        DWMod.LOGGER.info("[Oracle] Prompt generated ({} chars), querying LLM...", prompt.length());
+
         // Query LLM asynchronously
         brain.queryAsync(DWMod.getInstance().getServer(), prompt.toString(), answer -> {
+            DWMod.LOGGER.info("[Oracle] Received response: '{}'", answer);
+
             if (answer == null || answer.isBlank()) {
-                answer = "§c[Oracle is silent...]";
+                answer = "§7[The Oracle remains silent, pondering the mysteries of existence...]";
+                DWMod.LOGGER.warn("[Oracle] Empty response received from LLM");
             }
-            player.sendSystemMessage(Component.literal("§d[Oracle] " + answer));
-            memory.conversation.add("Oracle: " + answer);
+
+            // Clean up response
+            answer = answer.trim();
+
+            // Remove any JSON artifacts or prefixes
+            if (answer.startsWith("```")) {
+                answer = answer.replaceAll("```json|```", "").trim();
+            }
+
+            // Limit response length
+            if (answer.length() > 500) {
+                answer = answer.substring(0, 497) + "...";
+            }
+
+            DWMod.LOGGER.info("[Oracle] Sending cleaned response to player: '{}'", answer);
+
+            // Send response to player
+            final String finalAnswer = answer;
+            player.sendSystemMessage(Component.literal("§d[Oracle] §f" + finalAnswer));
+
+            // Save to memory
+            memory.conversation.add("Oracle: " + finalAnswer);
+
+            // Trim history if too long
+            if (memory.conversation.size() > MAX_HISTORY_LINES) {
+                memory.conversation = new ArrayList<>(
+                        memory.conversation.subList(
+                                memory.conversation.size() - MAX_HISTORY_LINES,
+                                memory.conversation.size()
+                        )
+                );
+            }
+
             saveMemory(player.getUUID());
+
+            DWMod.LOGGER.info("[Oracle] Response delivered to player successfully");
         });
     }
 
     @SubscribeEvent
     public void onOracleInteract(PlayerInteractEvent.EntityInteract event) {
-        // FIXED: Removed pattern matching
         if (!(event.getEntity() instanceof ServerPlayer)) return;
         ServerPlayer player = (ServerPlayer) event.getEntity();
 
@@ -228,7 +266,7 @@ public class OracleSystem {
             if (!player.getInventory().contains(BookFactory.genesisCodex())) {
                 player.addItem(BookFactory.genesisCodex());
                 player.addItem(BookFactory.firstFlameBook());
-                player.addItem(BookFactory.commandReferenceCard()); // OPTIONAL
+                player.addItem(BookFactory.commandReferenceCard());
 
                 player.sendSystemMessage(Component.literal(
                         "§b✨ You have received the sacred texts:"
@@ -237,7 +275,11 @@ public class OracleSystem {
                         "§7- Genesis Codex (right-click ground)"
                 ));
                 player.sendSystemMessage(Component.literal(
-                        "§7- Teachings of the First Flame (commands)"
+                        "§7- Teachings of the First Flame (commands description)"
+                ));
+
+                player.sendSystemMessage(Component.literal(
+                        "§7- Divine Commands (quick reference for commands)"
                 ));
 
                 oracle.setNoAi(false);
@@ -298,8 +340,9 @@ public class OracleSystem {
         Path file = memoryFolder.resolve(playerId.toString() + ".json");
         try (Writer writer = Files.newBufferedWriter(file)) {
             gson.toJson(memory, writer);
+            DWMod.LOGGER.debug("[Oracle] Saved memory for player: {}", playerId);
         } catch (IOException e) {
-            e.printStackTrace();
+            DWMod.LOGGER.error("[Oracle] Failed to save memory", e);
         }
     }
 
@@ -313,8 +356,9 @@ public class OracleSystem {
                     OracleMemory memory = gson.fromJson(reader, type);
                     UUID playerId = UUID.fromString(f.getFileName().toString().replace(".json", ""));
                     memoryMap.put(playerId, memory);
+                    DWMod.LOGGER.debug("[Oracle] Loaded memory for player: {}", playerId);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    DWMod.LOGGER.error("[Oracle] Failed to load memory file: {}", f, e);
                 }
             });
         }

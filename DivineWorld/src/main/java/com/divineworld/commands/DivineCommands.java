@@ -132,7 +132,7 @@ public class DivineCommands {
             BlockPos spawn1 = playerPos.relative(player.getDirection(), 3).offset(2, 0, 0);
             BlockPos spawn2 = playerPos.relative(player.getDirection(), 3).offset(-2, 0, 0);
 
-            player.sendSystemMessage(Component.literal("§6[Genesis] §eCreating first beings..."));
+            player.sendSystemMessage(Component.literal("§5[Genesis] §eCreating first beings..."));
 
             PythonBackendClient.spawnGenesisAgents(
                     player.getName().getString(),
@@ -253,7 +253,7 @@ public class DivineCommands {
             BlockPos spawnPos = player.blockPosition().relative(player.getDirection(), 3);
 
             player.sendSystemMessage(Component.literal(
-                    "§6[Spawn God] §eCreating " + godType + " god..."
+                    "§d[Spawn God] §eCreating " + godType + " god..."
             ));
 
             PythonBackendClient.spawnGodAgent(
@@ -344,7 +344,7 @@ public class DivineCommands {
             List<ServerPlayer> aiAgents = DWNPCManager.getAIPlayers(level);
             List<ServerPlayer> godAgents = DWNPCManager.getGodPlayers(level);
 
-            player.sendSystemMessage(Component.literal("§6[AI Agents] §eTotal: " + aiAgents.size()));
+            player.sendSystemMessage(Component.literal("§d[AI Agents] §eTotal: " + aiAgents.size()));
             player.sendSystemMessage(Component.literal("§7Normal Agents: " + (aiAgents.size() - godAgents.size())));
             player.sendSystemMessage(Component.literal("§7God Agents: " + godAgents.size()));
 

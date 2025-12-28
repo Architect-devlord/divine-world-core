@@ -89,7 +89,7 @@ public class GenesisManager {
         BlockPos spawn1 = getSafeSpawnPosition(serverLevel, playerPos.relative(player.getDirection(), 3).offset(2, 0, 0));
         BlockPos spawn2 = getSafeSpawnPosition(serverLevel, playerPos.relative(player.getDirection(), 3).offset(-2, 0, 0));
 
-        player.sendSystemMessage(Component.literal("§6[Genesis] §eCreating first beings..."));
+        player.sendSystemMessage(Component.literal("§d[Genesis] §cCreating first beings..."));
 
         // Notify Python backend to spawn 2 agents
         PythonBackendClient.spawnGenesisAgents(

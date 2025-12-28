@@ -1,9 +1,8 @@
 // src/main/java/com/divineworld/network/ChatPacket.java
 package com.divineworld.network;
 
+import com.divineworld.DWMod;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.UUID;
@@ -12,6 +11,8 @@ import java.util.function.Supplier;
 /**
  * Network packet for syncing chat bubbles from server to client
  * Server sends this when AI agent "speaks"
+ *
+ * FIXED: No client-side execution - safe for dedicated servers
  */
 public class ChatPacket {
     private final UUID entityId;
@@ -34,10 +35,11 @@ public class ChatPacket {
 
     public void handle(Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> {
-            // Client-side handler
-            DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
-                ClientChatHandler.showMessage(entityId, message);
-            });
+            // SERVER-SIDE FALLBACK: Store message for potential client mod support
+            // This runs on the SERVER thread (not client)
+            ServerChatHandler.showMessage(entityId, message);
+
+            DWMod.LOGGER.debug("Chat packet handled for entity: {}", entityId);
         });
         ctx.get().setPacketHandled(true);
     }

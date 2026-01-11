@@ -25,7 +25,7 @@ All rights reserved by Devlord the Architect.
 # Setting up DivineWorld
 
 ## Manual Installations
-1. Ollama and a lightweight model [phi3:mini, minstral, llama] (for other ai models add them in the list of agents in the DivineWorld mod)
+1. Ollama and a lightweight model [phi3:mini, minstral, llama] (phi3:mini is default)(for other ai models add them in the list of agents in the DivineWorld mod)
 2. Stuff in requirements.txt using pip and package.json using npm
 3. Docker(Optional)(not really neccesary but go on if  you can manage the files for it the files here are incomplete and not updated)
 4. Ultim MC (install minecraft 1.20.1 and download forge of version 47.4.10 for it)

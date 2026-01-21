@@ -16,7 +16,7 @@ from typing import Optional
 from queue import Queue, Empty
 import time
 
-from ai_core.agent_spawner import AgentSpawner
+from ai_core.agent_spawner import AgentSpawner, EnhancedAgentSpawner
 from ai_core.agent import NPCAgent
 from packager import AgentPackager
 
@@ -136,6 +136,8 @@ class AutoPackagingSystem:
                         agent_type=agent.agent_type,
                         icon_path=None,
                         include_frontend=True,
+                        include_mod=True,
+                        include_client_jar=True,
                         backend_port=backend_port  # NEW: Pass unique port
                     )
                     
@@ -220,35 +222,86 @@ class AutoPackagingSystem:
 
 class EnhancedAgentSpawner(AgentSpawner):
     """
-    Enhanced spawner with multi-agent port allocation.
+    Enhanced spawner with:
+    - Multi-agent port allocation
+    - Auto-packaging system
+    - UltimMC automation for Minecraft setup
+    
+    Handles complete lifecycle of agent spawn → setup → package
     """
     
     def __init__(self, client_jar_path: Optional[str] = "DWClientBot.jar",
                  auto_package: bool = True,
-                 package_output_dir: str = "npc_applications"):
+                 package_output_dir: str = "npc_applications",
+                 use_ultimmc: bool = None):
+        """
+        Initialize enhanced spawner.
+        
+        Args:
+            client_jar_path: Path to DWClientBot.jar
+            auto_package: Enable auto-packaging
+            package_output_dir: Output directory for packages
+            use_ultimmc: Use UltimMC for automation (auto-detect if None)
+        """
         super().__init__(client_jar_path)
         
         self.auto_package = auto_package
         self.packager = None
+        self.use_ultimmc = use_ultimmc
         
         if auto_package:
             self.packager = AutoPackagingSystem(output_dir=package_output_dir)
             log.info("Auto-packaging enabled")
+        
+        # Setup UltimMC if requested or available
+        if use_ultimmc is None:
+            # Auto-detect: try to use UltimMC if available
+            from py_backend.config import Config
+            self.use_ultimmc = Config.USE_ULTIMMC
+        
+        if self.use_ultimmc:
+            try:
+                from ai_core.agent_spawner import EnhancedAgentSpawner as UltimMCSpawner
+                # Create a wrapper that combines both
+                self._ultimmc_spawner = UltimMCSpawner(client_jar_path=client_jar_path)
+                log.info("✅ UltimMC automation available")
+            except Exception as e:
+                log.warning(f"UltimMC not available: {e}")
+                self.use_ultimmc = False
+                self._ultimmc_spawner = None
     
     def spawn_npc(self, agent_id: str, server_addr: str = "127.0.0.1:25565",
                   persona_traits: Optional[dict[str, float]] = None,
                   memory_mb: int = 2048,
                   gender: Optional[str] = None) -> NPCAgent:
-        """Spawn NPC with auto-packaging"""
-        agent = super().spawn_npc(agent_id, server_addr, persona_traits, memory_mb, gender)
+        """Spawn NPC with UltimMC automation if available"""
         
-        brain_path = Path("data/brains") / agent.agent_id / "brain.pcap"
+        # Try UltimMC path first
+        if self.use_ultimmc and self._ultimmc_spawner:
+            try:
+                log.info(f"Spawning {agent_id} with UltimMC automation...")
+                agent = self._ultimmc_spawner.spawn_npc(
+                    agent_id=agent_id,
+                    server_addr=server_addr,
+                    persona_traits=persona_traits,
+                    memory_mb=memory_mb,
+                    gender=gender
+                )
+            except Exception as e:
+                log.warning(f"UltimMC spawn failed, falling back: {e}")
+                agent = super().spawn_npc(agent_id, server_addr, persona_traits, memory_mb, gender)
+        else:
+            # Regular spawn
+            agent = super().spawn_npc(agent_id, server_addr, persona_traits, memory_mb, gender)
+        
+        # Queue for packaging
+        from py_backend.config import Config
+        brain_path = Path(Config.BRAINS_DIR) / agent.agent_id / "brain.pcap"
         
         if not brain_path.exists():
             log.error(f"Brain not found after spawn: {brain_path}")
             raise RuntimeError(f"Brain file missing: {brain_path}")
         
-        # Queue for packaging
         if self.auto_package and self.packager:
             import time
             metadata = {
@@ -256,7 +309,7 @@ class EnhancedAgentSpawner(AgentSpawner):
                 'server': server_addr,
                 'memory_mb': memory_mb,
                 'spawn_type': 'command',
-                'spawn_location': None
+                'ultimmc_used': self.use_ultimmc and self._ultimmc_spawner is not None,
             }
             
             self.packager.queue_agent_for_packaging(
@@ -269,23 +322,34 @@ class EnhancedAgentSpawner(AgentSpawner):
     
     def spawn_god(self, god_type: str, server_addr: str = "127.0.0.1:25565",
                   custom_traits: Optional[dict[str, float]] = None) -> NPCAgent:
-        """Spawn god entity with auto-packaging"""
-        agent = super().spawn_god(god_type, server_addr, custom_traits)
+        """Spawn god entity with UltimMC automation if available"""
         
-        brain_path = Path("data/brains") / agent.agent_id / "brain.pcap"
+        # Try UltimMC path first
+        if self.use_ultimmc and self._ultimmc_spawner:
+            try:
+                log.info(f"Spawning god {god_type} with UltimMC automation...")
+                agent = self._ultimmc_spawner.spawn_god(god_type, server_addr, custom_traits)
+            except Exception as e:
+                log.warning(f"UltimMC god spawn failed, falling back: {e}")
+                agent = super().spawn_god(god_type, server_addr, custom_traits)
+        else:
+            agent = super().spawn_god(god_type, server_addr, custom_traits)
+        
+        from py_backend.config import Config
+        brain_path = Path(Config.BRAINS_DIR) / agent.agent_id / "brain.pcap"
         
         if not brain_path.exists():
             log.error(f"Brain not found after spawn: {brain_path}")
             raise RuntimeError(f"Brain file missing: {brain_path}")
         
-        # Queue for packaging
         if self.auto_package and self.packager:
             import time
             metadata = {
                 'spawned_at': agent.client_process.started_at if agent.client_process else time.time(),
                 'server': server_addr,
                 'god_type': god_type,
-                'spawn_type': 'command'
+                'spawn_type': 'command',
+                'ultimmc_used': self.use_ultimmc and self._ultimmc_spawner is not None,
             }
             
             self.packager.queue_agent_for_packaging(

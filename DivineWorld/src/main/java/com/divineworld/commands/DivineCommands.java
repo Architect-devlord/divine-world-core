@@ -39,19 +39,16 @@ public class DivineCommands {
 
         // /genesis - Spawn 2 AI agents
         dispatcher.register(Commands.literal("genesis")
-                .requires(src -> src.hasPermission(2))
                 .executes(ctx -> executeGenesis(ctx))
         );
 
         // /divine_reset - Kill all AI agents
         dispatcher.register(Commands.literal("divine_reset")
-                .requires(src -> src.hasPermission(2))
                 .executes(ctx -> executeDivineReset(ctx))
         );
 
         // /clear_memories <all|agent_id> [exceptions...]
         dispatcher.register(Commands.literal("clear_memories")
-                .requires(src -> src.hasPermission(2))
                 .then(Commands.argument("target", StringArgumentType.string())
                         .executes(ctx -> executeClearMemories(ctx, new ArrayList<>()))
                         .then(Commands.argument("exceptions", EntityArgument.players())
@@ -62,7 +59,6 @@ public class DivineCommands {
 
         // /spawn_god <type>
         dispatcher.register(Commands.literal("spawn_god")
-                .requires(src -> src.hasPermission(2))
                 .then(Commands.argument("type", StringArgumentType.string())
                         .suggests((ctx, builder) -> {
                             builder.suggest("ender_dragon");
@@ -79,7 +75,6 @@ public class DivineCommands {
 
         // /god_ability <agent_id> <ability> [params...]
         dispatcher.register(Commands.literal("god_ability")
-                .requires(src -> src.hasPermission(2))
                 .then(Commands.argument("agent_id", StringArgumentType.string())
                         .then(Commands.argument("ability", StringArgumentType.string())
                                 .executes(ctx -> executeGodAbility(ctx))
@@ -89,7 +84,6 @@ public class DivineCommands {
 
         // /god_transform <agent_id> <mob>
         dispatcher.register(Commands.literal("god_transform")
-                .requires(src -> src.hasPermission(2))
                 .then(Commands.argument("agent_id", StringArgumentType.string())
                         .then(Commands.argument("mob", StringArgumentType.string())
                                 .suggests((ctx, builder) -> {
@@ -108,7 +102,6 @@ public class DivineCommands {
 
         // /list_agents - List all AI agents
         dispatcher.register(Commands.literal("list_agents")
-                .requires(src -> src.hasPermission(2))
                 .executes(ctx -> executeListAgents(ctx))
         );
     }

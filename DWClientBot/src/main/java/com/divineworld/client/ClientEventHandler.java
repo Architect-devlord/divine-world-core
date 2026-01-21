@@ -8,7 +8,7 @@ import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
-
+import com.divineworld.client.network.TCPServer;
 /**
  * Client Event Handler - FIXED VERSION
  */
@@ -42,7 +42,10 @@ public class ClientEventHandler {
     private static void onPlayerJoinedWorld(LocalPlayer player) {
         DWClientMod.LOGGER.info("Player joined world: {}", player.getName().getString());
 
-        // FIXED: Initialize WebSocket after player spawns
+        // ADDED: Start TCP Server (primary)
+        TCPServer.start(8765);
+
+        // EXISTING: Initialize WebSocket (fallback)
         try {
             WebSocketManager.initialize(
                     DWClientMod.getBackendUrl(),
@@ -58,7 +61,6 @@ public class ClientEventHandler {
             initializeGodEntity(player);
         }
     }
-
     private static void initializeGodEntity(LocalPlayer player) {
         String godType = DWClientMod.getGodType();
         DWClientMod.LOGGER.info("Initializing god entity: {}", godType);

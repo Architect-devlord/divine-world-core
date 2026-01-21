@@ -1,544 +1,835 @@
-# minecraft_launcher.py - FIXED VERSION with agent_spawner.py integration
-"""
-Minecraft Client Launcher - PRODUCTION VERSION
-Spawns Minecraft clients with DW Client Mod for agents
-Integrated with agent_spawner.py
-"""
-
 import subprocess
+import json
 import os
 import logging
+import shutil
+import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+import uuid
+import platform
 
 log = logging.getLogger("minecraft_launcher")
+log.setLevel(logging.INFO)
 
 
-class MinecraftClientLauncher:
+class UltimMCLauncher:
     """
-    Launches Minecraft clients with DW Client Mod
-    FIXED: Works with existing agent_spawner.py structure
+    UltimMC automation layer for Minecraft setup and launching.
+    
+    MULTI-INSTANCE SUPPORT:
+    Creates separate UltimMC folder copies for each agent to bypass single-instance lock.
+    Uses UltimMC's built-in --launch, --profile, --server flags.
     """
     
-    def __init__(self, 
-                 minecraft_dir: Path,
-                 mod_jar: str = "dwclient-1.0.0.jar",
-                 java_path: str = "java"):
-        
-        self.minecraft_dir = Path(minecraft_dir)
-        self.mod_jar = mod_jar
-        self.java_path = java_path
-        
-        # Verify setup
-        if not self.minecraft_dir.exists():
-            self.minecraft_dir.mkdir(parents=True, exist_ok=True)
-        
-        log.info(f"Minecraft launcher initialized: {self.minecraft_dir}")
+    # Configuration
+    MINECRAFT_VERSION = "1.20.1"
+    FORGE_VERSION = "47.4.10"
     
-    def launch_client(self,
-                     agent_id: str,
-                     backend_port: int,
-                     server_addr: str,
-                     memory_mb: int,
-                     is_god: bool = False,
-                     god_type: Optional[str] = None) -> subprocess.Popen:
+    def __init__(self, ultimmc_path: Optional[str] = None,
+                 client_jar_path: Optional[str] = None,
+                 mod_jar_path: Optional[str] = None,
+                 custom_ultimmc_dir: Optional[Path] = None):
         """
-        Launch Minecraft client with DW mod
-        FIXED: Returns Popen object compatible with agent_spawner.py
+        Initialize UltimMC launcher.
+        
+        Args:
+            ultimmc_path: Path to UltimMC executable (source to copy from)
+            client_jar_path: Path to DWClientBot.jar
+            mod_jar_path: Path to DivineWorld.jar
+            custom_ultimmc_dir: Custom UltimMC directory (if already copied)
         """
-        # Create instance directory for this agent
-        instance_dir = self.minecraft_dir / f"instances/{agent_id}"
-        instance_dir.mkdir(parents=True, exist_ok=True)
+        self.source_ultimmc_path = self._find_ultimmc(ultimmc_path)
+        self.client_jar = self._find_file(client_jar_path, "DWClientBot.jar")
+        self.mod_jar = self._find_file(mod_jar_path, "DivineWorld-1.0.0.jar")
         
-        # Prepare mods directory
-        mods_dir = instance_dir / "mods"
-        mods_dir.mkdir(exist_ok=True)
+        # For custom instances, we'll set these per-agent
+        self.ultimmc_dir = custom_ultimmc_dir
+        self.ultimmc_executable = None
         
-        # Copy mod if not already there
-        mod_source = self.minecraft_dir / "mods" / self.mod_jar
-        mod_dest = mods_dir / self.mod_jar
-        if mod_source.exists() and not mod_dest.exists():
-            import shutil
-            shutil.copy(mod_source, mod_dest)
+        if self.ultimmc_dir:
+            self._find_executable_in_dir()
         
-        # Build Java command
-        jvm_args = [
-            self.java_path,
-            f"-Xmx{memory_mb}M",
-            f"-Xms{memory_mb}M",
-            
-            # System properties for mod configuration
-            f"-Ddw.agent.id={agent_id}",
-            f"-Ddw.backend.url=ws://127.0.0.1",
-            f"-Ddw.backend.port={backend_port}",
-            f"-Ddw.vision.width=640",
-            f"-Ddw.vision.height=480",
-            f"-Ddw.vision.quality=0.75",
+        if self.source_ultimmc_path:
+            log.info(f"✅ Source UltimMC found at: {self.source_ultimmc_path}")
+        else:
+            log.warning("⚠️ UltimMC not found - install from https://github.com/UltimMC/Launcher")
+        
+        if self.client_jar:
+            log.info(f"✅ DWClientBot found at: {self.client_jar}")
+        else:
+            log.warning("⚠️ DWClientBot.jar not found")
+        
+        if self.mod_jar:
+            log.info(f"✅ DivineWorld mod found at: {self.mod_jar}")
+        else:
+            log.warning("⚠️ DivineWorld.jar not found")
+    
+    def _find_executable_in_dir(self):
+        """Find UltimMC executable in the custom directory"""
+        if not self.ultimmc_dir:
+            return
+        
+        # Look for executable
+        candidates = [
+            self.ultimmc_dir / "UltimMC",
+            self.ultimmc_dir / "bin" / "UltimMC",
+            self.ultimmc_dir / "ultimmc",
         ]
         
-        # God agent configuration
-        if is_god and god_type:
-            jvm_args.append(f"-Ddw.god.type={god_type}")
+        for candidate in candidates:
+            if candidate.exists() and os.access(candidate, os.X_OK):
+                self.ultimmc_executable = candidate
+                log.info(f"Found UltimMC executable: {candidate}")
+                return
         
-        # Server auto-connect
-        if server_addr:
-            jvm_args.append(f"-Ddw.server.addr={server_addr}")
-        
-        # Minecraft/Forge launch arguments
-        jvm_args.extend([
-            "-cp", self._get_forge_classpath(instance_dir),
-            "cpw.mods.bootstraplauncher.BootstrapLauncher",
-            "--username", agent_id,
-            "--version", "1.20.1-forge",
-            "--gameDir", str(instance_dir),
-            "--fml.forgeVersion", "47.4.10",
-            "--fml.mcVersion", "1.20.1",
-        ])
-        
-        # Auto-connect to server if specified
-        if server_addr and ':' in server_addr:
-            host, port = server_addr.split(':')
-            jvm_args.extend([
-                "--server", host,
-                "--port", port
-            ])
-        
-        log.info(f"Launching Minecraft client for {agent_id}")
-        log.info(f"  Type: {'GOD (' + god_type + ')' if is_god else 'NORMAL'}")
-        log.info(f"  Backend: ws://127.0.0.1:{backend_port}")
-        log.info(f"  Server: {server_addr}")
-        log.info(f"  Memory: {memory_mb}MB")
-        
-        # Launch process (compatible with agent_spawner.py)
-        process = subprocess.Popen(
-            jvm_args,
-            cwd=str(instance_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        
-        log.info(f"✅ Client launched (PID: {process.pid})")
-        
-        return process
+        log.warning(f"No executable found in {self.ultimmc_dir}")
     
-    def _get_forge_classpath(self, instance_dir: Path) -> str:
-        """Build Forge classpath"""
-        # This is simplified - in production, use Forge installer's output
-        forge_dir = self.minecraft_dir / "libraries"
+    def _find_ultimmc(self, explicit_path: Optional[str]) -> Optional[Path]:
+        """Find UltimMC executable or installation directory"""
+        if explicit_path:
+            p = Path(explicit_path)
+            if p.exists():
+                return p
         
-        if not forge_dir.exists():
-            # Fallback to basic launcher
-            return str(self.minecraft_dir / "forge-client.jar")
+        env_path = os.environ.get("DW_ULTIMMC_PATH")
+        if env_path:
+            p = Path(env_path)
+            if p.exists():
+                return p
+            else:
+                print("ℹ️  If UltimMC executable is not found, set DW_ULTIMMC_PATH environment variable")
+                print()
         
-        # Build classpath from Forge libraries
-        classpath_parts = []
+        candidates = [
+            Path.home() / "ultimmc" / "UltimMC",
+            Path.home() / ".local" / "bin" / "ultimmc",
+            Path.home() / "UltimMC" / "bin" / "UltimMC",
+            Path("/opt/ultimmc/UltimMC"),
+            Path("/usr/local/bin/ultimmc"),
+            shutil.which("ultimmc"),
+        ]
         
-        # Add all Forge libraries
-        for jar_file in forge_dir.rglob("*.jar"):
-            classpath_parts.append(str(jar_file))
+        for candidate in candidates:
+            if candidate:
+                if isinstance(candidate, str):
+                    candidate = Path(candidate)
+                if candidate.exists():
+                    return candidate
         
-        # Add mod
-        mod_path = instance_dir / "mods" / self.mod_jar
-        if mod_path.exists():
-            classpath_parts.append(str(mod_path))
-        
-        return os.pathsep.join(classpath_parts)
+        return None
     
-    def install_forge(self):
-        """
-        Install Forge if not already installed
-        """
-        forge_installer = self.minecraft_dir / "forge-1.20.1-47.2.0-installer.jar"
+    def _find_file(self, explicit_path: Optional[str], filename: str) -> Optional[Path]:
+        """Find a jar file"""
+        if explicit_path:
+            p = Path(explicit_path)
+            if p.exists():
+                return p
         
-        if not forge_installer.exists():
-            log.error(f"Forge installer not found: {forge_installer}")
-            log.info("Download from: https://files.minecraftforge.net/")
+        search_dirs = [
+            Path.cwd(),
+            Path.cwd() / "py_backend",
+            Path.home() / ".divine-world",
+            Path("/opt/divine-world"),
+        ]
+        
+        for search_dir in search_dirs:
+            if search_dir.exists():
+                found = list(search_dir.glob(f"**/{filename}"))
+                if found:
+                    return found[0]
+        
+        return None
+    
+    def copy_ultimmc_installation(self, dest_dir: Path) -> bool:
+        """
+        Copy the entire UltimMC installation to a new directory.
+        
+        Args:
+            dest_dir: Destination directory for the copy
+            
+        Returns:
+            True if successful
+        """
+        if not self.source_ultimmc_path:
+            log.error("Source UltimMC not found - cannot copy")
             return False
         
-        log.info("Installing Forge...")
+        # Find the UltimMC installation root
+        source_root = self.source_ultimmc_path.parent
+        if source_root.name == "bin":
+            source_root = source_root.parent
         
-        result = subprocess.run(
-            [self.java_path, "-jar", str(forge_installer), "--installClient"],
-            cwd=str(self.minecraft_dir),
-            capture_output=True,
-            text=True
-        )
+        log.info(f"Copying UltimMC from {source_root} to {dest_dir}")
         
-        if result.returncode == 0:
-            log.info("✅ Forge installed successfully")
+        try:
+            if dest_dir.exists():
+                log.info(f"Destination already exists, skipping copy: {dest_dir}")
+                self.ultimmc_dir = dest_dir
+                self._find_executable_in_dir()
+                return True
+            
+            shutil.copytree(source_root, dest_dir, symlinks=True)
+            log.info(f"✅ Copied UltimMC installation to {dest_dir}")
+            
+            self.ultimmc_dir = dest_dir
+            self._find_executable_in_dir()
+            
+            # Make executable if needed
+            if self.ultimmc_executable:
+                os.chmod(self.ultimmc_executable, 0o755)
+            
             return True
+        except Exception as e:
+            log.error(f"❌ Failed to copy UltimMC: {e}")
+            return False
+    
+    def create_account(self, username: str, make_active: bool = True, 
+                      custom_uuid: Optional[str] = None) -> bool:
+        """
+        Create a local Minecraft account (offline mode) in UltimMC's accounts.json.
+        
+        Args:
+            username: Account username
+            make_active: Whether to set this account as the active account
+            custom_uuid: Custom UUID to use (if None, generates offline UUID)
+            
+        Returns:
+            True if successful
+        """
+        if not self.ultimmc_dir:
+            log.error("UltimMC directory not set - cannot create account")
+            return False
+        
+        log.info(f"Creating local account: {username}")
+        
+        accounts_file = self.ultimmc_dir / "accounts.json"
+        
+        if accounts_file.exists():
+            try:
+                data = json.loads(accounts_file.read_text())
+                if "accounts" not in data:
+                    data = {"accounts": [], "formatVersion": 3}
+            except json.JSONDecodeError:
+                log.warning("Corrupted accounts.json, creating new one")
+                data = {"accounts": [], "formatVersion": 3}
         else:
-            log.error(f"❌ Forge installation failed: {result.stderr}")
+            data = {"accounts": [], "formatVersion": 3}
+        
+        if custom_uuid:
+            account_uuid = custom_uuid
+            log.info(f"Using custom UUID: {account_uuid}")
+        else:
+            account_uuid = self._generate_offline_uuid(username)
+            log.info(f"Generated offline UUID: {account_uuid}")
+        
+        client_token = str(uuid.uuid4()).replace("-", "")
+        current_time = int(time.time())
+        
+        new_account = {
+            "type": "Local",
+            "profile": {
+                "id": account_uuid.replace("-", ""),
+                "name": username,
+                "skin": {
+                    "id": "",
+                    "url": "",
+                    "variant": ""
+                },
+                "capes": []
+            },
+            "entitlement": {
+                "canPlayMinecraft": True,
+                "ownsMinecraft": True
+            },
+            "ygg": {
+                "extra": {
+                    "clientToken": client_token,
+                    "userName": username
+                },
+                "iat": current_time
+            }
+        }
+        
+        if make_active:
+            for account in data["accounts"]:
+                account.pop("active", None)
+            new_account["active"] = True
+        
+        existing_index = None
+        for i, account in enumerate(data["accounts"]):
+            if account.get("profile", {}).get("name") == username:
+                existing_index = i
+                break
+        
+        if existing_index is not None:
+            log.info(f"Account {username} already exists, updating it")
+            data["accounts"][existing_index] = new_account
+        else:
+            data["accounts"].append(new_account)
+        
+        try:
+            accounts_file.write_text(json.dumps(data, indent=4))
+            log.info(f"✅ Account created/updated: {username}")
+            log.info(f"   UUID: {account_uuid}")
+            log.info(f"   Active: {make_active}")
+            return True
+        except Exception as e:
+            log.error(f"❌ Failed to write accounts.json: {e}")
             return False
     
-    def install_mod(self, mod_jar_path: Path):
-        """
-        Install DW Client Mod
-        """
-        mods_dir = self.minecraft_dir / "mods"
-        mods_dir.mkdir(exist_ok=True)
-        
-        if not mod_jar_path.exists():
-            log.error(f"Mod JAR not found: {mod_jar_path}")
+    def create_instance(self, instance_name: str, forge_install: bool = True) -> bool:
+        """Create a Minecraft instance with Forge."""
+        if not self.ultimmc_dir:
+            log.error("UltimMC directory not set - cannot create instance")
             return False
         
-        # Copy mod to mods directory
-        import shutil
-        dest = mods_dir / mod_jar_path.name
-        shutil.copy(mod_jar_path, dest)
+        instances_dir = self.ultimmc_dir / "instances"
+        instances_dir.mkdir(parents=True, exist_ok=True)
         
-        log.info(f"✅ Mod installed: {dest}")
+        instance_dir = instances_dir / instance_name
+        instance_dir.mkdir(parents=True, exist_ok=True)
+        
+        log.info(f"Creating Minecraft instance: {instance_name}")
+        
+        instance_cfg = instance_dir / "instance.cfg"
+        cfg_content = f"""InstanceType=OneSix
+name={instance_name}
+iconKey=default
+notes=Divine World Agent Instance
+lastLaunchTime=0
+totalTimePlayed=0
+OverrideCommands=false
+OverrideConsole=false
+OverrideGameTime=false
+OverrideJavaArgs=true
+OverrideJavaLocation=false
+OverrideMCLaunchMethod=false
+OverrideMemory=true
+OverrideNativeWorkarounds=false
+OverridePerformance=false
+OverrideWindow=false
+ShowConsole=false
+MaxMemAlloc=2048
+MinMemAlloc=512
+WrapperCommand=
+"""
+        instance_cfg.write_text(cfg_content.strip())
+        
+        mmc_pack = instance_dir / "mmc-pack.json"
+        pack_content = {
+            "components": [
+                {
+                    "cachedName": "LWJGL 3",
+                    "cachedVersion": "3.3.1",
+                    "cachedVolatile": True,
+                    "dependencyOnly": True,
+                    "uid": "org.lwjgl3",
+                    "version": "3.3.1"
+                },
+                {
+                    "cachedName": "Minecraft",
+                    "cachedRequires": [{"uid": "org.lwjgl3"}],
+                    "cachedVersion": self.MINECRAFT_VERSION,
+                    "important": True,
+                    "uid": "net.minecraft",
+                    "version": self.MINECRAFT_VERSION
+                }
+            ],
+            "formatVersion": 1
+        }
+        
+        if forge_install:
+            pack_content["components"].append({
+                "cachedName": "Forge",
+                "cachedVersion": self.FORGE_VERSION,
+                "uid": "net.minecraftforge",
+                "version": self.FORGE_VERSION
+            })
+        
+        mmc_pack.write_text(json.dumps(pack_content, indent=2))
+        
+        log.info(f"✅ Instance created: {instance_name}")
         return True
-
-
-# ============================================================================
-# INTEGRATION WITH EXISTING agent_spawner.py
-# ============================================================================
-
-def patch_agent_spawner(spawner_instance):
-    """
-    Patch existing AgentSpawner to use Minecraft launcher
-    CRITICAL: This modifies the spawner's client_manager
-    """
-    from ai_core.agent_spawner import AgentClientManager, MinecraftClientProcess
     
-    # Create launcher
-    launcher = MinecraftClientLauncher(
-        minecraft_dir=Path("minecraft_clients"),
-        java_path="java"
-    )
+    def install_mods(self, instance_name: str) -> bool:
+        """Copy DivineWorld and DWClientBot mods to instance."""
+        if not self.ultimmc_dir:
+            log.error("UltimMC directory not set")
+            return False
+        
+        instance_dir = self.ultimmc_dir / "instances" / instance_name
+        minecraft_dir = instance_dir / ".minecraft"
+        minecraft_dir.mkdir(parents=True, exist_ok=True)
+        
+        mods_dir = minecraft_dir / "mods"
+        mods_dir.mkdir(parents=True, exist_ok=True)
+        
+        success = True
+        
+        if self.mod_jar:
+            try:
+                shutil.copy(self.mod_jar, mods_dir / self.mod_jar.name)
+                log.info(f"✅ Installed DivineWorld mod: {self.mod_jar.name}")
+            except Exception as e:
+                log.error(f"❌ Failed to install DivineWorld mod: {e}")
+                success = False
+        
+        if self.client_jar:
+            try:
+                shutil.copy(self.client_jar, mods_dir / self.client_jar.name)
+                log.info(f"✅ Installed DWClientBot mod: {self.client_jar.name}")
+            except Exception as e:
+                log.error(f"❌ Failed to install DWClientBot mod: {e}")
+                success = False
+        
+        return success
     
-    # Store original spawn_client method
-    original_spawn_client = spawner_instance.client_manager.spawn_client
-    
-    # Create new spawn_client that uses our launcher
-    def spawn_client_with_mod(agent_id: str, server_addr: str = "127.0.0.1:25565",
-                              memory_mb: int = 2048) -> Optional[MinecraftClientProcess]:
+    def launch_instance(self, instance_name: str, 
+                       server_addr: Optional[str] = None,
+                       profile_name: Optional[str] = None,
+                       offline: bool = True,
+                       offline_name: Optional[str] = None,
+                       agent_id: Optional[str] = None,
+                       backend_url: Optional[str] = None,
+                       memory_mb: int = 2048,
+                       extra_jvm_args: Optional[List[str]] = None,
+                       headless: bool = False) -> Optional[subprocess.Popen]:
         """
-        Override spawn_client to use DW mod launcher
+        Launch a Minecraft instance via UltimMC using built-in flags.
+        
+        Args:
+            instance_name: Instance to launch
+            server_addr: Server address (e.g., "127.0.0.1:25565")
+            profile_name: Account profile name to use
+            offline: Launch in offline mode
+            offline_name: Username for offline mode
+            agent_id: Agent ID for system property
+            backend_url: Backend URL for system property
+            memory_mb: Memory allocation
+            extra_jvm_args: Additional JVM arguments
+            headless: Run with xvfb-run (headless)
+            
+        Returns:
+            Process handle or None
         """
-        # Check if in Minecraft mode
-        if not spawner_instance.client_manager.minecraft_mode:
+        if not self.ultimmc_executable:
+            log.error("UltimMC executable not available - cannot launch")
             return None
         
-        # Allocate port
-        backend_port = spawner_instance.client_manager.allocate_port(agent_id)
+        # Build UltimMC command using built-in flags
+        cmd = []
         
-        # Determine if god agent
-        is_god = False
-        god_type = None
+        # Add xvfb-run for headless operation
+        if headless:
+            cmd.extend(["xvfb-run", "-a"])
         
-        # Check if this is a god spawn
-        # (We'll check the agent registry or pass this info)
+        cmd.append(str(self.ultimmc_executable))
         
-        # Launch with mod
-        process = launcher.launch_client(
-            agent_id=agent_id,
-            backend_port=backend_port,
-            server_addr=server_addr,
-            memory_mb=memory_mb,
-            is_god=is_god,
-            god_type=god_type
-        )
+        # Use current directory as data dir (. = current)
+        cmd.extend(["-d", "."])
         
-        # Create MinecraftClientProcess object
-        client_process = MinecraftClientProcess(
-            agent_id=agent_id,
-            process=process,
-            backend_port=backend_port,
-            server_addr=server_addr
-        )
+        # Launch instance
+        cmd.extend(["-l", instance_name])
         
-        # Register in client_manager
-        spawner_instance.client_manager.clients[agent_id] = client_process
+        # Server address
+        if server_addr:
+            cmd.extend(["-s", server_addr])
         
-        return client_process
-    
-    # Replace the method
-    spawner_instance.client_manager.spawn_client = spawn_client_with_mod
-    spawner_instance.minecraft_launcher = launcher
-    
-    log.info("✅ AgentSpawner patched with Minecraft mod launcher")
-    
-    return spawner_instance
-
-
-# Example usage with existing code
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    
-    # This integrates with your existing agent_spawner.py
-    from ai_core.agent_spawner import AgentSpawner
-    
-    spawner = AgentSpawner(client_jar_path="DWClientBot.jar")
-    
-    # Patch it to use our mod
-    spawner = patch_agent_spawner(spawner)
-    
-    # Now spawn works with the mod!
-    agent = spawner.spawn_npc(
-        agent_id="AI_Test_001",
-        server_addr="127.0.0.1:25565"
-    )
-
-
-import subprocess
-import os
-import logging
-from pathlib import Path
-from typing import Optional, Dict, Any
-
-log = logging.getLogger("minecraft_launcher")
-
-
-class MinecraftClientLauncher:
-    """
-    Launches Minecraft clients with DW Client Mod
-    Handles both normal agents and god agents
-    """
-    
-    def __init__(self, 
-                 minecraft_dir: Path,
-                 forge_jar: str = "forge-1.20.1-47.2.0-installer.jar",
-                 java_path: str = "java"):
+        # Profile
+        if profile_name:
+            cmd.extend(["-a", profile_name])
         
-        self.minecraft_dir = Path(minecraft_dir)
-        self.forge_jar = forge_jar
-        self.java_path = java_path
+        # Offline mode
+        if offline:
+            cmd.append("-o")
+            if offline_name:
+                cmd.extend(["-n", offline_name])
         
-        # Verify setup
-        if not self.minecraft_dir.exists():
-            self.minecraft_dir.mkdir(parents=True, exist_ok=True)
+        # Set up environment for JVM args
+        env = os.environ.copy()
         
-        log.info(f"Minecraft launcher initialized: {self.minecraft_dir}")
-    
-    def launch_normal_agent(self,
-                           agent_id: str,
-                           backend_port: int = 11400,
-                           server_addr: str = "127.0.0.1:25565",
-                           memory_mb: int = 2048) -> subprocess.Popen:
-        """
-        Launch Minecraft client for normal agent
-        """
-        return self._launch_client(
-            agent_id=agent_id,
-            backend_port=backend_port,
-            server_addr=server_addr,
-            memory_mb=memory_mb,
-            is_god=False
-        )
-    
-    def launch_god_agent(self,
-                        agent_id: str,
-                        god_type: str,
-                        backend_port: int = 11400,
-                        server_addr: str = "127.0.0.1:25565",
-                        memory_mb: int = 4096) -> subprocess.Popen:
-        """
-        Launch Minecraft client for god agent
-        """
-        return self._launch_client(
-            agent_id=agent_id,
-            backend_port=backend_port,
-            server_addr=server_addr,
-            memory_mb=memory_mb,
-            is_god=True,
-            god_type=god_type
-        )
-    
-    def _launch_client(self,
-                      agent_id: str,
-                      backend_port: int,
-                      server_addr: str,
-                      memory_mb: int,
-                      is_god: bool = False,
-                      god_type: Optional[str] = None) -> subprocess.Popen:
-        """
-        Internal method to launch Minecraft with proper configuration
-        """
-        # Create instance directory for this agent
-        instance_dir = self.minecraft_dir / f"instances/{agent_id}"
-        instance_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Java arguments
-        jvm_args = [
-            self.java_path,
+        java_args = [
             f"-Xmx{memory_mb}M",
             f"-Xms{memory_mb}M",
-            
-            # System properties for mod configuration
-            f"-Ddw.agent.id={agent_id}",
-            f"-Ddw.backend.url=ws://127.0.0.1",
-            f"-Ddw.backend.port={backend_port}",
-            f"-Ddw.vision.width=640",
-            f"-Ddw.vision.height=480",
-            f"-Ddw.vision.quality=0.75",
         ]
         
-        # God agent configuration
-        if is_god and god_type:
-            jvm_args.append(f"-Ddw.god.type={god_type}")
-        
-        # Minecraft/Forge arguments
-        jvm_args.extend([
-            "-jar",
-            str(self.minecraft_dir / "forge-client.jar"),
-            "--username", agent_id,
-            "--version", "1.20.1-forge",
-            "--gameDir", str(instance_dir),
-            "--assetsDir", str(self.minecraft_dir / "assets"),
-            "--assetIndex", "1.20",
-        ])
-        
-        # Auto-connect to server
+        if agent_id:
+            java_args.append(f"-Ddw.agentId={agent_id}")
+        if backend_url:
+            java_args.append(f"-Ddw.backend={backend_url}")
         if server_addr:
-            host, port = server_addr.split(":")
-            jvm_args.extend([
-                "--server", host,
-                "--port", port
-            ])
+            java_args.append(f"-Ddw.server={server_addr}")
         
-        log.info(f"Launching Minecraft client for {agent_id}")
-        log.info(f"  Type: {'GOD (' + god_type + ')' if is_god else 'NORMAL'}")
-        log.info(f"  Backend: ws://127.0.0.1:{backend_port}")
+        if extra_jvm_args:
+            java_args.extend(extra_jvm_args)
+        
+        env["INST_JAVA"] = " ".join(java_args)
+        
+        log.info(f"Launching UltimMC instance: {instance_name}")
+        log.info(f"  Working directory: {self.ultimmc_dir}")
         log.info(f"  Server: {server_addr}")
+        log.info(f"  Profile: {profile_name}")
+        log.info(f"  Offline: {offline} (name: {offline_name})")
+        log.info(f"  Agent ID: {agent_id}")
+        log.info(f"  Backend: {backend_url}")
         log.info(f"  Memory: {memory_mb}MB")
+        log.info(f"  Headless: {headless}")
+        log.info(f"  Command: {' '.join(cmd)}")
         
-        # Launch process
-        process = subprocess.Popen(
-            jvm_args,
-            cwd=str(self.minecraft_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(self.ultimmc_dir),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            log.info(f"✅ UltimMC launched with PID: {process.pid}")
+            return process
+        except Exception as e:
+            log.error(f"❌ Failed to launch UltimMC: {e}")
+            return None
+    
+    @staticmethod
+    def _generate_offline_uuid(username: str) -> str:
+        """Generate offline mode UUID for account (Minecraft standard)"""
+        namespace = uuid.UUID("00000000-0000-0000-0000-000000000000")
+        name = f"OfflinePlayer:{username}"
+        return str(uuid.uuid3(namespace, name))
+
+
+class MultiAgentLauncher:
+    """
+    Manager for launching multiple agents simultaneously.
+    
+    Creates separate UltimMC folder copies for each agent.
+    """
+    
+    def __init__(self, base_dir: Optional[Path] = None):
+        """
+        Initialize multi-agent launcher.
+        
+        Args:
+            base_dir: Base directory for agent UltimMC copies
+        """
+        if base_dir:
+            self.base_dir = Path(base_dir)
+        else:
+            self.base_dir = Path.home() / ".divine-world" / "ultimmc_agents"
+        
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.launchers: Dict[str, UltimMCLauncher] = {}
+        self.processes: Dict[str, subprocess.Popen] = {}
+        
+        log.info(f"Multi-agent launcher initialized at: {self.base_dir}")
+    
+    def create_launcher_for_agent(self, agent_id: str, 
+                                 source_launcher: Optional[UltimMCLauncher] = None) -> UltimMCLauncher:
+        """
+        Create a dedicated UltimMC copy for an agent.
+        
+        Args:
+            agent_id: Agent identifier
+            source_launcher: Source launcher to copy from (or creates new one)
+            
+        Returns:
+            UltimMCLauncher instance for this agent
+        """
+        agent_ultimmc_dir = self.base_dir / agent_id
+        
+        # Create launcher with source paths
+        if source_launcher:
+            launcher = UltimMCLauncher(
+                ultimmc_path=str(source_launcher.source_ultimmc_path) if source_launcher.source_ultimmc_path else None,
+                client_jar_path=str(source_launcher.client_jar) if source_launcher.client_jar else None,
+                mod_jar_path=str(source_launcher.mod_jar) if source_launcher.mod_jar else None
+            )
+        else:
+            launcher = UltimMCLauncher()
+        
+        # Copy UltimMC installation
+        if not launcher.copy_ultimmc_installation(agent_ultimmc_dir):
+            log.error(f"Failed to create UltimMC copy for {agent_id}")
+            return None
+        
+        self.launchers[agent_id] = launcher
+        log.info(f"Created launcher for {agent_id} at: {agent_ultimmc_dir}")
+        
+        return launcher
+    
+    def setup_agent(self, agent_id: str, server_addr: str = "127.0.0.1:25565",
+                   custom_uuid: Optional[str] = None,
+                   source_launcher: Optional[UltimMCLauncher] = None) -> bool:
+        """
+        Setup an agent with its own UltimMC copy.
+        
+        Args:
+            agent_id: Agent identifier
+            server_addr: Server address
+            custom_uuid: Custom UUID for the agent
+            source_launcher: Source launcher to copy from
+            
+        Returns:
+            True if setup successful
+        """
+        launcher = self.create_launcher_for_agent(agent_id, source_launcher)
+        if not launcher:
+            return False
+        
+        instance_name = f"agent_{agent_id}"
+        
+        # Create account
+        if not launcher.create_account(agent_id, make_active=True, custom_uuid=custom_uuid):
+            return False
+        
+        # Create instance
+        if not launcher.create_instance(instance_name, forge_install=True):
+            return False
+        
+        # Install mods
+        if not launcher.install_mods(instance_name):
+            log.warning(f"Some mods failed to install for {agent_id}")
+        
+        log.info(f"✅ Agent {agent_id} fully configured")
+        return True
+    
+    def launch_agent(self, agent_id: str, server_addr: str,
+                    backend_url: str, memory_mb: int = 2048,
+                    extra_jvm_args: Optional[List[str]] = None,
+                    headless: bool = False) -> Optional[subprocess.Popen]:
+        """
+        Launch an agent.
+        
+        Args:
+            agent_id: Agent identifier
+            server_addr: Server address
+            backend_url: Backend URL
+            memory_mb: Memory allocation
+            extra_jvm_args: Extra JVM arguments
+            headless: Run headless with xvfb-run
+            
+        Returns:
+            Process handle or None
+        """
+        if agent_id not in self.launchers:
+            log.error(f"Launcher not found for {agent_id}. Run setup_agent() first.")
+            return None
+        
+        launcher = self.launchers[agent_id]
+        instance_name = f"agent_{agent_id}"
+        
+        process = launcher.launch_instance(
+            instance_name=instance_name,
+            server_addr=server_addr,
+            offline=True,
+            offline_name=agent_id,
+            agent_id=agent_id,
+            backend_url=backend_url,
+            memory_mb=memory_mb,
+            extra_jvm_args=extra_jvm_args,
+            headless=headless
         )
         
-        log.info(f"✅ Client launched (PID: {process.pid})")
+        if process:
+            self.processes[agent_id] = process
         
         return process
     
-    def install_forge(self):
+    def launch_multiple_agents(self, agent_configs: List[Dict[str, Any]],
+                              delay_between_launches: float = 2.0,
+                              source_launcher: Optional[UltimMCLauncher] = None,
+                              headless: bool = False) -> Dict[str, subprocess.Popen]:
         """
-        Install Forge if not already installed
-        """
-        installer_path = self.minecraft_dir / self.forge_jar
+        Launch multiple agents with configurable delay.
         
-        if not installer_path.exists():
-            log.error(f"Forge installer not found: {installer_path}")
+        Args:
+            agent_configs: List of agent configurations
+            delay_between_launches: Seconds to wait between launches
+            source_launcher: Source launcher for copying
+            headless: Run all agents headless
+            
+        Returns:
+            Dictionary of agent_id -> process
+        """
+        launched = {}
+        
+        for i, config in enumerate(agent_configs):
+            agent_id = config["id"]
+            log.info(f"Launching agent {i+1}/{len(agent_configs)}: {agent_id}")
+            
+            # Setup if not already done
+            if agent_id not in self.launchers:
+                success = self.setup_agent(
+                    agent_id=agent_id,
+                    server_addr=config.get("server", "127.0.0.1:25565"),
+                    custom_uuid=config.get("uuid"),
+                    source_launcher=source_launcher
+                )
+                if not success:
+                    log.error(f"Failed to setup {agent_id}")
+                    continue
+            
+            # Launch
+            process = self.launch_agent(
+                agent_id=agent_id,
+                server_addr=config.get("server", "127.0.0.1:25565"),
+                backend_url=config.get("backend", "http://127.0.0.1:11400"),
+                memory_mb=config.get("memory", 2048),
+                extra_jvm_args=config.get("extra_jvm_args"),
+                headless=config.get("headless", headless)
+            )
+            
+            if process:
+                launched[agent_id] = process
+                log.info(f"✅ Launched {agent_id}")
+            else:
+                log.error(f"❌ Failed to launch {agent_id}")
+            
+            # Wait before launching next agent
+            if i < len(agent_configs) - 1:
+                log.info(f"Waiting {delay_between_launches}s before next launch...")
+                time.sleep(delay_between_launches)
+        
+        log.info(f"Launched {len(launched)}/{len(agent_configs)} agents successfully")
+        return launched
+    
+    def stop_agent(self, agent_id: str, timeout: int = 10) -> bool:
+        """Stop a running agent."""
+        if agent_id not in self.processes:
+            log.warning(f"No running process found for {agent_id}")
             return False
         
-        log.info("Installing Forge...")
-        
-        result = subprocess.run(
-            [self.java_path, "-jar", str(installer_path), "--installClient"],
-            cwd=str(self.minecraft_dir),
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode == 0:
-            log.info("✅ Forge installed successfully")
+        process = self.processes[agent_id]
+        try:
+            process.terminate()
+            process.wait(timeout=timeout)
+            log.info(f"✅ Stopped {agent_id}")
+            del self.processes[agent_id]
             return True
-        else:
-            log.error(f"❌ Forge installation failed: {result.stderr}")
+        except subprocess.TimeoutExpired:
+            log.warning(f"Process {agent_id} didn't terminate, killing...")
+            process.kill()
+            process.wait()
+            del self.processes[agent_id]
+            return True
+        except Exception as e:
+            log.error(f"Failed to stop {agent_id}: {e}")
             return False
     
-    def install_mod(self, mod_jar_path: Path):
-        """
-        Install DW Client Mod
-        """
-        mods_dir = self.minecraft_dir / "mods"
-        mods_dir.mkdir(exist_ok=True)
+    def stop_all_agents(self) -> int:
+        """Stop all running agents. Returns number stopped."""
+        agent_ids = list(self.processes.keys())
+        stopped = 0
         
-        if not mod_jar_path.exists():
-            log.error(f"Mod JAR not found: {mod_jar_path}")
-            return False
+        for agent_id in agent_ids:
+            if self.stop_agent(agent_id):
+                stopped += 1
         
-        # Copy mod to mods directory
-        import shutil
-        dest = mods_dir / mod_jar_path.name
-        shutil.copy(mod_jar_path, dest)
+        return stopped
+    
+    def get_running_agents(self) -> List[str]:
+        """Get list of currently running agent IDs."""
+        running = []
+        for agent_id, process in list(self.processes.items()):
+            if process.poll() is None:  # Still running
+                running.append(agent_id)
+            else:  # Process ended
+                del self.processes[agent_id]
         
-        log.info(f"✅ Mod installed: {dest}")
-        return True
+        return running
 
 
-# Integration with existing agent spawner
-def integrate_with_agent_spawner(spawner):
-    """
-    Add Minecraft launcher to AgentSpawner
-    """
-    launcher = MinecraftClientLauncher(
-        minecraft_dir=Path("minecraft_clients"),
-        java_path="java"
-    )
-    
-    # Override spawn methods
-    original_spawn_npc = spawner.spawn_npc
-    original_spawn_god = spawner.spawn_god
-    
-    def spawn_npc_with_client(agent_id: str, server_addr: str = "127.0.0.1:25565", **kwargs):
-        # Spawn agent backend
-        agent = original_spawn_npc(agent_id, server_addr, **kwargs)
-        
-        # Launch Minecraft client
-        backend_port = getattr(agent, 'backend_port', 11400)
-        process = launcher.launch_normal_agent(
-            agent_id=agent_id,
-            backend_port=backend_port,
-            server_addr=server_addr
-        )
-        
-        agent.minecraft_process = process
-        return agent
-    
-    def spawn_god_with_client(god_type: str, server_addr: str = "127.0.0.1:25565", **kwargs):
-        # Spawn agent backend
-        agent = original_spawn_god(god_type, server_addr, **kwargs)
-        
-        # Launch Minecraft client
-        backend_port = getattr(agent, 'backend_port', 11400)
-        process = launcher.launch_god_agent(
-            agent_id=agent.agent_id,
-            god_type=god_type,
-            backend_port=backend_port,
-            server_addr=server_addr
-        )
-        
-        agent.minecraft_process = process
-        return agent
-    
-    spawner.spawn_npc = spawn_npc_with_client
-    spawner.spawn_god = spawn_god_with_client
-    spawner.minecraft_launcher = launcher
-    
-    log.info("✅ Minecraft launcher integrated with spawner")
+# ============================================================================
+# EXAMPLE USAGE
+# ============================================================================
 
-
-# Example usage
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    
-    launcher = MinecraftClientLauncher(
-        minecraft_dir=Path("minecraft_clients")
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # Install Forge and mod (one-time setup)
-    # launcher.install_forge()
-    # launcher.install_mod(Path("mods/dwclient-1.0.0.jar"))
+    print("="*70)
+    print("UltimMC Multi-Agent Launcher v2")
+    print("Uses folder copies and built-in UltimMC flags")
+    print("="*70)
+    print()
     
-    # Launch a normal agent
-    process = launcher.launch_normal_agent(
-        agent_id="AI_Test_001",
-        backend_port=11400,
-        server_addr="127.0.0.1:25565"
-    )
-    
-    # Launch a god agent
-    god_process = launcher.launch_god_agent(
-        agent_id="GOD_CREAKING_001",
-        god_type="creaking",
-        backend_port=11401,
-        server_addr="127.0.0.1:25565"
-    )
+    # Example: Launch multiple agents
+    print("Example: Multiple Agents")
+    print()
+    print("# 1. Create a source launcher (finds UltimMC and mods)")
+    print("source = UltimMCLauncher()")
+    print()
+    print("# 2. Create multi-agent launcher")
+    print("multi = MultiAgentLauncher()")
+    print()
+    print("# 3. Define agent configs")
+    print("""agent_configs = [
+    {"id": "adam", "server": "127.0.0.1:25565", 
+     "backend": "http://127.0.0.1:11400", "memory": 2048, "headless": True},
+    {"id": "eve", "server": "127.0.0.1:25565", 
+     "backend": "http://127.0.0.1:11400", "memory": 2048, "headless": True},
+]""")
+    print()
+    print("# 4. Launch all agents")
+    print("processes = multi.launch_multiple_agents(")
+    print("    agent_configs, ")
+    print("    delay_between_launches=3.0,")
+    print("    source_launcher=source,")
+    print("    headless=True  # Requires xvfb-run")
+    print(")")
+    print()
+    print("# 5. Check running agents")
+    print("print(multi.get_running_agents())")
+    print()
+    print("# 6. Stop all")
+    print("multi.stop_all_agents()")
+    print()
+    print("✅ Ready to use! Uncomment examples above to test.")
+
+    #
+    # 
+#1. Proper UltimMC Command Usage
+
+#    Uses built-in flags: -l (launch), -s (server), -a (profile), -o (offline), -n (name)
+#    Uses -d . to run from current directory instead of trying to specify external data dirs
+#    Removed the incorrect -d usage that wasn't working
+
+#2. Folder Copying Strategy
+
+#    Each agent gets a complete copy of the UltimMC installation
+#    Copies are stored in ~/.divine-world/ultimmc_agents/{agent_id}/
+#    Each copy is independent with its own accounts, instances, and data
+
+#3. Headless Support
+
+#    Added headless parameter that wraps commands with xvfb-run -a
+#    Useful for running multiple agents on servers without displays
+#    Requires Xvfb to be installed: sudo pacman -S xorg-server-xvfb
+
+#4. Simplified Launch Flow
+#python
+
+# Create source launcher to locate files
+#source = UltimMCLauncher()
+
+# Create multi-agent manager
+#multi = MultiAgentLauncher()
+
+# Launch agents (automatically copies UltimMC for each)
+#agents = [
+#    {"id": "adam", "server": "localhost:25565", 
+#     "backend": "http://localhost:11400", "headless": True},
+#    {"id": "eve", "server": "localhost:25565", 
+#     "backend": "http://localhost:11400", "headless": True},
+#]
+
+#processes = multi.launch_multiple_agents(
+#    agents, 
+#    source_launcher=source,
+#    headless=True
+#)

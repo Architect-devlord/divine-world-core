@@ -1,8 +1,6 @@
 // src/main/java/com/divineworld/commands/NPCCommand.java
 package com.divineworld.commands;
 
-import com.google.gson.JsonObject;
-
 import com.divineworld.DWMod;
 import com.divineworld.entity.DWNPCManager;
 import com.divineworld.integration.PythonBackendClient;
@@ -20,8 +18,7 @@ import net.minecraft.server.level.ServerPlayer;
 import java.util.List;
 
 /**
- * NPC Management Commands - Fixed for Forge 1.20.1
- * Handles spawning, listing, removing, and info about AI-controlled NPCs
+ * NPC Management Commands - FIXED to use single agent spawn endpoint
  */
 public class NPCCommand {
 
@@ -30,7 +27,6 @@ public class NPCCommand {
      */
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("dw")
-                .requires(src -> src.hasPermission(2))
                 .then(Commands.literal("npc")
 
                         // /dw npc spawn <name>
@@ -65,7 +61,7 @@ public class NPCCommand {
     }
 
     /**
-     * Spawn a new NPC agent via Python backend
+     * Spawn a new NPC agent via Python backend - FIXED
      */
     private static int spawnNPC(CommandContext<CommandSourceStack> ctx) {
         try {
@@ -73,30 +69,25 @@ public class NPCCommand {
             ServerLevel level = ctx.getSource().getLevel();
             String name = StringArgumentType.getString(ctx, "name");
 
-            // Generate agent ID
-            String agentId = "npc_" + name.toLowerCase().replace(" ", "_") + "_" + System.currentTimeMillis();
-
             // Calculate spawn position (in front of player)
             BlockPos spawnPos = player.blockPosition().relative(player.getDirection(), 3);
             spawnPos = getSafeSpawnPosition(level, spawnPos);
 
             player.sendSystemMessage(Component.literal("§d[DW] §eSpawning NPC: " + name));
-            player.sendSystemMessage(Component.literal("§7Agent ID: " + agentId));
 
-            // Notify Python backend to spawn agent
-            // Note: This uses Genesis spawn endpoint with single agent
-            PythonBackendClient.spawnGenesisAgents(
+            // ✅ FIX: Use new single agent spawn endpoint instead of genesis
+            PythonBackendClient.spawnSingleAgent(
+                    name,
                     player.getName().getString(),
                     level.dimension().location().toString(),
-                    spawnPos,
-                    spawnPos.offset(1, 0, 0) // Dummy second position
+                    spawnPos
             );
 
             player.sendSystemMessage(Component.literal("§a[DW] Agent system initializing..."));
             player.sendSystemMessage(Component.literal("§7The NPC will connect shortly."));
 
-            DWMod.LOGGER.info("Spawning NPC '{}' (Agent: {}) at {} for player {}",
-                    name, agentId, spawnPos, player.getName().getString());
+            DWMod.LOGGER.info("Spawning NPC '{}' at {} for player {}",
+                    name, spawnPos, player.getName().getString());
 
             return 1;
 

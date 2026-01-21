@@ -1,63 +1,197 @@
-# ai_core/agent.py - COMPLETE UNIFIED VERSION
+# ai_core/agent.py - STANDALONE AGENT RUNTIME WITH WEBSOCKET
 """
-Unified NPC Agent with Full Integration
-========================================
-Merges agent.py and aggent.py into single comprehensive implementation:
-- UnifiedMemoryStore (ScyllaDB backend)
-- Complete autonomous cognitive loop
-- Transformer language learning
-- World model integration
-- Full persistence with BrainCapsule
+Standalone Agent Runtime - Primary Entry Point
+==============================================
+Run this file directly to start an autonomous agent.
+No longer depends on main.py for execution.
+
+Usage:
+    python ai_core/agent.py --agent-id alice --mode autonomous
+    python ai_core/agent.py --agent-id bob --mode chat --load-brain data/brains/bob/brain.pcap
 """
+
+import asyncio
+import argparse
+import sys
+import time
+import signal
+import logging
+from pathlib import Path
+from typing import Optional, Dict, Any
+import json
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
 import numpy as np
-import time
-import logging
-import asyncio
-import sys
-from typing import Dict, Any, Optional, List
-from pathlib import Path
-
-# Add parent directory to path so ai_core can be imported
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_core.personality import Personality, GenderType
 from ai_core.emotion import EmotionSystem
 from ai_core.reward_system import ImprovedRewardSystem
 from ai_core.brain_core import BrainCore
 from ai_core.planner import CognitivePlanner
-
-# UNIFIED MEMORY
 from ai_core.unified_memory import UnifiedMemoryStore
-
-# COGNITIVE LOOP
 from ai_core.cognitive_loop import CognitiveLoop
 
+from fastapi import FastAPI, Form, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
 log = logging.getLogger("agent")
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+global_agent = None
+global_server = None
+active_websockets = []
+
+# WebSocket endpoint
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    active_websockets.append(websocket)
+    
+    try:
+        # Send connection confirmation
+        await websocket.send_json({
+            "type": "connected",
+            "agent_id": global_agent.agent_id if global_agent else "unknown",
+            "protocol": "json",
+            "version": "1.0.0"
+        })
+        
+        log.info(f"[WS] Client connected. Active connections: {len(active_websockets)}")
+        
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            
+            log.info(f"[WS] Received: {message.get('type', 'unknown')}")
+            
+            if message.get("type") == "chat":
+                user_message = message.get("message", "")
+                
+                if global_agent and user_message:
+                    # Process with agent
+                    response = await global_agent.process_chat(user_message)
+                    
+                    # Send agent response back
+                    await websocket.send_json({
+                        "type": "chat",
+                        "from": "agent",
+                        "text": response,
+                        "timestamp": time.time()
+                    })
+                    
+                    log.info(f"[WS] Sent response: {response[:50]}...")
+    
+    except WebSocketDisconnect:
+        log.info("[WS] Client disconnected")
+    except Exception as e:
+        log.error(f"[WS] Error: {e}")
+    finally:
+        if websocket in active_websockets:
+            active_websockets.remove(websocket)
+
+async def broadcast_to_clients(message: dict):
+    """Broadcast message to all connected WebSocket clients"""
+    dead_sockets = []
+    for ws in active_websockets:
+        try:
+            await ws.send_json(message)
+        except:
+            dead_sockets.append(ws)
+    
+    for ws in dead_sockets:
+        active_websockets.remove(ws)
+
+@app.get("/status")
+async def get_status():
+    if global_agent:
+        return global_agent.get_info()
+    return {"error": "Agent not running"}
+
+@app.get("/thoughts")
+async def get_thoughts():
+    if global_agent:
+        return {"thoughts": global_agent.thoughts[-20:]}
+    return {"thoughts": []}
+
+@app.post("/chat")
+async def chat(message: str = Form(...)):
+    if global_agent:
+        response = await global_agent.process_chat(message)
+        
+        # Broadcast to WebSocket clients
+        await broadcast_to_clients({
+            "type": "chat",
+            "from": "agent",
+            "text": response,
+            "timestamp": time.time()
+        })
+        
+        return {"response": response}
+    return {"error": "Agent not running"}
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...), agent_id: str = Form(...), filetype: str = Form(...), sync: bool = Form(False)):
+    if not global_agent:
+        return {"error": "Agent not running"}
+    
+    try:
+        content = await file.read()
+        text_content = content.decode('utf-8')
+        
+        # Add file content to memory
+        global_agent.memory.remember({
+            'type': 'file_upload',
+            'filename': file.filename,
+            'filetype': filetype,
+            'content': text_content,
+            'size': len(content)
+        }, tags=['file', 'upload', 'learning'])
+        
+        # If sync, process immediately
+        if sync:
+            thought = f"I received and processed file: {file.filename} ({filetype})"
+            global_agent.thoughts.append({"timestamp": time.time(), "thought": thought})
+            if len(global_agent.thoughts) > 100:
+                global_agent.thoughts = global_agent.thoughts[-100:]
+        
+        return {"success": True, "filename": file.filename, "size": len(content)}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 class NPCAgent:
     """
-    Fully autonomous NPC agent with:
-    - UnifiedMemoryStore (ScyllaDB backend)
-    - Cognitive loop (autonomous thinking)
-    - Transformer language learning
-    - World model integration
-    - Complete persistence
+    Fully autonomous NPC agent with standalone runtime.
+    Can run independently without backend server.
     """
 
     def __init__(self,
-                 agent_id: str,
-                 gender: Optional[GenderType] = None,
-                 persona_traits: Optional[Dict[str, float]] = None,
-                 client_process=None,
-                 autonomous: bool = True,
-                 use_scylla: bool = True):
+                agent_id: str,
+                gender: Optional[GenderType] = None,
+                persona_traits: Optional[Dict[str, float]] = None,
+                client_process=None,
+                autonomous: bool = True,
+                use_scylla: bool = True,
+                mode: str = 'autonomous',
+                god_type: Optional[str] = None):
         
         self.agent_id = agent_id
         self.autonomous_mode = autonomous
-
+        self.mode = mode
+        self.god_type = god_type
+        
         # Core components
         if gender is None:
             from ai_core.personality import assign_npc_gender
@@ -88,7 +222,7 @@ class NPCAgent:
         self.last_action = None
         self.step_count = 0
 
-        # Client process info
+        # Client process info (optional - only for Minecraft mode)
         self.client_process = client_process
         self.agent_type = 'npc'
         
@@ -105,21 +239,50 @@ class NPCAgent:
         # Metadata
         self.metadata = {}
         
+        # Thoughts for frontend sync
+        self.thoughts = [
+            {"timestamp": time.time(), "thought": "Initializing agent systems..."},
+            {"timestamp": time.time(), "thought": "Memory system online"},
+            {"timestamp": time.time(), "thought": "Ready to interact and learn"}
+        ]
+        
         # COGNITIVE LOOP
         self.cognitive_loop = None
         self._init_world_model()
         self._init_audio_processor()
+        
         if self.autonomous_mode:
             self._init_cognitive_loop()
         
-        log.info(f"NPCAgent initialized: {agent_id} (gender: {gender}, autonomous: {autonomous})")
+        log.info(f"NPCAgent initialized: {agent_id} (mode: {mode}, autonomous: {autonomous})")
         
+        # Initialize web browsing if available
         try:
             from ai_core.web_browser import add_web_browsing_to_agent
             add_web_browsing_to_agent(self)
             log.info(f"[{self.agent_id}] Web browsing initialized")
         except Exception as e:
             log.warning(f"Web browsing not available: {e}")
+        
+        # Initialize Minecraft client
+        from ai_core.actuators import MinecraftClient
+        self.minecraft_client = MinecraftClient(
+            agent_id=agent_id,
+            tcp_host='127.0.0.1',
+            tcp_port=8765,
+            ws_host='127.0.0.1',
+            ws_port=11400,
+            prefer_tcp=True
+        )
+        log.info(f"[{agent_id}] Minecraft client initialized (TCP+WebSocket)")
+
+        if god_type:
+            try:
+                from ai_core.god_controls import integrate_god_controls
+                integrate_god_controls(self)
+                log.info(f"[{agent_id}] God controls initialized for {god_type}")
+            except Exception as e:
+                log.warning(f"God controls not available: {e}")
 
     def _init_language(self):
         """Initialize transformer-based language learning"""
@@ -153,9 +316,7 @@ class NPCAgent:
         except Exception as e:
             log.warning(f"Audio processing not available: {e}")
 
-    # ================================================================
-    # ==================== AUTONOMOUS CONTROL ========================
-    # ================================================================
+    # ==================== AUTONOMOUS CONTROL ====================
 
     async def start_autonomous_mode(self):
         """Start fully autonomous operation"""
@@ -175,68 +336,10 @@ class NPCAgent:
         """Check if agent is running autonomously"""
         return self.cognitive_loop and self.cognitive_loop.running
 
-    # ================================================================
-    # =============== CORE INITIALIZATION METHODS ====================
-    # ================================================================
-
-    def initialize_reward_system(self, obs_dim: int = 50, action_dim: int = 11):
-        """Initialize reward system (lazy loading)"""
-        if self.reward_system is None:
-            self.reward_system = ImprovedRewardSystem(
-                obs_dim=obs_dim,
-                action_dim=action_dim,
-                persona=self.personality.as_array(),
-                use_rnd=True,
-                use_icm=True
-            )
-            log.info(f"[{self.agent_id}] Reward system initialized")
-
-    def initialize_policy(self, obs_space, action_space):
-        """Initialize policy network (lazy loading)"""
-        if self.policy is None:
-            from rl.policy import TransformerPolicy
-            self.policy = TransformerPolicy(
-                observation_space=obs_space,
-                action_space=action_space,
-                lr_schedule=lambda _: 3e-4
-            )
-            log.info(f"[{self.agent_id}] Policy initialized")
-
-    # ================================================================
-    # ==================== NEURAL STACK INTEGRATION ==================
-    # ================================================================
-
-    def integrate_neural_stack(self, force: bool = False):
-        """Attach world_model to this NPCAgent instance"""
-        if self._neural_integrated and not force:
-            return
-
-        try:
-            from ai_core import world_model as wm_module
-        except Exception:
-            wm_module = None
-
-        # World Model
-        try:
-            if wm_module:
-                if hasattr(wm_module, "integrate_world_model_with_agent"):
-                    wm_module.integrate_world_model_with_agent(self)
-                    log.info(f"[{self.agent_id}] WorldModel integrated via helper.")
-                elif hasattr(wm_module, "WorldModel"):
-                    self.world_model = wm_module.WorldModel(agent_id=self.agent_id)
-                    log.info(f"[{self.agent_id}] WorldModel instantiated directly.")
-        except Exception as e:
-            log.exception(f"[{self.agent_id}] Failed to attach world_model: {e}")
-
-        self._neural_integrated = True
-        log.info(f"[{self.agent_id}] Neural stack integrated.")
-
-    # ================================================================
-    # ===================== PERCEPTION & ACTION ======================
-    # ================================================================
+    # ==================== PERCEPTION & ACTION ====================
 
     def perceive(self, raw_observation: Dict[str, Any]) -> np.ndarray:
-        """Convert raw observation to feature vector (50,)"""
+        """Convert raw observation to feature vector"""
         obs_parts = []
 
         # Basic stats (3)
@@ -278,7 +381,7 @@ class NPCAgent:
 
         # Memory state (2)
         obs_parts.append(len(self.memory.events) / 1000.0)
-        obs_parts.append(0.0)  # Placeholder for episodic memory
+        obs_parts.append(0.0)
 
         while len(obs_parts) < 50:
             obs_parts.append(0.0)
@@ -296,80 +399,6 @@ class NPCAgent:
         
         return obs_array
     
-    def imagine_scenario(self, scenario: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Use world model to mentally simulate a scenario.
-        Returns visualization data for frontend.
-        Called ONLY when cognitive loop decides to simulate.
-        """
-        if not hasattr(self, 'world_model'):
-            return {'type': 'thought_flow', 'label': 'No World Model'}
-
-        try:
-            # Get mental workspace from world model
-            workspace = None
-
-            # Try world model first
-            if hasattr(self.world_model, 'mental_workspace'):
-                workspace = self.world_model.mental_workspace
-            # Fallback to reasoning core
-            elif hasattr(self.brain, 'reasoning') and hasattr(self.brain.reasoning, 'mental_workspace'):
-                workspace = self.brain.reasoning.mental_workspace
-
-            if workspace:
-                # Extract objects for visualization
-                objects = []
-                for obj in workspace.objects:
-                    objects.append({
-                        'id': obj.get('id'),
-                        'type': obj.get('type', 'unknown'),
-                        'position': obj.get('position', [0, 0, 0]),
-                        'properties': obj.get('properties', {})
-                    })
-
-                return {'type': 'world_model','label': 'Mental Simulation','objects': objects}
-
-        except Exception as e:
-            log.error(f"Mental simulation error: {e}")
-
-        return {'type': 'thought_flow', 'label': 'Thinking...'}
-
-    def generate_internal_thought(self, context: Dict[str, Any]) -> Optional[str]:
-        """
-        Generate internal monologue when cognitive loop decides agent should think.
-        Returns None if agent decides not to think in words.
-        """
-        try:
-            # Only if language system exists and is advanced enough
-            if not hasattr(self.brain, 'language'):
-                return None
-
-            if self.brain.language.language_stage < 1:
-                return None  # Pre-linguistic, can't think in words yet
-
-            # Agent autonomously decides if it wants to think in words
-            # Based on personality and situation
-            sociability = self.personality.traits.get('sociability', 0.5)
-            openness = self.personality.traits.get('openness', 0.5)
-
-            # Introverted agents think more internally
-            think_probability = (1.0 - sociability + openness) / 2.0
-
-            if np.random.rand() > think_probability:
-                return None  # Agent chooses not to verbalize thoughts
-
-            # Generate internal thought
-            internal = self.brain.language.generate_speech(context)
-
-            # Only return if meaningful
-            if internal and len(internal.strip()) > 2:
-                return internal
-
-        except Exception as e:
-            log.error(f"Internal thought generation error: {e}")
-
-        return None    
-    
     def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         """Make decision based on observation"""
         if self.policy is None:
@@ -384,7 +413,7 @@ class NPCAgent:
         return action
 
     def act(self, action: np.ndarray) -> Dict[str, Any]:
-        """Convert action array to control dictionary"""
+        """Convert action array to control dictionary and send to Minecraft"""
         action = np.clip(action, -1.0, 1.0)
 
         controls = {
@@ -403,11 +432,13 @@ class NPCAgent:
 
         self.last_action = action
         self.step_count += 1
+
+        # Send to Minecraft
+        self.minecraft_client.send_action(controls)
+
         return controls
 
-    # ================================================================
-    # ========================= LEARNING =============================
-    # ================================================================
+    # ==================== LEARNING ====================
 
     def learn(self, obs: np.ndarray, action: np.ndarray,
               next_obs: np.ndarray, outcome: Dict[str, Any]):
@@ -448,9 +479,7 @@ class NPCAgent:
         if exploration > 0.1:
             self.emotion.add('surprise', min(0.15, exploration * 0.1))
 
-    # ================================================================
-    # ========================= STATUS ===============================
-    # ================================================================
+    # ==================== STATUS ====================
 
     def is_alive(self) -> bool:
         if self.client_process:
@@ -461,6 +490,7 @@ class NPCAgent:
         info = {
             'agent_id': self.agent_id,
             'agent_type': self.agent_type,
+            'mode': self.mode,
             'gender': self.personality.gender,
             'is_alive': self.is_alive(),
             'step_count': self.step_count,
@@ -493,9 +523,56 @@ class NPCAgent:
 
         return info
 
-    # ================================================================
-    # ========================== SAVE/LOAD ===========================
-    # ================================================================
+    async def process_chat(self, message: str) -> str:
+        """Process a chat message and return response, learning from it"""
+        # Add user message to memory
+        self.memory.remember({
+            'type': 'chat_message',
+            'sender': 'user',
+            'message': message
+        }, tags=['chat', 'user', 'learning'])
+        
+        # Try to generate a response using brain/language
+        response = f"I am {self.agent_id}. You said: {message}"
+        
+        try:
+            if hasattr(self.brain, 'language') and self.brain.language.language_stage >= 1:
+                # Use language system to generate response
+                context = {
+                    'current_message': message,
+                    'personality': self.personality.to_dict(),
+                    'emotions': self.emotion.snapshot(),
+                    'recent_memory': self.memory.recall(5)
+                }
+                response = self.brain.language.generate_speech(context)
+                if not response or len(response.strip()) < 3:
+                    response = f"I am {self.agent_id}. I received your message: {message}"
+        except Exception as e:
+            log.warning(f"Brain response generation failed: {e}")
+        
+        # Add agent response to memory
+        self.memory.remember({
+            'type': 'chat_message',
+            'sender': 'agent',
+            'message': response
+        }, tags=['chat', 'agent', 'response'])
+        
+        # Generate a thought about the conversation
+        thought = f"I just chatted with a user. They said: {message[:50]}..."
+        self.thoughts.append({"timestamp": time.time(), "thought": thought})
+        if len(self.thoughts) > 100:
+            self.thoughts = self.thoughts[-100:]
+        
+        # Broadcast thought to WebSocket clients
+        await broadcast_to_clients({
+            "type": "agent_thought",
+            "internal_thought": thought,
+            "timestamp": time.time()
+        })
+        
+        return response
+
+    # ==================== SAVE/LOAD ====================
 
     def save(self, path: str):
         """Save agent state with neural components"""
@@ -510,6 +587,7 @@ class NPCAgent:
             metadata={
                 'agent_id': self.agent_id,
                 'agent_type': self.agent_type,
+                'mode': self.mode,
                 'gender': self.personality.gender,
                 'step_count': self.step_count,
                 'saved_at': time.time(),
@@ -597,13 +675,143 @@ class NPCAgent:
         # Metadata
         self.step_count = capsule.metadata.get('step_count', 0)
         self.agent_type = capsule.metadata.get('agent_type', 'npc')
+        self.mode = capsule.metadata.get('mode', 'autonomous')
         self.autonomous_mode = capsule.metadata.get('autonomous', True)
 
         log.info(f"[{self.agent_id}] Loaded from {path}")
 
-    # ================================================================
-    # ====================== CLEANUP =================================
-    # ================================================================
+    # ==================== INITIALIZATION METHODS ====================
+
+    def initialize_reward_system(self, obs_dim: int = 50, action_dim: int = 11):
+        """Initialize reward system (lazy loading)"""
+        if self.reward_system is None:
+            self.reward_system = ImprovedRewardSystem(
+                obs_dim=obs_dim,
+                action_dim=action_dim,
+                persona=self.personality.as_array(),
+                use_rnd=True,
+                use_icm=True
+            )
+            log.info(f"[{self.agent_id}] Reward system initialized")
+
+    def initialize_policy(self, obs_space, action_space):
+        """Initialize policy network (lazy loading)"""
+        if self.policy is None:
+            from rl.policy import TransformerPolicy
+            self.policy = TransformerPolicy(
+                observation_space=obs_space,
+                action_space=action_space,
+                lr_schedule=lambda _: 3e-4
+            )
+            log.info(f"[{self.agent_id}] Policy initialized")
+
+    # ==================== NEURAL STACK INTEGRATION ==================
+
+    def integrate_neural_stack(self, force: bool = False):
+        """Attach world_model to this NPCAgent instance"""
+        if self._neural_integrated and not force:
+            return
+
+        try:
+            from ai_core import world_model as wm_module
+        except Exception:
+            wm_module = None
+
+        # World Model
+        try:
+            if wm_module:
+                if hasattr(wm_module, "integrate_world_model_with_agent"):
+                    wm_module.integrate_world_model_with_agent(self)
+                    log.info(f"[{self.agent_id}] WorldModel integrated via helper.")
+                elif hasattr(wm_module, "WorldModel"):
+                    self.world_model = wm_module.WorldModel(agent_id=self.agent_id)
+                    log.info(f"[{self.agent_id}] WorldModel instantiated directly.")
+        except Exception as e:
+            log.exception(f"[{self.agent_id}] Failed to attach world_model: {e}")
+
+        self._neural_integrated = True
+        log.info(f"[{self.agent_id}] Neural stack integrated.")
+
+    # ==================== MENTAL SIMULATION ==================
+
+    def imagine_scenario(self, scenario: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Use world model to mentally simulate a scenario.
+        Returns visualization data for frontend.
+        Called ONLY when cognitive loop decides to simulate.
+        """
+        if not hasattr(self, 'world_model'):
+            return {'type': 'thought_flow', 'label': 'No World Model'}
+
+        try:
+            # Get mental workspace from world model
+            workspace = None
+
+            # Try world model first
+            if hasattr(self.world_model, 'mental_workspace'):
+                workspace = self.world_model.mental_workspace
+            # Fallback to reasoning core
+            elif hasattr(self.brain, 'reasoning') and hasattr(self.brain.reasoning, 'mental_workspace'):
+                workspace = self.brain.reasoning.mental_workspace
+
+            if workspace:
+                # Extract objects for visualization
+                objects = []
+                for obj in workspace.objects:
+                    objects.append({
+                        'id': obj.get('id'),
+                        'type': obj.get('type', 'unknown'),
+                        'position': obj.get('position', [0, 0, 0]),
+                        'properties': obj.get('properties', {})
+                    })
+
+                return {'type': 'world_model','label': 'Mental Simulation','objects': objects}
+
+        except Exception as e:
+            log.error(f"Mental simulation error: {e}")
+
+        return {'type': 'thought_flow', 'label': 'Thinking...'}
+
+    def generate_internal_thought(self, context: Dict[str, Any]) -> Optional[str]:
+        """
+        Generate internal monologue when cognitive loop decides agent should think.
+        Returns None if agent decides not to think in words.
+        """
+        try:
+            # Only if language system exists and is advanced enough
+            if not hasattr(self.brain, 'language'):
+                return None
+
+            if self.brain.language.language_stage < 1:
+                return None  # Pre-linguistic, can't think in words yet
+
+            # Agent autonomously decides if it wants to think in words
+            # Based on personality and situation
+            sociability = self.personality.traits.get('sociability', 0.5)
+            openness = self.personality.traits.get('openness', 0.5)
+
+            # Introverted agents think more internally
+            think_probability = (1.0 - sociability + openness) / 2.0
+
+            if np.random.rand() > think_probability:
+                return None  # Agent chooses not to verbalize thoughts
+
+            # Generate internal thought
+            internal = self.brain.language.generate_speech(context)
+
+            # Only return if meaningful
+            if internal and len(internal.strip()) > 2:
+                self.thoughts.append({"timestamp": time.time(), "thought": internal})
+                if len(self.thoughts) > 100:
+                    self.thoughts = self.thoughts[-100:]
+                return internal
+
+        except Exception as e:
+            log.error(f"Internal thought generation error: {e}")
+
+        return None
+
+    # ==================== CLEANUP ====================
 
     async def shutdown(self):
         """Graceful shutdown"""
@@ -624,31 +832,97 @@ class NPCAgent:
 
 
 # =============================================================================
-# HELPER: Run agent autonomously
+# STANDALONE RUNTIME
 # =============================================================================
 
-async def run_autonomous_agent(agent: NPCAgent, duration: Optional[float] = None):
+async def run_server():
+    """Run the FastAPI web server for frontend connections"""
+    global global_server
+    config = uvicorn.Config(app, host="127.0.0.1", port=8000, log_level="warning")
+    global_server = uvicorn.Server(config)
+    await global_server.serve()
+
+async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
+                               load_brain: Optional[str] = None,
+                               duration: Optional[float] = None,
+                               chat_interface: bool = False,
+                               god_type: Optional[str] = None):
     """
-    Run agent in fully autonomous mode.
+    Run agent in standalone mode without backend server.
     
     Args:
-        agent: NPCAgent instance
+        agent_id: Unique identifier
+        mode: 'autonomous', 'chat', or 'minecraft'
+        load_brain: Path to brain.pcap to load
         duration: How long to run (None = indefinite)
+        chat_interface: Enable terminal chat interface
+        god_type: Type of god agent (if applicable)
     """
+    global global_agent
+    
     print(f"\n{'='*70}")
-    print(f"  🧠 STARTING AUTONOMOUS AGENT: {agent.agent_id}")
+    print(f"  🤖 STARTING STANDALONE AGENT: {agent_id}")
     print(f"{'='*70}")
+    print(f"  Mode: {mode}")
+    print(f"  Chat Interface: {'Enabled' if chat_interface else 'Disabled'}")
+    if load_brain:
+        print(f"  Loading Brain: {load_brain}")
+    print(f"{'='*70}\n")
+    
+    # Create agent
+    agent = NPCAgent(
+        agent_id=agent_id,
+        autonomous=(mode == 'autonomous'),
+        mode=mode,
+        god_type=god_type 
+    )
+    
+    global_agent = agent
+    
+    # Start web server for frontend connection
+    server_task = asyncio.create_task(run_server())
+    
+    # Load brain if specified
+    if load_brain and Path(load_brain).exists():
+        try:
+            agent.load(load_brain)
+            print(f"✅ Brain loaded from {load_brain}")
+        except Exception as e:
+            print(f"⚠️  Failed to load brain: {e}")
+    
+    # Print agent info
+    print(f"\n📊 Agent Info:")
     print(f"  Personality: {agent.personality.to_dict()}")
     print(f"  Memory Backend: {agent.memory.get_stats()['backend']}")
     if hasattr(agent.brain, 'language'):
         print(f"  Language Stage: {agent.brain.language.language_stage}")
         print(f"  Vocabulary: {agent.brain.language.vocab.next_id} words")
     print(f"  Memory: {len(agent.memory.events)} events")
-    print(f"{'='*70}\n")
+    print()
     
-    await agent.start_autonomous_mode()
+    print(f"  🌐 API Server: http://127.0.0.1:8000")
+    print(f"  🔌 WebSocket: ws://127.0.0.1:8000/ws")
+    print(f"  📡 Endpoints: /status, /thoughts, /chat")
+    print()
     
+    
+    # Start modes
+    if mode == 'autonomous':
+        await agent.start_autonomous_mode()
+    elif mode == 'minecraft':
+        print(f"✅ Minecraft mode active")
+        print(f"   TCP Server: {agent.minecraft_client.tcp_client.host}:{agent.minecraft_client.tcp_client.port}")
+        print(f"   WebSocket: ws://{agent.minecraft_client.ws_client.uri}")
+        print(f"   Waiting for Minecraft to connect...")
+        await agent.minecraft_client.wait_for_connection()
+        print(f"✅ Minecraft connected!")
+        
     start_time = time.time()
+    
+    # Chat interface task
+    chat_task = None
+    if chat_interface:
+        chat_task = asyncio.create_task(chat_loop(agent))
     
     try:
         while True:
@@ -669,6 +943,17 @@ async def run_autonomous_agent(agent: NPCAgent, duration: Optional[float] = None
         print("\n\n🛑 Stopping agent...")
     
     finally:
+        if chat_task:
+            chat_task.cancel()
+        
+        # Shutdown web server
+        if global_server:
+            global_server.should_exit = True
+            try:
+                await asyncio.wait_for(global_server.shutdown(), timeout=5.0)
+            except:
+                pass
+        
         await agent.shutdown()
         
         print(f"\n{'='*70}")
@@ -678,3 +963,133 @@ async def run_autonomous_agent(agent: NPCAgent, duration: Optional[float] = None
         if hasattr(agent.brain, 'language'):
             print(f"  Final vocabulary: {agent.brain.language.vocab.next_id} words")
         print(f"{'='*70}\n")
+
+
+async def chat_loop(agent):
+    """Interactive chat loop for terminal interface"""
+    print("\n💬 Chat Mode: Type messages (Ctrl+C to exit)")
+    print("=" * 70)
+    
+    while True:
+        try:
+            # Get user input (non-blocking)
+            user_input = await asyncio.to_thread(input, "You: ")
+            
+            if not user_input.strip():
+                continue
+            
+            # Build context
+            context = {
+                'health': agent.health,
+                'hunger': agent.hunger,
+                'emotions': agent.emotion.snapshot(),
+                'dominant_emotion': agent.emotion.dominant_emotion()
+            }
+            
+            # Process input
+            response = agent.brain.process_language_input(user_input, context)
+            
+            if response:
+                print(f"{agent.agent_id}: {response}")
+            else:
+                print(f"{agent.agent_id}: [Learning...]")
+            
+        except EOFError:
+            break
+        except Exception as e:
+            log.error(f"Chat error: {e}")
+
+
+# =============================================================================
+# CLI ENTRY POINT
+# =============================================================================
+
+def main():
+    """CLI entry point for standalone agent execution"""
+    parser = argparse.ArgumentParser(
+        description="Divine World Standalone Agent Runtime"
+    )
+    
+    parser.add_argument(
+        '--agent-id',
+        type=str,
+        default='demo',
+        help='Agent identifier (default: demo)'
+    )
+    
+    parser.add_argument(
+        '--mode',
+        type=str,
+        choices=['autonomous', 'chat', 'minecraft'],
+        default='autonomous',
+        help='Agent mode (default: autonomous)'
+    )
+
+    parser.add_argument(
+        '--god-type',
+        type=str,
+        choices=['ender_dragon', 'wither', 'warden', 'oracle', 'elder_guardian', 'creaking'],
+        help='God type (if this is a god agent)'
+    )
+    
+    parser.add_argument(
+        '--load-brain',
+        type=str,
+        help='Path to brain.pcap to load'
+    )
+    
+    parser.add_argument(
+        '--duration',
+        type=float,
+        help='Run duration in seconds (default: indefinite)'
+    )
+    
+    parser.add_argument(
+        '--chat',
+        action='store_true',
+        help='Enable terminal chat interface'
+    )
+    
+    parser.add_argument(
+        '--log-level',
+        type=str,
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+        default='INFO',
+        help='Logging level (default: INFO)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Setup logging
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format='[%(asctime)s] %(levelname)s - %(name)s - %(message)s'
+    )
+    
+    # Handle Ctrl+C gracefully
+    def signal_handler(sig, frame):
+        print("\n\n🛑 Received interrupt signal, shutting down...")
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    # Run agent
+    try:
+        asyncio.run(run_standalone_agent(
+            agent_id=args.agent_id,
+            mode=args.mode,
+            load_brain=args.load_brain,
+            duration=args.duration,
+            chat_interface=args.chat,
+            god_type=args.god_type
+        ))
+    except KeyboardInterrupt:
+        print("\n✅ Agent stopped")
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        logging.exception("Fatal error")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

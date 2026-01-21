@@ -6,7 +6,7 @@ Preserves all existing functionality while adding deep reasoning.
 
 import logging
 import numpy as np
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from ai_core.reasoning_core import TrueReasoningCore
 
 log = logging.getLogger("brain_integration")

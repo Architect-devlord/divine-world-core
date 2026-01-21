@@ -277,18 +277,27 @@ public class OllamaManager {
      */
     public static String generateWithOptions(String modelName, String prompt,
                                              double temperature, int contextTokens) throws Exception {
-        DWMod.LOGGER.debug("[Ollama] Generate request - Model: {}, Prompt length: {}, Temp: {}, Context: {}",
-                modelName, prompt.length(), temperature, contextTokens);
+        DWMod.LOGGER.info("[Ollama] ==========================================");
+        DWMod.LOGGER.info("[Ollama] GENERATE REQUEST");
+        DWMod.LOGGER.info("[Ollama] Model: {}", modelName);
+        DWMod.LOGGER.info("[Ollama] Prompt length: {} chars", prompt.length());
+        DWMod.LOGGER.info("[Ollama] Temperature: {}", temperature);
+        DWMod.LOGGER.info("[Ollama] Context tokens: {}", contextTokens);
+        DWMod.LOGGER.info("[Ollama] ==========================================");
 
         if (!initialized) {
+            DWMod.LOGGER.error("[Ollama] ERROR: Not initialized");
             throw new Exception("Ollama not initialized");
         }
 
         if (!isOllamaRunning()) {
+            DWMod.LOGGER.error("[Ollama] ERROR: Not running");
             throw new Exception("Ollama is not running");
         }
 
         if (!isModelAvailable(modelName)) {
+            DWMod.LOGGER.error("[Ollama] ERROR: Model '{}' not found", modelName);
+            DWMod.LOGGER.error("[Ollama] Available models: {}", String.join(", ", getAvailableModels()));
             throw new Exception("Model '" + modelName + "' not found");
         }
 
@@ -298,39 +307,82 @@ public class OllamaManager {
             requestBody.addProperty("prompt", prompt);
             requestBody.addProperty("stream", false);
 
-            // Add options
             JsonObject options = new JsonObject();
             options.addProperty("temperature", temperature);
             options.addProperty("num_ctx", contextTokens);
             requestBody.add("options", options);
 
-            DWMod.LOGGER.debug("[Ollama] Sending generation request...");
+            String requestJson = requestBody.toString();
+            DWMod.LOGGER.info("[Ollama] Request JSON: {}", requestJson.substring(0, Math.min(200, requestJson.length())));
+
+            DWMod.LOGGER.info("[Ollama] Building HTTP request to: {}/api/generate", OLLAMA_HOST);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(OLLAMA_HOST + "/api/generate"))
-                    .timeout(Duration.ofMinutes(2))
+                    .timeout(Duration.ofMinutes(5)) // INCREASED TIMEOUT
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody.toString()))
+                    .POST(HttpRequest.BodyPublishers.ofString(requestJson))
                     .build();
+
+            DWMod.LOGGER.info("[Ollama] Sending HTTP request...");
+
+            long startTime = System.currentTimeMillis();
 
             HttpResponse<String> response = HTTP_CLIENT.send(
                     request,
                     HttpResponse.BodyHandlers.ofString()
             );
 
-            DWMod.LOGGER.debug("[Ollama] Generation response status: {}", response.statusCode());
+            long elapsedMs = System.currentTimeMillis() - startTime;
+
+            DWMod.LOGGER.info("[Ollama] Response received in {}ms", elapsedMs);
+            DWMod.LOGGER.info("[Ollama] Status code: {}", response.statusCode());
+            DWMod.LOGGER.info("[Ollama] Response body length: {} chars", response.body().length());
 
             if (response.statusCode() == 200) {
-                JsonObject json = GSON.fromJson(response.body(), JsonObject.class);
+                String responseBody = response.body();
+                DWMod.LOGGER.info("[Ollama] Response body: {}",
+                        responseBody.substring(0, Math.min(500, responseBody.length())));
+
+                JsonObject json = GSON.fromJson(responseBody, JsonObject.class);
+
+                if (!json.has("response")) {
+                    DWMod.LOGGER.error("[Ollama] ERROR: Response JSON missing 'response' field");
+                    DWMod.LOGGER.error("[Ollama] Full JSON: {}", responseBody);
+                    throw new Exception("Invalid response format");
+                }
+
                 String result = json.get("response").getAsString();
-                DWMod.LOGGER.debug("[Ollama] Generated {} characters", result.length());
+                DWMod.LOGGER.info("[Ollama] Extracted response: {} chars", result.length());
+                DWMod.LOGGER.info("[Ollama] Response text: '{}'",
+                        result.substring(0, Math.min(200, result.length())));
+
                 return result;
             } else {
-                throw new Exception("HTTP " + response.statusCode() + ": " + response.body());
+                String errorBody = response.body();
+                DWMod.LOGGER.error("[Ollama] HTTP ERROR {}", response.statusCode());
+                DWMod.LOGGER.error("[Ollama] Error body: {}", errorBody);
+                throw new Exception("HTTP " + response.statusCode() + ": " + errorBody);
             }
 
+        } catch (java.net.http.HttpTimeoutException e) {
+            DWMod.LOGGER.error("[Ollama] HTTP TIMEOUT after waiting");
+            DWMod.LOGGER.error("[Ollama] This usually means the model is too slow");
+            throw new Exception("Request timed out - model may be too large or busy");
+
+        } catch (java.net.ConnectException e) {
+            DWMod.LOGGER.error("[Ollama] CONNECTION REFUSED");
+            DWMod.LOGGER.error("[Ollama] Ollama is not running or not listening on {}", OLLAMA_HOST);
+            throw new Exception("Cannot connect to Ollama");
+
+        } catch (com.google.gson.JsonSyntaxException e) {
+            DWMod.LOGGER.error("[Ollama] JSON PARSE ERROR");
+            DWMod.LOGGER.error("[Ollama] Response was not valid JSON");
+            throw new Exception("Invalid JSON response from Ollama");
+
         } catch (Exception e) {
-            DWMod.LOGGER.error("[Ollama] Generation failed: {}", e.getMessage());
+            DWMod.LOGGER.error("[Ollama] UNEXPECTED ERROR", e);
+            e.printStackTrace();
             throw new Exception("Failed to generate response: " + e.getMessage());
         }
     }

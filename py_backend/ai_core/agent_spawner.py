@@ -16,7 +16,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from ai_core.agent import NPCAgent
+from py_backend.config import Config
 from ai_core.personality import GenderType, assign_npc_gender
+from minecraft_launcher import UltimMCLauncher
 
 log = logging.getLogger("agent_spawner")
 log.setLevel(logging.INFO)
@@ -385,7 +387,7 @@ class AgentSpawner:
         Save agent brain immediately after creation.
         This ensures brain.pcap exists for packaging.
         """
-        brain_dir = Path("data/brains") / agent.agent_id
+        brain_dir = Path(Config.BRAINS_DIR) / agent.agent_id
         brain_dir.mkdir(parents=True, exist_ok=True)
         
         brain_path = brain_dir / "brain.pcap"
@@ -454,3 +456,182 @@ class AgentSpawner:
         
         self.client_manager.cleanup_all()
         log.info("Cleanup complete")
+
+
+class EnhancedAgentSpawner(AgentSpawner):
+    """
+    Extended AgentSpawner with UltimMC automation.
+    
+    Handles complete Minecraft setup:
+    - Account creation (offline)
+    - Instance creation with Forge
+    - Mod installation
+    - Automatic client launch via UltimMC
+    
+    Enables zero-human-interaction agent spawning.
+    """
+    
+    def __init__(self, client_jar_path: Optional[str] = None,
+                 use_ultimmc: bool = True):
+        """
+        Initialize enhanced spawner.
+        
+        Args:
+            client_jar_path: Path to DWClientBot.jar
+            use_ultimmc: Whether to use UltimMC for automation
+        """
+        super().__init__(client_jar_path)
+        
+        self.use_ultimmc = use_ultimmc
+        self.ultimmc_launcher = None
+        
+        if use_ultimmc:
+            self.ultimmc_launcher = UltimMCLauncher(
+                client_jar_path=client_jar_path,
+                mod_jar_path=str(Config.MOD_JAR) if Config.MOD_JAR else None
+            )
+            
+            if self.ultimmc_launcher.ultimmc_path:
+                log.info("✅ UltimMC automation ENABLED")
+            else:
+                log.warning("⚠️ UltimMC not found - falling back to legacy client launch")
+                self.use_ultimmc = False
+    
+    def spawn_npc_with_ultimmc(self, agent_id: str, 
+                               server_addr: str = "127.0.0.1:25565",
+                               persona_traits: Optional[dict[str, float]] = None,
+                               memory_mb: int = 2048,
+                               gender: Optional[GenderType] = None) -> NPCAgent:
+        """
+        Spawn NPC with complete UltimMC automation.
+        
+        This method:
+        1. Creates Minecraft account (offline)
+        2. Creates Minecraft instance with Forge
+        3. Installs mods (DivineWorld + DWClientBot)
+        4. Launches Minecraft automatically with agent system properties
+        5. Agent joins server and starts receiving perception
+        
+        Args:
+            agent_id: Unique agent identifier
+            server_addr: Minecraft server address
+            persona_traits: Custom personality traits
+            memory_mb: JVM memory allocation
+            gender: Optional gender assignment
+            
+        Returns:
+            NPCAgent instance
+        """
+        with self.lock:
+            if agent_id in self.agents:
+                raise ValueError(f"Agent {agent_id} already exists")
+            
+            log.info(f"Spawning agent with UltimMC: {agent_id}")
+            
+            # Step 1: Setup instance via UltimMC
+            if self.ultimmc_launcher:
+                if not self.ultimmc_launcher.setup_agent_instance(agent_id, server_addr):
+                    log.error(f"Failed to setup UltimMC instance for {agent_id}")
+                    # Continue anyway - fallback to legacy launch
+            
+            # Step 2: Create agent normally
+            if persona_traits is None:
+                persona_traits = {
+                    'openness': np.random.uniform(-0.5, 0.5),
+                    'conscientiousness': np.random.uniform(-0.3, 0.7),
+                    'extraversion': np.random.uniform(-0.5, 0.5),
+                    'agreeableness': np.random.uniform(0.0, 0.8),
+                    'neuroticism': np.random.uniform(-0.3, 0.3),
+                    'boldness': np.random.uniform(0.0, 0.6),
+                    'curiosity': np.random.uniform(0.3, 0.8),
+                    'sociability': np.random.uniform(0.0, 0.7)
+                }
+            
+            if gender is None:
+                gender = assign_npc_gender()
+            
+            # Step 3: Launch via UltimMC if available
+            client_process = None
+            if self.use_ultimmc and self.ultimmc_launcher:
+                backend_port = self.client_manager.allocate_port(agent_id)
+                backend_url = f"http://127.0.0.1:{backend_port}"
+                
+                process = self.ultimmc_launcher.launch_agent(
+                    agent_id=agent_id,
+                    server_addr=server_addr,
+                    backend_url=backend_url,
+                    memory_mb=memory_mb
+                )
+                
+                if process:
+                    client_process = MinecraftClientProcess(
+                        agent_id=agent_id,
+                        process=process,
+                        backend_port=backend_port,
+                        server_addr=server_addr
+                    )
+                    self.client_manager.clients[agent_id] = client_process
+                    
+                    # Start log reader
+                    threading.Thread(
+                        target=self.client_manager._read_client_logs,
+                        args=(agent_id, process),
+                        daemon=True
+                    ).start()
+                else:
+                    log.warning(f"UltimMC launch failed for {agent_id}; falling back to legacy spawn_client")
+                    # Attempt legacy client spawn as fallback
+                    client_process = self.client_manager.spawn_client(
+                        agent_id=agent_id,
+                        server_addr=server_addr,
+                        memory_mb=memory_mb
+                    )
+            else:
+                # Fallback: use regular spawn_client
+                client_process = self.client_manager.spawn_client(
+                    agent_id=agent_id,
+                    server_addr=server_addr,
+                    memory_mb=memory_mb
+                )
+            
+            # Step 4: Create agent
+            agent = NPCAgent(
+                agent_id=agent_id,
+                gender=gender,
+                persona_traits=persona_traits,
+                client_process=client_process
+            )
+            
+            agent.agent_type = 'npc'
+            self._save_agent_brain(agent)
+            self.agents[agent_id] = agent
+            
+            log.info(f"✅ Spawned NPC with UltimMC: {agent_id}")
+            return agent
+    
+    def spawn_npc(self, agent_id: str, server_addr: str = "127.0.0.1:25565",
+                  persona_traits: Optional[dict[str, float]] = None,
+                  memory_mb: int = 2048,
+                  gender: Optional[GenderType] = None) -> NPCAgent:
+        """
+        Override parent spawn_npc to use UltimMC if available.
+        
+        Falls back to legacy behavior if UltimMC unavailable.
+        """
+        if self.use_ultimmc and self.ultimmc_launcher:
+            return self.spawn_npc_with_ultimmc(
+                agent_id=agent_id,
+                server_addr=server_addr,
+                persona_traits=persona_traits,
+                memory_mb=memory_mb,
+                gender=gender
+            )
+        else:
+            # Use parent implementation
+            return super().spawn_npc(
+                agent_id=agent_id,
+                server_addr=server_addr,
+                persona_traits=persona_traits,
+                memory_mb=memory_mb,
+                gender=gender
+            )

@@ -14,7 +14,7 @@ import java.util.List;
 
 /**
  * HTTP client for Python backend communication
- * EXTENDED with Genesis and memory management
+ * UPDATED with single agent spawn endpoint
  */
 public class PythonBackendClient {
 
@@ -22,7 +22,28 @@ public class PythonBackendClient {
     private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
 
     /**
+     * ✅ NEW: Spawn a single NPC agent (NOT genesis)
+     * Used by /dw npc spawn command
+     */
+    public static void spawnSingleAgent(String agentName, String spawnerName,
+                                        String worldName, BlockPos spawnPos) {
+        JsonObject json = new JsonObject();
+        json.addProperty("agent_name", agentName);
+        json.addProperty("spawner", spawnerName);
+        json.addProperty("world", worldName);
+
+        JsonObject pos = new JsonObject();
+        pos.addProperty("x", spawnPos.getX());
+        pos.addProperty("y", spawnPos.getY());
+        pos.addProperty("z", spawnPos.getZ());
+        json.add("spawn_position", pos);
+
+        sendAsync(json, "/api/agents/spawn_single");
+    }
+
+    /**
      * Spawn 2 Genesis agents (male + female) via Python backend
+     * Used by /genesis command ONLY
      */
     public static void spawnGenesisAgents(String spawnerName, String worldName,
                                           BlockPos spawn1, BlockPos spawn2) {

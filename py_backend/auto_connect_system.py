@@ -108,37 +108,39 @@ class AutoConnectSystem:
         """Launch a single agent"""
         agent_id = agent_info['agent_id']
         agent_type = agent_info['agent_type']
-        
+
         try:
             log.info(f"Launching {agent_id}...")
-            
+
             if agent_type == 'npc':
                 # Launch normal NPC agent
-                agent = spawner.spawn_npc(
+                from ai_core.agent import NPCAgent
+                agent = NPCAgent(
                     agent_id=agent_id,
-                    server_addr=self.server_addr
+                    autonomous=True,
+                    mode='minecraft'
                 )
-            
+
             elif agent_type.startswith('god_'):
-                # Launch god agent
+                # Launch god agent with god controls
                 god_type = agent_info.get('god_type') or agent_type.replace('god_', '')
-                agent = spawner.spawn_god(
+                agent = spawn_god_agent(
+                    spawner,
                     god_type=god_type,
-                    server_addr=self.server_addr,
                     agent_id=agent_id
                 )
-            
+
             else:
                 log.error(f"Unknown agent type: {agent_type}")
                 return False
-            
+
             if agent:
-                log.info(f"✅ {agent_id} launched (Backend port: {agent.backend_port})")
+                log.info(f"✅ {agent_id} launched")
                 return True
             else:
                 log.error(f"❌ Failed to launch {agent_id}")
                 return False
-        
+
         except Exception as e:
             log.error(f"❌ Exception launching {agent_id}: {e}", exc_info=True)
             return False
@@ -306,3 +308,21 @@ def integrate_with_backend(app, agent_manager):
     #app.routes[-1].endpoint = player_event_with_autoconnect
     #return app
     log.info("✅ Auto-connect system integrated with backend")
+def spawn_god_agent(spawner, god_type: str, agent_id: str, **kwargs):
+    """
+    Spawn a god agent with controls integrated.
+    
+    Usage in auto_connect system:
+    """
+    from ai_core.agent import NPCAgent
+    
+    # Create god agent with god_type parameter
+    agent = NPCAgent(
+        agent_id=agent_id,
+        autonomous=True,
+        mode='minecraft',
+        god_type=god_type,  # This triggers god controls in __init__
+        **kwargs
+    )
+    
+    return agent

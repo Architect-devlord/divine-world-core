@@ -74,7 +74,9 @@ class ActionFrame:
     
     # Optional: inventory slot selection
     hotbar_slot: Optional[int] = None
-
+    
+    god_ability: Optional[str] = None
+    god_params: Optional[Dict[str, float]] = None
 
 class BinaryProtocol:
     """
@@ -257,7 +259,21 @@ class BinaryProtocol:
         # Hotbar slot
         hotbar = frame.hotbar_slot if frame.hotbar_slot is not None else 0xFF
         buffer.write(struct.pack('!B', hotbar))
-        
+        if frame.god_ability:
+            ability_bytes = frame.god_ability.encode('utf-8')
+            buffer.write(struct.pack('!H', len(ability_bytes)))  # Length
+            buffer.write(ability_bytes)  # Ability name
+
+            # Params (3 floats)
+            params = frame.god_params or {}
+            buffer.write(struct.pack('!fff',
+                params.get('param1', 0.0),
+                params.get('param2', 0.0),
+                params.get('param3', 0.0)
+            ))
+        else:
+            buffer.write(struct.pack('!H', 0))  # No ability
+    
         return buffer.getvalue()
     
     @staticmethod

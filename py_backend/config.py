@@ -16,10 +16,14 @@ class Config:
     """Global configuration"""
     
     # ==================== PATHS ====================
+    HOME = Path(__file__).parent.parent.parent
     BASE_DIR = Path(__file__).parent.parent
     PY_BACKEND_DIR = Path(__file__).parent
     AI_CORE_DIR = PY_BACKEND_DIR / "ai_core"
-    
+
+    SERVER_FOLDER = HOME / "DW_Server"
+
+
     NPC_APPLICATIONS_DIR = BASE_DIR / "npc_applications"
     # Unify storage under `npc_applications/data` for portability
     DATA_DIR = NPC_APPLICATIONS_DIR / "data"
@@ -40,9 +44,35 @@ class Config:
     WEBSOCKET_MAX_LATENCY_MS = int(os.getenv("DW_MAX_LATENCY_MS", "100"))
     
     # ==================== MINECRAFT ====================
-    CLIENT_JAR = os.getenv("DW_CLIENT_JAR", "DWClientBot.jar")
+    # Prefer an explicitly set env var, otherwise try common build location, else None
+    _env_client_jar = os.getenv("DW_CLIENT_JAR")
+    _default_built_jar = BASE_DIR / "DWClientBot" / "build" / "libs" / "DWClientBot.jar"
+    if _env_client_jar:
+        CLIENT_JAR = Path(_env_client_jar)
+    elif _default_built_jar.exists():
+        CLIENT_JAR = _default_built_jar
+    else:
+        CLIENT_JAR = None
+    
+    # Mod jar (DivineWorld server mod)
+    _env_mod_jar = os.getenv("DW_MOD_JAR")
+    _default_mod_jar = BASE_DIR / "DivineWorld" / "build" / "libs" / "DivineWorld-1.0.0.jar"
+    if _env_mod_jar:
+        MOD_JAR = Path(_env_mod_jar)
+    elif _default_mod_jar.exists():
+        MOD_JAR = _default_mod_jar
+    else:
+        MOD_JAR = None
+    
     DEFAULT_SERVER = os.getenv("DW_SERVER", "127.0.0.1:25565")
     CLIENT_MEMORY_MB = int(os.getenv("DW_CLIENT_MEMORY", "2048"))
+    
+    # ==================== ULTIMMC LAUNCHER ====================
+    # UltimMC automation for agent spawning
+    USE_ULTIMMC = os.getenv("DW_USE_ULTIMMC", "true").lower() in ("true", "1", "yes")
+    ULTIMMC_PATH = os.getenv("DW_ULTIMMC_PATH")  # Auto-detect if None
+    MINECRAFT_VERSION = os.getenv("DW_MINECRAFT_VERSION", "1.20.1")
+    FORGE_VERSION = os.getenv("DW_FORGE_VERSION", "47.3.0")
     
     # ==================== SAFETY LIMITS ====================
     MAX_BRAIN_SIZE_MB = 100

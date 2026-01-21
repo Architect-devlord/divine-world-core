@@ -5,8 +5,8 @@ import AgentStatus from "./components/AgentStatus.jsx";
 import FileDropZone from "./components/FileDropZone.jsx";
 import ControllerSafety from "./ControllerSafety.jsx";
 
-const BACKEND_URL = "http://127.0.0.1:11400";
-const WS_URL = "ws://127.0.0.1:11400/ws/agent";
+const BACKEND_URL = "http://127.0.0.1:8000";
+const WS_URL = "ws://127.0.0.1:8000/ws";
 const AGENT_ID = "demo";
 
 // Simple 3D Visualization Component
@@ -525,22 +525,76 @@ function App() {
   const [allowedWebsites, setAllowedWebsites] = useState([]);
   const [showWebManager, setShowWebManager] = useState(false);
   const [brainActive, setBrainActive] = useState(false);
-  
+
+
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
+  
+// WebSocket connection
+useEffect(() => {
+  const connectWebSocket = () => {
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
 
-  useEffect(() => {
-    connectWebSocket();
-    
-    return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
+    ws.onopen = () => {
+      console.log("[WS] Connected");
+      setConnected(true);
+      setError(null);
+    };
+
+    ws.onclose = () => {
+      console.log("[WS] Disconnected");
+      setConnected(false);
+      reconnectTimeoutRef.current = setTimeout(connectWebSocket, 5000);
+    };
+
+    ws.onerror = (err) => {
+      console.error("[WS] Error:", err);
+      setError("WebSocket connection error");
+    };
+
+    ws.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        console.log('[WS] Received:', data.type);
+        
+        switch (data.type) {
+          case "connected":
+            console.log("[WS] ✅ Connected to agent:", data.agent_id);
+            break;
+            
+          case "chat":
+            setMessages((m) => [...m, { 
+              sender: data.from || "agent", 
+              text: data.text 
+            }]);
+            break;
+            
+          case "agent_thought":
+            if (data.internal_thought) {
+              setThoughts((t) => [...t, `💭 ${data.internal_thought}`]);
+            }
+            setBrainActive(true);
+            setTimeout(() => setBrainActive(false), 2000);
+            break;
+        }
+      } catch (e) {
+        console.error("[WS] Parse error:", e);
       }
     };
-  }, []);
+  };
+
+  connectWebSocket();
+  
+  return () => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+  };
+}, []);
 
   const connectWebSocket = () => {
     const ws = new WebSocket(WS_URL);
@@ -764,28 +818,27 @@ function App() {
     try {
       setMessages((m) => [...m, { sender: "user", text }]);
       
-      // Try to send via binary protocol (websocket)
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && wsRef.current.sendBinaryChat) {
-        console.log("[WS] Sending binary chat message");
-        wsRef.current.sendBinaryChat(text);
-      } else {
-        // Fallback to REST API for chat
-        console.log("[REST] Sending via API/chat");
-        const form = new FormData();
-        form.append("message", text);
-        form.append("agent_id", AGENT_ID);
-        
-        if (allowedWebsites.filter(w => w.enabled).length > 0) {
-          form.append("allowed_websites", JSON.stringify(
-            allowedWebsites.filter(w => w.enabled).map(w => w.url)
-          ));
-        }
-        
-        await fetch(`${BACKEND_URL}/api/chat`, {
+      // Send via REST API for chat
+      console.log("[REST] Sending via /chat");
+      const form = new FormData();
+      form.append("message", text);
+      form.append("agent_id", AGENT_ID);
+      
+      if (allowedWebsites.filter(w => w.enabled).length > 0) {
+        form.append("allowed_websites", JSON.stringify(
+          allowedWebsites.filter(w => w.enabled).map(w => w.url)
+        ));
+      }
+      
+      const response = await fetch(`${BACKEND_URL}/chat`, {
           method: 'POST',
           body: form
         });
-      }
+        
+        if (response.ok) {
+          const data = await response.json();
+          setMessages((m) => [...m, { sender: "agent", text: data.response }]);
+        }
       
       setText("");
     } catch (err) {

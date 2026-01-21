@@ -9,8 +9,10 @@ pnpm-lock.yaml
 # Build outputs
 dist/
 build/
+npc_applications/
 .next/
 out/
+UltimMC/
 
 # Environment variables
 .env
@@ -29,7 +31,7 @@ out/
 # Testing
 coverage/
 .nyc_output/
-
+tests/
 # ============================================================================
 # Python
 # ============================================================================

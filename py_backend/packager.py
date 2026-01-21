@@ -35,14 +35,30 @@ class AgentPackager:
     Creates standalone executables for AI agents.
     """
     
-    def __init__(self, output_dir: str = "npc_applications"):
-        self.output_dir = Path(output_dir)
+    def __init__(self, output_dir: str = None):
+        # Default to centralized NPC applications directory from Config
+        if output_dir is None:
+            try:
+                from config import Config as _Config
+                self.output_dir = Path(_Config.NPC_APPLICATIONS_DIR)
+            except Exception:
+                self.output_dir = Path("npc_applications")
+        else:
+            self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.dist_dir = Path("dist")
         self.build_dir = Path("build")
         
         # Frontend detection - try multiple paths
         self.frontend_dir = self._find_frontend_dir()
+        # Try to find DivineWorld mod jar
+        self.mod_jar = self._find_mod_jar()
+        # Try to find client jar from config
+        try:
+            from config import Config as _Config2
+            self.client_jar = _Config2.CLIENT_JAR
+        except Exception:
+            self.client_jar = None
         
     def _find_frontend_dir(self) -> Optional[Path]:
         """Find the React frontend directory"""
@@ -70,6 +86,33 @@ class AgentPackager:
     
         log.warning("⚠️ No frontend directory found")
         return None
+
+    def _find_mod_jar(self) -> Optional[Path]:
+        """Try to find a built DivineWorld mod jar in common Gradle output locations."""
+        cwd = Path.cwd()
+        if cwd.name == "py_backend":
+            workspace_root = cwd.parent
+        else:
+            workspace_root = cwd
+
+        candidates = [
+            workspace_root / "DivineWorld" / "build" / "libs",
+            workspace_root / "DivineWorld" / "build" / "reobfJar" / "libs",
+            workspace_root / "DivineWorld" / "build" / "libs",
+        ]
+
+        for base in candidates:
+            if not base.exists():
+                continue
+            # Look for jar files containing 'divine' or the mod id
+            for jar in sorted(base.glob('*.jar')):
+                name = jar.name.lower()
+                if 'divine' in name or 'divineworld' in name:
+                    log.info(f"✅ Found mod jar: {jar}")
+                    return jar
+
+        log.debug("No DivineWorld mod jar found in build output")
+        return None
         
     def package_agent(
         self, 
@@ -79,6 +122,8 @@ class AgentPackager:
         agent_type: str = "npc",
         icon_path: Optional[str] = None,
         include_frontend: bool = True,
+        include_mod: bool = True,
+        include_client_jar: bool = True,
         backend_port: int = 11400
     ) -> Dict[str, str]:
         """
@@ -119,6 +164,33 @@ class AgentPackager:
                 frontend_included = False
         else:
             log.info("🔇 Skipping frontend (not found or not requested)")
+
+        # 2b. Include mods (DivineWorld mod jar + DWClientBot mod jar)
+        mod_included = False
+        if include_mod:
+            mods_dest = agent_dir / "mods"
+            mods_dest.mkdir(parents=True, exist_ok=True)
+            
+            # Include DivineWorld mod jar if found
+            if self.mod_jar:
+                try:
+                    shutil.copy(self.mod_jar, mods_dest / self.mod_jar.name)
+                    log.info(f"✅ Included DivineWorld mod: {self.mod_jar}")
+                    mod_included = True
+                except Exception as e:
+                    log.warning(f"Failed to include DivineWorld mod: {e}")
+            
+            # DWClientBot.jar is also a mod - include it in mods folder
+            if include_client_jar and self.client_jar:
+                try:
+                    shutil.copy(self.client_jar, mods_dest / Path(self.client_jar).name)
+                    log.info(f"✅ Included DWClientBot mod: {self.client_jar}")
+                    mod_included = True
+                except Exception as e:
+                    log.warning(f"Failed to include DWClientBot mod: {e}")
+        
+        # DWClientBot is a mod, not a separate client
+        client_included = False
         
         # 3. Create launcher script
         launcher_path = self._create_launcher(agent_id, agent_dir, frontend_included, agent_type, backend_port)
@@ -141,6 +213,7 @@ class AgentPackager:
             "brain_path": str(agent_dir / "brain.pcap"),
             "config_path": str(config_path),
             "has_frontend": frontend_included,
+            "has_mod": mod_included,
             "gender": gender,
             "agent_type": agent_type,
             "backend_port": backend_port
@@ -168,9 +241,9 @@ class AgentPackager:
                         agent_type: str, backend_port: int) -> Path:
         """Creates launcher with FIXED import paths for PyInstaller"""
         
-        launcher_code = f'''"""
-DW Agent Launcher - {agent_id}
-Type: {agent_type}
+        launcher_template = '''"""
+DW Agent Launcher - __AGENT_ID__
+Type: __AGENT_TYPE__
 Production Version with Fixed Imports
 """
 
@@ -204,13 +277,13 @@ import time
 import threading
 import webbrowser
 
-AGENT_ID = "{agent_id}"
-AGENT_TYPE = "{agent_type}"
+AGENT_ID = "__AGENT_ID__"
+AGENT_TYPE = "__AGENT_TYPE__"
 BRAIN_PATH = AGENT_DIR / "brain.pcap"
 CONFIG_PATH = AGENT_DIR / "config.json"
 FRONTEND_PATH = AGENT_DIR / "frontend"
-HAS_FRONTEND = {str(has_frontend)}
-BACKEND_PORT = {backend_port}
+HAS_FRONTEND = __HAS_FRONTEND__
+BACKEND_PORT = __BACKEND_PORT__
 
 # Setup logging
 logging.basicConfig(
@@ -224,11 +297,11 @@ def load_config():
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, 'r') as f:
             return json.load(f)
-    return {{"agent_id": AGENT_ID, "agent_type": AGENT_TYPE, "backend_port": BACKEND_PORT}}
+    return {"agent_id": AGENT_ID, "agent_type": AGENT_TYPE, "backend_port": BACKEND_PORT}
 
 def start_backend_server(port: int = BACKEND_PORT):
     """Start FastAPI backend server"""
-    log.info(f"Starting backend server on port {{port}}...")
+    log.info(f"Starting backend server on port {port}...")
     
     try:
         import uvicorn
@@ -248,24 +321,79 @@ def start_backend_server(port: int = BACKEND_PORT):
         server_thread.start()
         
         time.sleep(2)
-        log.info(f"✅ Backend ready at http://127.0.0.1:{{port}}")
+        log.info(f"✅ Backend ready at http://127.0.0.1:{port}")
         return True
         
     except Exception as e:
-        log.error(f"Failed to start backend: {{e}}")
+        log.error(f"Failed to start backend: {e}")
         import traceback
         traceback.print_exc()
         return False
 
+# Note: DWClientBot.jar and DivineWorld.jar are mods placed in the mods/ folder.
+# They will be loaded by the Minecraft server/client, not launched separately.
+
+def attempt_launch_minecraft_client(agent_id: str, agent_dir: Path, backend_port: int):
+    """
+    Attempt to launch Minecraft with bundled mods.
+    This requires the user to have Java and Minecraft Launcher installed.
+    The mods will be loaded from the mods/ folder when Minecraft starts.
+    """
+    mods_dir = agent_dir / "mods"
+    if not mods_dir.exists():
+        log.info("No mods/ folder found - Minecraft client launch skipped")
+        return
+    
+    # List available mods
+    mods = list(mods_dir.glob('*.jar'))
+    if not mods:
+        log.info("No mod jars found in mods/ folder")
+        return
+    
+    log.info(f"Found {len(mods)} mods:")
+    for mod in mods:
+        log.info(f"  - {mod.name}")
+    
+    log.info("")
+    log.info("=" * 60)
+    log.info("🎮 MINECRAFT CLIENT INSTRUCTIONS")
+    log.info("=" * 60)
+    log.info("")
+    log.info("To join the server with this agent, you need to:")
+    log.info("")
+    log.info("1. Copy the mods/ folder to your Minecraft installation:")
+    log.info("   - Windows: %APPDATA%/.minecraft/mods/")
+    log.info("   - Linux:   ~/.minecraft/mods/")
+    log.info("   - macOS:   ~/Library/Application Support/minecraft/mods/")
+    log.info("")
+    log.info(f"2. Make sure your mods folder contains:")
+    for mod in mods:
+        log.info(f"   ✅ {mod.name}")
+    log.info("")
+    log.info("3. Launch Minecraft with Forge/Fabric (if required)")
+    log.info("")
+    log.info("4. Create a profile or account with username: " + agent_id)
+    log.info("")
+    log.info("5. Join the server at: 127.0.0.1:25565 (or your configured server)")
+    log.info("")
+    log.info("The DWClientBot mod will automatically connect to the backend at:")
+    log.info(f"  Backend: http://127.0.0.1:{backend_port}")
+    log.info("")
+    log.info("=" * 60)
+    log.info("")
+    log.info("Once you join the server, this agent will control its Minecraft body")
+    log.info("and receive input from the DWClientBot mod running on your client.")
+    log.info("")
+
 def launch_chat_mode():
     """Launch agent in chat interface mode"""
-    log.info(f"💬 Starting {{AGENT_ID}} in CHAT mode")
+    log.info(f"💬 Starting {AGENT_ID} in CHAT mode")
     
     config = load_config()
     backend_port = config.get('backend_port', BACKEND_PORT)
     
     # Load agent
-    log.info(f"Loading brain from {{BRAIN_PATH}}...")
+    log.info(f"Loading brain from {BRAIN_PATH}...")
     
     # CRITICAL FIX: Import with proper path handling
     if getattr(sys, 'frozen', False):
@@ -282,7 +410,7 @@ def launch_chat_mode():
             agent.load(str(BRAIN_PATH))
             log.info(f"✅ Brain loaded")
         except Exception as e:
-            log.error(f"⚠️ Failed to load brain: {{e}}")
+            log.error(f"⚠️ Failed to load brain: {e}")
     
     # Ensure language capabilities
     if not hasattr(agent.brain, 'language') or agent.brain.language is None:
@@ -290,14 +418,17 @@ def launch_chat_mode():
         log.info("✅ Language capabilities initialized")
     
     log.info(f"Agent Status:")
-    log.info(f"  Language Stage: {{agent.brain.language.language_stage}}")
-    log.info(f"  Vocabulary: {{agent.brain.language.vocabulary_size}} words")
-    log.info(f"  Memory: {{len(agent.memory.events)}} events")
+    log.info(f"  Language Stage: {agent.brain.language.language_stage}")
+    log.info(f"  Vocabulary: {agent.brain.language.vocabulary_size} words")
+    log.info(f"  Memory: {len(agent.memory.events)}} events")
     
     # Start backend
     if not start_backend_server(backend_port):
         log.error("Backend failed to start")
         sys.exit(1)
+    
+    # Attempt to launch Minecraft client with mods (if available)
+    attempt_launch_minecraft_client(AGENT_ID, AGENT_DIR, backend_port)
     
     # Open frontend if available
     if HAS_FRONTEND and FRONTEND_PATH.exists():
@@ -316,30 +447,30 @@ def launch_chat_mode():
             
             def serve_frontend():
                 with socketserver.TCPServer(("", frontend_port), Handler) as httpd:
-                    log.info(f"Frontend serving on http://localhost:{{frontend_port}}")
+                    log.info(f"Frontend serving on http://localhost:{frontend_port}")
                     httpd.serve_forever()
             
             frontend_thread = threading.Thread(target=serve_frontend, daemon=True)
             frontend_thread.start()
             
             time.sleep(1)
-            webbrowser.open(f"http://localhost:{{frontend_port}}")
+            webbrowser.open(f"http://localhost:{frontend_port}")
             
         except Exception as e:
-            log.error(f"Frontend server failed: {{e}}")
+            log.error(f"Frontend server failed: {e}")
     else:
         log.info("Frontend not available - backend only mode")
-        print(f"\\n✅ Backend running at http://127.0.0.1:{{backend_port}}")
+        print(f"\n✅ Backend running at http://127.0.0.1:{backend_port}")
     
     # Keep alive with auto-save
-    print("\\n" + "="*60)
-    print(f"  ✅ {{AGENT_ID}} RUNNING")
+    print("\n" + "="*60)
+    print(f"  ✅ {AGENT_ID} RUNNING")
     print("="*60)
-    print(f"  Backend: http://localhost:{{backend_port}}")
+    print(f"  Backend: http://localhost:{backend_port}")
     if HAS_FRONTEND and FRONTEND_PATH.exists():
-        print(f"  Frontend: http://localhost:{{backend_port + 1}}")
-    print("\\nPress Ctrl+C to stop")
-    print("="*60 + "\\n")
+        print(f"  Frontend: http://localhost:{backend_port + 1}")
+    print("\nPress Ctrl+C to stop")
+    print("="*60 + "\n")
 
     try:
         last_save = time.time()
@@ -355,31 +486,31 @@ def launch_chat_mode():
                     log.info("💾 Auto-saved brain state")
                     last_save = time.time()
                 except Exception as e:
-                    log.error(f"Auto-save failed: {{e}}")
+                    log.error(f"Auto-save failed: {e}")
                 
     except KeyboardInterrupt:
-        log.info("\\n💾 Saving brain state before exit...")
+        log.info("\n💾 Saving brain state before exit...")
         try:
             agent.save(str(BRAIN_PATH))
             log.info("✅ Brain saved")
         except Exception as e:
-            log.error(f"❌ Failed to save: {{e}}")
+            log.error(f"❌ Failed to save: {e}")
         log.info("Goodbye!")
 
 def main():
     """Main entry point"""
-    print("\\n" + "="*60)
-    print(f"  🤖 DW Agent - {{AGENT_ID}}")
-    print(f"  Type: {{AGENT_TYPE}}")
-    print(f"  Frontend: {{'✅ Included' if HAS_FRONTEND else '❌ Not included'}}")
-    print(f"  Port: {{BACKEND_PORT}}")
+    print("\n" + "="*60)
+    print(f"  🤖 DW Agent - {AGENT_ID}")
+    print(f"  Type: {AGENT_TYPE}")
+    print(f"  Frontend: {'✅ Included' if HAS_FRONTEND else '❌ Not included'}")
+    print(f"  Port: {BACKEND_PORT}")
     print("="*60)
 
     if not BRAIN_PATH.exists():
-        log.error(f"Brain capsule not found: {{BRAIN_PATH}}")
+        log.error(f"Brain capsule not found: {BRAIN_PATH}")
         sys.exit(1)
     
-    log.info(f"Brain: {{BRAIN_PATH}}")
+    log.info(f"Brain: {BRAIN_PATH}")
     
     # Launch chat mode
     launch_chat_mode()
@@ -388,12 +519,18 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        log.info("\\nShutdown requested")
+        log.info("\nShutdown requested")
         sys.exit(0)
     except Exception as e:
-        log.exception(f"Fatal error: {{e}}")
+        log.exception(f"Fatal error: {e}")
         sys.exit(1)
 '''
+
+        # Replace template placeholders with actual values safely
+        launcher_code = launcher_template.replace('__AGENT_ID__', agent_id)
+        launcher_code = launcher_code.replace('__AGENT_TYPE__', agent_type)
+        launcher_code = launcher_code.replace('__HAS_FRONTEND__', str(has_frontend))
+        launcher_code = launcher_code.replace('__BACKEND_PORT__', str(backend_port))
         
         launcher_path = agent_dir / "launcher.py"
         launcher_path.write_text(launcher_code, encoding='utf-8')
@@ -446,6 +583,12 @@ if __name__ == "__main__":
         
         ai_core_path = workspace_root / "ai_core"
         py_backend_path = workspace_root / "py_backend"
+
+        # If ai_core isn't at workspace root, check under py_backend (monorepo layout)
+        if not ai_core_path.exists():
+            alt_ai_core = py_backend_path / "ai_core"
+            if alt_ai_core.exists():
+                ai_core_path = alt_ai_core
         
         # Verify paths exist
         if not ai_core_path.exists():
@@ -583,6 +726,11 @@ if __name__ == "__main__":
             frontend_dir = agent_dir / "frontend"
             if frontend_dir.exists():
                 shutil.copytree(frontend_dir, package_dir / "frontend", dirs_exist_ok=True)
+
+        # Copy mods folder (includes both DivineWorld and DWClientBot mods)
+        mods_dir = agent_dir / "mods"
+        if mods_dir.exists():
+            shutil.copytree(mods_dir, package_dir / "mods", dirs_exist_ok=True)
         
         # Create README
         readme = f"""# {agent_id} - Divine World AI Agent
@@ -598,6 +746,7 @@ Double-click `{exe_path.name}` to launch the agent.
 - `{exe_path.name}` - Main executable (standalone, no dependencies)
 - `brain.pcap` - Agent's memory and personality
 - `config.json` - Configuration
+- `mods/` - Minecraft mods (DivineWorld + DWClientBot)
 {'- `frontend/` - Chat interface' if has_frontend else '- No frontend (backend only)'}
 
 ## Usage
@@ -615,6 +764,7 @@ The agent will:
 ✅ Personality System - Unique traits and emotions
 ✅ Atomic Saves - Data never corrupts
 ✅ Auto-Save - Saves every 5 minutes
+✅ Minecraft Integration - Bundled mods (DivineWorld + DWClientBot)
 
 ## Portability
 
@@ -639,6 +789,17 @@ Edit `config.json` to change:
 - Version: 2.1.0 (Production)
 - Protocol: Binary WebSocket
 
+## Minecraft Integration
+
+The packaged `mods/` folder contains:
+- **DivineWorld.jar** - Divine World mod for enhanced gameplay
+- **DWClientBot.jar** - Agent communication mod (allows AI agent to interact with Minecraft)
+
+Place the entire `mods/` folder into your Minecraft mods folder:
+- **Windows:** `%APPDATA%/.minecraft/mods/`
+- **Linux:** `~/.minecraft/mods/`
+- **macOS:** `~/Library/Application Support/minecraft/mods/`
+
 ## Troubleshooting
 
 **Backend won't start:**
@@ -652,6 +813,11 @@ Edit `config.json` to change:
 **Brain won't load:**
 - Verify brain.pcap file exists
 - Check file isn't corrupted (should be >100 bytes)
+
+**Mods not loading in Minecraft:**
+- Verify mods/ folder is in your Minecraft mods directory
+- Ensure you have Forge/Fabric installed (if required)
+- Check Minecraft launcher logs for mod errors
 
 ## Support
 

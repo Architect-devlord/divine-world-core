@@ -53,7 +53,7 @@ class UltimMCLauncher:
         if self.source_ultimmc_path:
             log.info(f"✅ Source UltimMC found at: {self.source_ultimmc_path}")
         else:
-            log.warning("⚠️ UltimMC not found - install from https://github.com/UltimMC/Launcher")
+            log.warning("⚠️ UltimMC not found - install from https://github.com/UltimMC/Launcher or https://github.com/Architect-devlord/Launcher")
         
         if self.client_jar:
             log.info(f"✅ DWClientBot found at: {self.client_jar}")
@@ -87,36 +87,30 @@ class UltimMCLauncher:
     
     def _find_ultimmc(self, explicit_path: Optional[str]) -> Optional[Path]:
         """Find UltimMC executable or installation directory"""
+        # If explicit path provided, validate it
         if explicit_path:
-            p = Path(explicit_path)
-            if p.exists():
-                return p
-        
-        env_path = os.environ.get("DW_ULTIMMC_PATH")
-        if env_path:
-            p = Path(env_path)
+            p = Path(os.path.expanduser(explicit_path))
             if p.exists():
                 return p
             else:
-                print("ℹ️  If UltimMC executable is not found, set DW_ULTIMMC_PATH environment variable")
-                print()
-        
-        candidates = [
-            Path.home() / "ultimmc" / "UltimMC",
-            Path.home() / ".local" / "bin" / "ultimmc",
-            Path.home() / "UltimMC" / "bin" / "UltimMC",
-            Path("/opt/ultimmc/UltimMC"),
-            Path("/usr/local/bin/ultimmc"),
-            shutil.which("ultimmc"),
-        ]
-        
-        for candidate in candidates:
-            if candidate:
-                if isinstance(candidate, str):
-                    candidate = Path(candidate)
-                if candidate.exists():
-                    return candidate
-        
+                log.warning(f"Provided UltimMC path does not exist: {p}")
+
+        # Ask the user for the absolute path to the UltimMC executable
+        try:
+            print("Please enter the absolute path to the UltimMC executable (or leave blank to skip): ", end='', flush=True)
+            user_input = input().strip()
+        except Exception:
+            user_input = ''
+
+        if user_input:
+            p = Path(os.path.expanduser(user_input))
+            if p.exists():
+                return p
+            else:
+                log.warning(f"User-provided UltimMC path does not exist: {p}")
+
+        # No explicit path provided or user skipped -- return None
+        log.info("UltimMC executable not configured; skipping automated UltimMC actions.")
         return None
     
     def _find_file(self, explicit_path: Optional[str], filename: str) -> Optional[Path]:
@@ -129,7 +123,7 @@ class UltimMCLauncher:
         search_dirs = [
             Path.cwd(),
             Path.cwd() / "py_backend",
-            Path.home() / ".divine-world",
+            Path.cwd() / "divine-world",
             Path("/opt/divine-world"),
         ]
         

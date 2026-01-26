@@ -244,11 +244,14 @@ class AgentPackager:
         launcher_template = '''"""
 DW Agent Launcher - __AGENT_ID__
 Type: __AGENT_TYPE__
-Production Version with Fixed Imports
+Production Version with Fixed Imports and Auto-Join Logic
 """
 
 import sys
 import os
+import socket
+import shutil
+import subprocess
 from pathlib import Path
 
 # CRITICAL FIX: Proper path handling for PyInstaller
@@ -256,7 +259,6 @@ if getattr(sys, 'frozen', False):
     # Running as compiled .exe
     BASE_DIR = Path(sys._MEIPASS)
     AGENT_DIR = Path(os.path.dirname(sys.executable))
-    
     # Add bundled modules to path
     sys.path.insert(0, str(BASE_DIR))
     sys.path.insert(0, str(BASE_DIR / "ai_core"))
@@ -265,7 +267,6 @@ else:
     # Running as script (development)
     BASE_DIR = Path(__file__).parent.parent
     AGENT_DIR = Path(__file__).parent
-    
     # Add development paths
     sys.path.insert(0, str(BASE_DIR))
     sys.path.insert(0, str(BASE_DIR / "ai_core"))
@@ -297,171 +298,136 @@ def load_config():
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, 'r') as f:
             return json.load(f)
-    return {"agent_id": AGENT_ID, "agent_type": AGENT_TYPE, "backend_port": BACKEND_PORT}
+    return {"agent_id": AGENT_ID, "agent_type": AGENT_TYPE, "backend_port": BACKEND_PORT, "default_server": "127.0.0.1:25565"}
+
+def is_server_up(host: str, port: int, timeout: float = 2.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
 
 def start_backend_server(port: int = BACKEND_PORT):
     """Start FastAPI backend server"""
     log.info(f"Starting backend server on port {port}...")
-    
     try:
         import uvicorn
-        
-        # CRITICAL FIX: Import without package prefix in frozen mode
         if getattr(sys, 'frozen', False):
-            # In .exe: modules are at root level
             from main import app
         else:
-            # In development: use package path
             from py_backend.main import app
-        
+
         def run_server():
             uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
-        
+
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
-        
-        time.sleep(2)
+        time.sleep(1.5)
         log.info(f"✅ Backend ready at http://127.0.0.1:{port}")
         return True
-        
     except Exception as e:
         log.error(f"Failed to start backend: {e}")
         import traceback
         traceback.print_exc()
         return False
 
-# Note: DWClientBot.jar and DivineWorld.jar are mods placed in the mods/ folder.
-# They will be loaded by the Minecraft server/client, not launched separately.
+def try_launch_ultimmc(server_addr: str, agent_name: str) -> bool:
+    """Try to launch UltimMC if available to join the server."""
+    # Prefer explicit environment variable
+    ult_path = os.environ.get('DW_ULTIMMC_PATH') or shutil.which('ultimmc') or shutil.which('UltimMC')
+    if not ult_path:
+        log.warning("UltimMC executable not found in PATH or DW_ULTIMMC_PATH")
+        return False
 
-def attempt_launch_minecraft_client(agent_id: str, agent_dir: Path, backend_port: int):
-    """
-    Attempt to launch Minecraft with bundled mods.
-    This requires the user to have Java and Minecraft Launcher installed.
-    The mods will be loaded from the mods/ folder when Minecraft starts.
-    """
-    mods_dir = agent_dir / "mods"
-    if not mods_dir.exists():
-        log.info("No mods/ folder found - Minecraft client launch skipped")
-        return
-    
-    # List available mods
-    mods = list(mods_dir.glob('*.jar'))
-    if not mods:
-        log.info("No mod jars found in mods/ folder")
-        return
-    
-    log.info(f"Found {len(mods)} mods:")
-    for mod in mods:
-        log.info(f"  - {mod.name}")
-    
-    log.info("")
-    log.info("=" * 60)
-    log.info("🎮 MINECRAFT CLIENT INSTRUCTIONS")
-    log.info("=" * 60)
-    log.info("")
-    log.info("To join the server with this agent, you need to:")
-    log.info("")
-    log.info("1. Copy the mods/ folder to your Minecraft installation:")
-    log.info("   - Windows: %APPDATA%/.minecraft/mods/")
-    log.info("   - Linux:   ~/.minecraft/mods/")
-    log.info("   - macOS:   ~/Library/Application Support/minecraft/mods/")
-    log.info("")
-    log.info(f"2. Make sure your mods folder contains:")
-    for mod in mods:
-        log.info(f"   ✅ {mod.name}")
-    log.info("")
-    log.info("3. Launch Minecraft with Forge/Fabric (if required)")
-    log.info("")
-    log.info("4. Create a profile or account with username: " + agent_id)
-    log.info("")
-    log.info("5. Join the server at: 127.0.0.1:25565 (or your configured server)")
-    log.info("")
-    log.info("The DWClientBot mod will automatically connect to the backend at:")
-    log.info(f"  Backend: http://127.0.0.1:{backend_port}")
-    log.info("")
-    log.info("=" * 60)
-    log.info("")
-    log.info("Once you join the server, this agent will control its Minecraft body")
-    log.info("and receive input from the DWClientBot mod running on your client.")
-    log.info("")
+    ult_path = str(ult_path)
+    cmd = [ult_path, '-l', '-s', server_addr, '-n', agent_name, '-o']
+    try:
+        log.info(f"Launching UltimMC to join server: {' '.join(cmd)}")
+        subprocess.Popen(cmd, cwd=str(AGENT_DIR))
+        return True
+    except Exception as e:
+        log.error(f"Failed to launch UltimMC: {e}")
+        return False
 
 def launch_chat_mode():
-    """Launch agent in chat interface mode"""
+    """Launch agent in chat interface mode with auto-join behavior"""
     log.info(f"💬 Starting {AGENT_ID} in CHAT mode")
-    
-    config = load_config()
-    backend_port = config.get('backend_port', BACKEND_PORT)
-    
+    cfg = load_config()
+    backend_port = cfg.get('backend_port', BACKEND_PORT)
+    default_server = cfg.get('default_server', '127.0.0.1:25565')
+
+    # Parse default server
+    server_host, server_port = default_server.split(':') if ':' in default_server else (default_server, '25565')
+    server_port = int(server_port)
+
     # Load agent
     log.info(f"Loading brain from {BRAIN_PATH}...")
-    
-    # CRITICAL FIX: Import with proper path handling
     if getattr(sys, 'frozen', False):
         from agent import NPCAgent
         from brain_language import add_language_to_brain
     else:
         from ai_core.agent import NPCAgent
         from ai_core.brain_language import add_language_to_brain
-    
+
     agent = NPCAgent(AGENT_ID)
-    
     if BRAIN_PATH.exists():
         try:
             agent.load(str(BRAIN_PATH))
             log.info(f"✅ Brain loaded")
         except Exception as e:
             log.error(f"⚠️ Failed to load brain: {e}")
-    
-    # Ensure language capabilities
+
     if not hasattr(agent.brain, 'language') or agent.brain.language is None:
         add_language_to_brain(agent.brain)
         log.info("✅ Language capabilities initialized")
-    
-    log.info(f"Agent Status:")
-    log.info(f"  Language Stage: {agent.brain.language.language_stage}")
-    log.info(f"  Vocabulary: {agent.brain.language.vocabulary_size} words")
-    log.info(f"  Memory: {len(agent.memory.events)}} events")
-    
+
+    # Decide behavior based on server availability
+    server_available = is_server_up(server_host, server_port)
+    log.info(f"Server {server_host}:{server_port} available: {server_available}")
+
     # Start backend
     if not start_backend_server(backend_port):
         log.error("Backend failed to start")
         sys.exit(1)
-    
-    # Attempt to launch Minecraft client with mods (if available)
-    attempt_launch_minecraft_client(AGENT_ID, AGENT_DIR, backend_port)
-    
-    # Open frontend if available
-    if HAS_FRONTEND and FRONTEND_PATH.exists():
-        try:
-            import http.server
-            import socketserver
-            
-            class Handler(http.server.SimpleHTTPRequestHandler):
-                def __init__(self, *args, **kwargs):
-                    super().__init__(*args, directory=str(FRONTEND_PATH), **kwargs)
-                
-                def log_message(self, format, *args):
-                    pass  # Suppress HTTP logs
-            
-            frontend_port = backend_port + 1
-            
-            def serve_frontend():
-                with socketserver.TCPServer(("", frontend_port), Handler) as httpd:
-                    log.info(f"Frontend serving on http://localhost:{frontend_port}")
-                    httpd.serve_forever()
-            
-            frontend_thread = threading.Thread(target=serve_frontend, daemon=True)
-            frontend_thread.start()
-            
-            time.sleep(1)
-            webbrowser.open(f"http://localhost:{frontend_port}")
-            
-        except Exception as e:
-            log.error(f"Frontend server failed: {e}")
+
+    if server_available:
+        # Try to auto-launch UltimMC to join server
+        launched = try_launch_ultimmc(f"{server_host}:{server_port}", AGENT_ID)
+        if not launched:
+            log.info("Could not auto-launch UltimMC; present manual instructions to user.")
+            # Show same instructions as before
+            attempt_launch_minecraft_client(AGENT_ID, AGENT_DIR, backend_port)
     else:
-        log.info("Frontend not available - backend only mode")
-        print(f"\n✅ Backend running at http://127.0.0.1:{backend_port}")
-    
+        # No server: open frontend if available
+        if HAS_FRONTEND and FRONTEND_PATH.exists():
+            try:
+                import http.server
+                import socketserver
+
+                class Handler(http.server.SimpleHTTPRequestHandler):
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args, directory=str(FRONTEND_PATH), **kwargs)
+
+                    def log_message(self, format, *args):
+                        pass
+
+                frontend_port = backend_port + 1
+
+                def serve_frontend():
+                    with socketserver.TCPServer(("", frontend_port), Handler) as httpd:
+                        log.info(f"Frontend serving on http://localhost:{frontend_port}")
+                        httpd.serve_forever()
+
+                frontend_thread = threading.Thread(target=serve_frontend, daemon=True)
+                frontend_thread.start()
+                time.sleep(1)
+                webbrowser.open(f"http://localhost:{frontend_port}")
+            except Exception as e:
+                log.error(f"Frontend server failed: {e}")
+        else:
+            log.info("Frontend not available - backend only mode")
+            print(f"\n✅ Backend running at http://127.0.0.1:{backend_port}")
+
     # Keep alive with auto-save
     print("\n" + "="*60)
     print(f"  ✅ {AGENT_ID} RUNNING")
@@ -475,11 +441,8 @@ def launch_chat_mode():
     try:
         last_save = time.time()
         save_interval = 300  # 5 minutes
-        
         while True:
             time.sleep(1)
-            
-            # Auto-save every 5 minutes
             if time.time() - last_save >= save_interval:
                 try:
                     agent.save(str(BRAIN_PATH))
@@ -487,7 +450,6 @@ def launch_chat_mode():
                     last_save = time.time()
                 except Exception as e:
                     log.error(f"Auto-save failed: {e}")
-                
     except KeyboardInterrupt:
         log.info("\n💾 Saving brain state before exit...")
         try:

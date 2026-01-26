@@ -214,6 +214,15 @@ class NPCAgent:
         
         # Initialize language intelligence
         self._init_language()
+        
+        # Attach continual learning (Avalanche) if available
+        try:
+            from ai_core.continual_learner import add_continual_learning
+            # Default strategy 'replay' provides memory-based continual updates
+            add_continual_learning(self, strategy='replay')
+            log.info(f"[{self.agent_id}] Continual learning attached (strategy=replay)")
+        except Exception as e:
+            log.warning(f"[{self.agent_id}] Continual learning not available: {e}")
 
         # State
         self.health = 20.0

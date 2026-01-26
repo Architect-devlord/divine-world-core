@@ -566,7 +566,7 @@ class CognitiveLoop:
     async def _act(self, decision: Dict[str, Any], 
                    perception: Dict[str, Any],
                    thoughts: Dict[str, Any]):
-        """Execute decision - INCLUDING FILES"""
+        """Execute decision concurrently - action, learning, and policy updates run in parallel"""
         
         if decision['type'] == 'process_file':
             await self._execute_file_processing(decision['content'])
@@ -575,10 +575,21 @@ class CognitiveLoop:
             await self._execute_autonomous_speech(perception, thoughts, decision['content'])
         
         elif decision['type'] == 'action':
-            await self._execute_action(perception)
+            # RUN CONCURRENTLY: action + learning + policy update in parallel threads
+            await asyncio.gather(
+                self._execute_action(perception),
+                self._execute_learning_async(),
+                self._execute_continual_learning_async(),
+                return_exceptions=True
+            )
         
         elif decision['type'] == 'learn':
-            self._execute_learning()
+            # RUN CONCURRENTLY: language learning + policy learning in parallel
+            await asyncio.gather(
+                self._execute_learning_async(),
+                self._execute_continual_learning_async(),
+                return_exceptions=True
+            )
         
         elif decision['type'] == 'web_browse':
             await self._execute_web_browsing()
@@ -716,7 +727,7 @@ class CognitiveLoop:
             log.error(f"Failed to broadcast speech: {e}")
     
     async def _execute_action(self, perception: Dict[str, Any]):
-        """Execute physical action"""
+        """Execute physical action (runs in thread pool to avoid blocking)"""
         try:
             obs_dict = {
                 'health': perception['state']['health'],
@@ -724,17 +735,33 @@ class CognitiveLoop:
                 'position': {'x': 0, 'y': 64, 'z': 0}
             }
             
-            obs = self.agent.perceive(obs_dict)
-            action_array = self.agent.decide(obs, deterministic=False)
-            action_dict = self.agent.act(action_array)
-            
+            # Run blocking operations in thread pool
+            await asyncio.to_thread(self._action_worker, obs_dict)
             self.last_action_time = time.time()
             
         except Exception as e:
             log.error(f"Action execution error: {e}")
     
-    def _execute_learning(self):
-        """Trigger learning update"""
+    def _action_worker(self, obs_dict: Dict[str, Any]):
+        """Worker thread for action execution"""
+        try:
+            obs = self.agent.perceive(obs_dict)
+            action_array = self.agent.decide(obs, deterministic=False)
+            action_dict = self.agent.act(action_array)
+            log.debug(f"[{self.agent.agent_id}] 🎬 Action executed")
+        except Exception as e:
+            log.error(f"Action worker error: {e}")
+    
+    async def _execute_learning_async(self):
+        """Trigger language learning update (async, runs in thread pool)"""
+        try:
+            await asyncio.to_thread(self._learning_worker)
+            self.last_learning_time = time.time()
+        except Exception as e:
+            log.error(f"Learning execution error: {e}")
+    
+    def _learning_worker(self):
+        """Worker thread for language learning"""
         try:
             # Train language on recent experiences
             if hasattr(self.agent.brain, 'language'):
@@ -754,11 +781,28 @@ class CognitiveLoop:
                                 context
                             )
             
-            self.last_learning_time = time.time()
-            log.debug(f"[{self.agent.agent_id}] 📚 Learning update")
-            
+            log.debug(f"[{self.agent.agent_id}] 📚 Language learning update")
         except Exception as e:
-            log.error(f"Learning execution error: {e}")
+            log.error(f"Learning worker error: {e}", exc_info=True)
+
+    async def _execute_continual_learning_async(self):
+        """Trigger Avalanche continual learning (async, runs in thread pool)"""
+        try:
+            await asyncio.to_thread(self._continual_learning_worker)
+        except Exception as e:
+            log.debug(f"Continual learning trigger failed: {e}")
+    
+    def _continual_learning_worker(self):
+        """Worker thread for Avalanche continual learning and policy updates"""
+        try:
+            learner = getattr(self.agent, 'continual_learner', None)
+            if learner is None:
+                return
+            # Perform a single update if enough experiences collected
+            res = learner.learn_from_buffer()
+            log.info(f"[{self.agent.agent_id}] 🧠 Continual learning (policy updated): {res}")
+        except Exception as e:
+            log.error(f"Continual learning error: {e}", exc_info=True)
     
     # ==================== STATE UPDATE ====================
     

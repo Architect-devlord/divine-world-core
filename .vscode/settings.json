@@ -1,4 +1,7 @@
 {
     "python-envs.pythonProjects": [],
-    "java.compile.nullAnalysis.mode": "automatic"
+    "java.compile.nullAnalysis.mode": "automatic",
+    "python.analysis.extraPaths": [
+        "./py_backend"
+    ]
 }

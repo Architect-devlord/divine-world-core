@@ -60,6 +60,58 @@ class AutoPackagingSystem:
         self.packaging_queue.put(package_request)
         log.info(f"✅ Queued {agent.agent_id} for packaging")
     
+    def package_agent_sync(self, agent: NPCAgent, brain_capsule_path: str, metadata: Optional[dict[str, any]] = None):
+        """Package agent synchronously"""
+        log.info(f"📦 Sync packaging {agent.agent_id}...")
+        
+        brain_file = Path(brain_capsule_path)
+        max_wait = 30
+        elapsed = 0
+        
+        log.info(f"⏳ Waiting for brain file: {brain_capsule_path}")
+        
+        while not brain_file.exists() and elapsed < max_wait:
+            time.sleep(0.5)
+            elapsed += 0.5
+        
+        if not brain_file.exists():
+            log.error(f"Brain file not found: {brain_capsule_path}")
+            return
+        
+        # Stability check
+        log.info(f"✅ Brain file found, verifying stability...")
+        
+        prev_size = -1
+        current_size = brain_file.stat().st_size
+        stable_checks = 0
+        
+        while stable_checks < 3 and elapsed < max_wait:
+            time.sleep(0.5)
+            elapsed += 0.5
+            new_size = brain_file.stat().st_size
+            if new_size == current_size:
+                stable_checks += 1
+            else:
+                current_size = new_size
+                stable_checks = 0
+        
+        log.info(f"✅ Brain file stable: {brain_capsule_path} ({current_size:,} bytes)")
+        
+        # Package
+        try:
+            result = self.packager.package_agent(
+                agent_id=agent.agent_id,
+                brain_capsule_path=brain_capsule_path,
+                gender=agent.gender,
+                agent_type=agent.agent_type,
+                backend_port=self._allocate_port(agent.agent_id)
+            )
+            self.packaged_agents[agent.agent_id] = result
+            self._save_package_registry()
+            log.info(f"✅ Sync packaged {agent.agent_id}: {result['exe_path']}")
+        except Exception as e:
+            log.error(f"❌ Sync packaging failed for {agent.agent_id}: {e}")
+    
     def _packaging_worker(self):
         """Enhanced background worker with better synchronization"""
         log.info("📦 Packaging worker started")
@@ -312,7 +364,7 @@ class EnhancedAgentSpawner(AgentSpawner):
                 'ultimmc_used': self.use_ultimmc and self._ultimmc_spawner is not None,
             }
             
-            self.packager.queue_agent_for_packaging(
+            self.packager.package_agent_sync(
                 agent=agent,
                 brain_capsule_path=str(brain_path),
                 metadata=metadata
@@ -352,7 +404,7 @@ class EnhancedAgentSpawner(AgentSpawner):
                 'ultimmc_used': self.use_ultimmc and self._ultimmc_spawner is not None,
             }
             
-            self.packager.queue_agent_for_packaging(
+            self.packager.package_agent_sync(
                 agent=agent,
                 brain_capsule_path=str(brain_path),
                 metadata=metadata

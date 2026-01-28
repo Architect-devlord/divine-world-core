@@ -59,6 +59,8 @@ class AgentPackager:
             self.client_jar = _Config2.CLIENT_JAR
         except Exception:
             self.client_jar = None
+            
+        self.ultimmc_path = self._find_ultimmc()
         
     def _find_frontend_dir(self) -> Optional[Path]:
         """Find the React frontend directory"""
@@ -114,6 +116,27 @@ class AgentPackager:
         log.debug("No DivineWorld mod jar found in build output")
         return None
         
+    def _find_ultimmc(self) -> Optional[Path]:
+        """Find UltimMC installation directory"""
+        cwd = Path.cwd()
+        if cwd.name == "py_backend":
+            workspace_root = cwd.parent
+        else:
+            workspace_root = cwd
+
+        candidates = [
+            workspace_root / "UltimMC",
+            Path("/opt/ultimmc"),
+        ]
+
+        for path in candidates:
+            if path.exists() and (path / "bin" / "UltimMC").exists():
+                log.info(f"✅ Found UltimMC at: {path}")
+                return path
+
+        log.warning("⚠️ UltimMC not found")
+        return None
+        
     def package_agent(
         self, 
         agent_id: str, 
@@ -148,6 +171,54 @@ class AgentPackager:
         # Create agent directory
         agent_dir = self.output_dir / agent_id
         agent_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy UltimMC and setup account/instance
+        if self.ultimmc_path:
+            ultimmc_dest = agent_dir / "UltimMC"
+            shutil.copytree(self.ultimmc_path, ultimmc_dest)
+            
+            # Modify accounts.json
+            accounts_file = ultimmc_dest / "bin" / "accounts.json"
+            if accounts_file.exists():
+                import uuid
+                with open(accounts_file, 'r') as f:
+                    accounts_data = json.load(f)
+                agent_uuid = str(uuid.uuid4())
+                agent_account = {
+                    "active": True,
+                    "profile": {
+                        "capes": [],
+                        "id": agent_uuid,
+                        "name": agent_id,
+                        "skin": {"id": "", "url": "", "variant": ""}
+                    },
+                    "type": "Local",
+                    "ygg": {
+                        "extra": {
+                            "clientToken": str(uuid.uuid4()),
+                            "userName": agent_id
+                        },
+                        "iat": int(time.time())
+                    }
+                }
+                for acc in accounts_data.get("accounts", []):
+                    acc["active"] = False
+                accounts_data["accounts"].append(agent_account)
+                with open(accounts_file, 'w') as f:
+                    json.dump(accounts_data, f, indent=2)
+            
+            # Copy instance
+            instance_src = self.ultimmc_path / "instances" / "1.20.1"
+            if instance_src.exists():
+                instance_dest = ultimmc_dest / "instances" / agent_id
+                shutil.copytree(instance_src, instance_dest)
+                # Install mods
+                mods_dir = instance_dest / ".minecraft" / "mods"
+                mods_dir.mkdir(parents=True, exist_ok=True)
+                if self.mod_jar:
+                    shutil.copy(self.mod_jar, mods_dir / self.mod_jar.name)
+                if self.client_jar:
+                    shutil.copy(self.client_jar, mods_dir / self.client_jar.name)
         
         # 1. Copy brain capsule
         self._copy_brain_capsule(brain_path, agent_dir, gender, agent_type)
@@ -332,17 +403,24 @@ def start_backend_server(port: int = BACKEND_PORT):
         return False
 
 def try_launch_ultimmc(server_addr: str, agent_name: str) -> bool:
-    """Try to launch UltimMC if available to join the server."""
-    # Prefer explicit environment variable
-    ult_path = os.environ.get('DW_ULTIMMC_PATH') or shutil.which('ultimmc') or shutil.which('UltimMC')
-    if not ult_path:
-        log.warning("UltimMC executable not found in PATH or DW_ULTIMMC_PATH")
+    """Try to launch embedded UltimMC if available to join the server."""
+    ultimmc_dir = AGENT_DIR / "UltimMC"
+    if not ultimmc_dir.exists():
         return False
-
-    ult_path = str(ult_path)
-    cmd = [ult_path, '-l', '-s', server_addr, '-n', agent_name, '-o']
+    ult_path = ultimmc_dir / "bin" / "UltimMC"
+    if not ult_path.exists():
+        return False
+    cmd = [
+        str(ult_path),
+        "-d", str(ultimmc_dir),
+        "-l", agent_name,
+        "-s", server_addr,
+        "-a", agent_name,
+        "-o",
+        "-n", agent_name
+    ]
     try:
-        log.info(f"Launching UltimMC to join server: {' '.join(cmd)}")
+        log.info(f"Launching embedded UltimMC: {' '.join(cmd)}")
         subprocess.Popen(cmd, cwd=str(AGENT_DIR))
         return True
     except Exception as e:

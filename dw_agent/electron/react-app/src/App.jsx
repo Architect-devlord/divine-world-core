@@ -4,6 +4,7 @@ import MessageBubble from "./components/MessageBubble.jsx";
 import AgentStatus from "./components/AgentStatus.jsx";
 import FileDropZone from "./components/FileDropZone.jsx";
 import ControllerSafety from "./ControllerSafety.jsx";
+import WorldModelVisualizer from "./components/WorldModelVisualizer.jsx";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 const WS_URL = "ws://127.0.0.1:8000/ws";
@@ -525,6 +526,7 @@ function App() {
   const [allowedWebsites, setAllowedWebsites] = useState([]);
   const [showWebManager, setShowWebManager] = useState(false);
   const [brainActive, setBrainActive] = useState(false);
+  const [worldModelData, setWorldModelData] = useState(null);
 
 
   const wsRef = useRef(null);
@@ -698,6 +700,10 @@ useEffect(() => {
               
             case "visualization_update":
               setVisualizationData(data.data);
+              break;
+              
+            case "world_model_update":
+              setWorldModelData(data.data);
               break;
           }
         }
@@ -965,6 +971,12 @@ useEffect(() => {
         <div className="p-4 border-b border-slate-800 flex-1 flex flex-col min-h-0 max-h-[55%]">
           <Simple3DRenderer data={visualizationData} />
         </div>
+        
+        {worldModelData && (
+          <div className="p-4 border-b border-slate-800">
+            <WorldModelVisualizer data={worldModelData} />
+          </div>
+        )}
         
         {showWebManager && (
           <div className="p-4 border-b border-slate-800">

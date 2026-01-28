@@ -304,6 +304,42 @@ class LanguageIntelligence:
         
         return response
     
+    def learn_from_file(self, file_path: str):
+        """Load and learn from a text file"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                text = f.read()
+            
+            # Split into sentences/paragraphs
+            import re
+            sentences = re.split(r'[.!?]+', text)
+            
+            learned_sentences = 0
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if len(sentence) < 10:  # Skip very short sentences
+                    continue
+                
+                # Process as language input
+                context = {
+                    'source': 'file',
+                    'filename': file_path,
+                    'health': 20.0,
+                    'hunger': 20.0,
+                    'emotions': {'joy': 0.1, 'curiosity': 0.3}
+                }
+                
+                self.process_language_input(sentence, context)
+                learned_sentences += 1
+                
+                if learned_sentences >= 100:  # Limit to prevent too much processing
+                    break
+            
+            log.info(f"Learned from file {file_path}: {learned_sentences} sentences")
+            
+        except Exception as e:
+            log.error(f"Error learning from file {file_path}: {e}")
+    
     def _train_step(self):
         """Single training step on buffered experiences"""
         if len(self.training_buffer) < 4:
@@ -617,6 +653,17 @@ class LanguageIntelligence:
                 key=lambda x: x[1],
                 reverse=True
             )[:20]
+        }
+    
+    def get_language_progress(self) -> Dict[str, Any]:
+        """Get current language development progress"""
+        return {
+            'stage': self.language_stage,
+            'vocabulary_size': self.vocab.next_id,
+            'experience_count': self.experience_count,
+            'training_updates': self.updates_done,
+            'context_window_size': len(self.context_window),
+            'training_buffer_size': len(self.training_buffer)
         }
     
     def state_dict(self) -> Dict[str, Any]:

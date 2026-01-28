@@ -1,6 +1,6 @@
-# py_backend/main.py - CORRECTED ENDPOINTS
+# py_backend/main.py
 """
-Divine World Management Server - CORRECTED ENDPOINTS
+Divine World Management Server
 ====================================================
 Fixed to match actual Java mod API calls from:
 - DWEventHandler.java
@@ -27,6 +27,8 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
+import uvicorn
+import argparse
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -105,10 +107,61 @@ except Exception as e:
     sys.exit(1)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for FastAPI startup and shutdown."""
+    global startup_time
+    
+    # Startup
+    startup_time = asyncio.get_event_loop().time()
+    
+    log.info("=" * 70)
+    log.info("  🎮 Divine World Management Server")
+    log.info("=" * 70)
+    log.info("  Version: 3.0.0 (Endpoints Corrected + Server Integration)")
+    log.info("  Role: Agent Management for Minecraft Mod")
+    log.info("  Mod: Divine World 1.20.1")
+    log.info("  Agent Runtime: Separate processes (agent.py)")
+    log.info("=" * 70)
+    log.info("  CORRECTED ENDPOINTS:")
+    log.info("    ✅ /api/player_event (DWEventHandler)")
+    log.info("    ✅ /api/breeding/event (BreedingEventHandler)")
+    log.info("    ✅ /api/genesis/spawn (DivineCommands)")
+    log.info("    ✅ /api/divine_reset (DivineCommands)")
+    log.info("    ✅ /api/agents/clear_memories (DivineCommands)")
+    log.info("    ✅ /api/gods/spawn (DivineCommands)")
+    log.info("    ✅ /api/gods/ability (DivineCommands)")
+    log.info("    ✅ /api/gods/transform (DivineCommands)")
+    log.info("=" * 70)
+    log.info("  SERVER INTEGRATION:")
+    log.info("    📝 Auto-registers agents in usercache.json")
+    log.info("    📝 Auto-registers agents in usernamecache.json")
+    log.info("    🔄 UUID generation (Minecraft offline mode)")
+    log.info("    🏷️  Naming: AI_<n> for NPCs, GOD_<type>_<n> for gods")
+    log.info("=" * 70)
+    log.info("")
+    log.info("⚠️  IMPORTANT: Configure server folder for agent registration!")
+    log.info("   Use: POST /api/server/configure")
+    log.info("   Body: {\"server_folder\": \"/path/to/minecraft/server\"}")
+    log.info("")
+    log.info("✅ Server started and ready for Minecraft mod connections")
+    
+    yield
+    
+    # Shutdown
+    log.info("🛑 Shutting down management server...")
+    
+    # Stop all agents
+    agent_manager.cleanup_all()
+    
+    log.info("✅ Shutdown complete")
+
+
 app = FastAPI(
     title="Divine World Management Server",
     version="3.0.0",
-    description="Agent Management & Packaging Server (Endpoints corrected for Java mod)"
+    description="Agent Management & Packaging Server (Endpoints corrected for Java mod)",
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -151,21 +204,27 @@ class AgentProcessManager:
             return False
         
         try:
-            agent_script = Path(__file__).parent.parent / "ai_core" / "agent.py"
-            
-            cmd = [
-                sys.executable,
-                str(agent_script),
-                '--agent-id', agent_id,
-                '--mode', mode,
-                '--log-level', 'INFO'
-            ]
-            
-            if load_brain:
-                cmd.extend(['--load-brain', load_brain])
-            
-            if additional_args:
-                cmd.extend(additional_args)
+            # Check if packaged exe exists
+            exe_path = Path(Config.NPC_APPLICATIONS_DIR) / agent_id / f"DW_Agent_{agent_id}"
+            if exe_path.exists():
+                cmd = [str(exe_path)]
+                log.info(f"Running packaged agent: {exe_path}")
+            else:
+                agent_script = Path(__file__).parent.parent / "ai_core" / "agent.py"
+                
+                cmd = [
+                    sys.executable,
+                    str(agent_script),
+                    '--agent-id', agent_id,
+                    '--mode', mode,
+                    '--log-level', 'INFO'
+                ]
+                
+                if load_brain:
+                    cmd.extend(['--load-brain', load_brain])
+                
+                if additional_args:
+                    cmd.extend(additional_args)
             
             log.info(f"Starting agent process: {' '.join(cmd)}")
             
@@ -248,6 +307,60 @@ class AgentProcessManager:
             
         except Exception as e:
             log.error(f"[Auto-Package] Error packaging {agent_id}: {e}")
+    
+    async def _monitor_process_logs(self, agent_id: str, process: subprocess.Popen):
+        """Monitor and log agent process output."""
+        try:
+            loop = asyncio.get_event_loop()
+            while process.poll() is None:
+                # Read stdout
+                if process.stdout:
+                    try:
+                        line = await loop.run_in_executor(None, process.stdout.readline)
+                        if line:
+                            log.info(f"[{agent_id}] {line.strip()}")
+                    except Exception as e:
+                        log.debug(f"Error reading stdout for {agent_id}: {e}")
+                
+                await asyncio.sleep(0.1)
+            
+            # Log final status
+            if process.returncode == 0:
+                log.info(f"Agent {agent_id} exited successfully (code: {process.returncode})")
+            else:
+                log.warning(f"Agent {agent_id} exited with code: {process.returncode}")
+            
+            # Update agent info
+            if agent_id in self.agent_info:
+                self.agent_info[agent_id]['status'] = 'stopped'
+                self.agent_info[agent_id]['exit_code'] = process.returncode
+        
+        except Exception as e:
+            log.error(f"Error monitoring logs for {agent_id}: {e}")
+        finally:
+            # Clean up process reference
+            if agent_id in self.agent_processes:
+                del self.agent_processes[agent_id]
+    
+    def cleanup_all(self):
+        """Clean up all agent processes and spawner resources."""
+        log.info("Cleaning up agent processes...")
+        
+        if hasattr(self.spawner, 'cleanup_all'):
+            self.spawner.cleanup_all()
+        
+        for agent_id, proc in self.agent_processes.items():
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            except Exception as e:
+                log.error(f"Error terminating {agent_id}: {e}")
+        
+        self.agent_processes.clear()
+        self.agent_info.clear()
+        log.info("Agent cleanup complete")
 
 
 # Updated spawn_god endpoint with proper agent_type
@@ -584,7 +697,7 @@ async def list_server_agents():
 
 
 # =============================================================================
-# CORRECTED ENDPOINTS - MATCHING JAVA MOD
+# ENDPOINTS - MATCHING JAVA MOD
 # =============================================================================
 
 # ===== PLAYER EVENT ENDPOINT (DWEventHandler.java) =====
@@ -1755,63 +1868,12 @@ async def root():
 
 startup_time = 0
 
-@app.on_event("startup")
-async def startup():
-    """Server startup - prompt for server folder"""
-    global startup_time
-    startup_time = asyncio.get_event_loop().time()
-    
-    log.info("=" * 70)
-    log.info("  🎮 Divine World Management Server")
-    log.info("=" * 70)
-    log.info("  Version: 3.0.0 (Endpoints Corrected + Server Integration)")
-    log.info("  Role: Agent Management for Minecraft Mod")
-    log.info("  Mod: Divine World 1.20.1")
-    log.info("  Agent Runtime: Separate processes (agent.py)")
-    log.info("=" * 70)
-    log.info("  CORRECTED ENDPOINTS:")
-    log.info("    ✅ /api/player_event (DWEventHandler)")
-    log.info("    ✅ /api/breeding/event (BreedingEventHandler)")
-    log.info("    ✅ /api/genesis/spawn (DivineCommands)")
-    log.info("    ✅ /api/divine_reset (DivineCommands)")
-    log.info("    ✅ /api/agents/clear_memories (DivineCommands)")
-    log.info("    ✅ /api/gods/spawn (DivineCommands)")
-    log.info("    ✅ /api/gods/ability (DivineCommands)")
-    log.info("    ✅ /api/gods/transform (DivineCommands)")
-    log.info("=" * 70)
-    log.info("  SERVER INTEGRATION:")
-    log.info("    📝 Auto-registers agents in usercache.json")
-    log.info("    📝 Auto-registers agents in usernamecache.json")
-    log.info("    🔄 UUID generation (Minecraft offline mode)")
-    log.info("    🏷️  Naming: AI_<n> for NPCs, GOD_<type>_<n> for gods")
-    log.info("=" * 70)
-    log.info("")
-    log.info("⚠️  IMPORTANT: Configure server folder for agent registration!")
-    log.info("   Use: POST /api/server/configure")
-    log.info("   Body: {\"server_folder\": \"/path/to/minecraft/server\"}")
-    log.info("")
-    log.info("✅ Server started and ready for Minecraft mod connections")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Server shutdown"""
-    log.info("🛑 Shutting down management server...")
-    
-    # Stop all agents
-    agent_manager.cleanup_all()
-    
-    log.info("✅ Shutdown complete")
-
 
 # =============================================================================
 # CLI ENTRY POINT
 # =============================================================================
 
 if __name__ == "__main__":
-    import uvicorn
-    import argparse
-    
     parser = argparse.ArgumentParser(
         description="Divine World Management Server - Corrected Endpoints"
     )

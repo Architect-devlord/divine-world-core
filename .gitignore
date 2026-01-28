@@ -13,6 +13,8 @@ npc_applications/
 .next/
 out/
 UltimMC/
+data/
+logs/
 
 # Environment variables
 .env
@@ -100,3 +102,4 @@ forge*changelog.txt
 # ============================================================================
 .DS_Store
 Thumbs.db
+data/logs/divine_world.log

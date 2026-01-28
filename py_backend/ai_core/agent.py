@@ -38,6 +38,10 @@ from fastapi import FastAPI, Form, UploadFile, File, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+# Import communication protocol handler
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from communication_protocol import handle_agent_websocket
+
 log = logging.getLogger("agent")
 
 app = FastAPI()
@@ -100,6 +104,32 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         if websocket in active_websockets:
             active_websockets.remove(websocket)
+
+
+# WebSocket endpoint for perception/action communication (Minecraft client)
+@app.websocket("/ws/agent")
+async def agent_perception_ws(websocket: WebSocket):
+    """WebSocket endpoint for agent perception/action communication with Minecraft client"""
+    try:
+        await websocket.accept()
+        data = await websocket.receive_json()
+        agent_id = data.get("agent_id")
+        
+        if not agent_id:
+            log.warning("WebSocket connection attempt without agent_id")
+            await websocket.close(code=4000, reason="Missing agent_id")
+            return
+        
+        log.info(f"WebSocket connection accepted for agent: {agent_id}")
+        await handle_agent_websocket(websocket, agent_id, global_agent)
+    
+    except Exception as e:
+        log.error(f"WebSocket error: {e}")
+        try:
+            await websocket.close(code=4001, reason=str(e))
+        except:
+            pass
+
 
 async def broadcast_to_clients(message: dict):
     """Broadcast message to all connected WebSocket clients"""
@@ -407,6 +437,49 @@ class NPCAgent:
             })
         
         return obs_array
+    
+    def observe(self, image: np.ndarray, info: Dict[str, Any] = None) -> np.ndarray:
+        """Process visual observation and store in memory"""
+        try:
+            from ai_core.vision import VisionAdapter
+            
+            # Initialize vision adapter if needed
+            if not hasattr(self, 'vision_adapter'):
+                self.vision_adapter = VisionAdapter()
+            
+            # Preprocess image
+            processed_image = self.vision_adapter.preprocess(image)
+            
+            # Store visual observation in memory
+            memory_data = {
+                'type': 'visual_observation',
+                'image_shape': image.shape,
+                'processed_shape': processed_image.shape,
+                'description': info.get('description', 'Visual observation'),
+                'source': info.get('source', 'unknown'),
+                'filename': info.get('filename', ''),
+                'timestamp': time.time()
+            }
+            
+            # Add emotional context if available
+            if hasattr(self, 'emotion'):
+                memory_data['emotional_context'] = self.emotion.snapshot()
+            
+            self.memory.remember(memory_data, tags=['vision', 'observation', 'visual'])
+            
+            # Generate a thought about the observation
+            thought = f"I observed a visual scene: {memory_data['description']}"
+            self.thoughts.append({"timestamp": time.time(), "thought": thought})
+            if len(self.thoughts) > 100:
+                self.thoughts = self.thoughts[-100:]
+            
+            # Return processed observation for potential use by other systems
+            return processed_image
+            
+        except Exception as e:
+            log.error(f"Error processing visual observation: {e}")
+            # Return a dummy observation
+            return np.zeros((3, 84, 84), dtype=np.float32)
     
     def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         """Make decision based on observation"""
@@ -855,7 +928,11 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
                                load_brain: Optional[str] = None,
                                duration: Optional[float] = None,
                                chat_interface: bool = False,
-                               god_type: Optional[str] = None):
+                               god_type: Optional[str] = None,
+                               gender: Optional[Any] = None,
+                               personality_traits: Optional[Dict[str, float]] = None,
+                               spawn_pos: Optional[tuple] = None,
+                               genesis_ancestor: bool = False):
     """
     Run agent in standalone mode without backend server.
     
@@ -866,6 +943,10 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         duration: How long to run (None = indefinite)
         chat_interface: Enable terminal chat interface
         god_type: Type of god agent (if applicable)
+        gender: Agent gender (GenderType)
+        personality_traits: Dictionary of personality traits
+        spawn_pos: Tuple of (x, y, z) spawn coordinates
+        genesis_ancestor: Whether this is a genesis ancestor
     """
     global global_agent
     
@@ -883,10 +964,19 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         agent_id=agent_id,
         autonomous=(mode == 'autonomous'),
         mode=mode,
-        god_type=god_type 
+        god_type=god_type,
+        gender=gender,
+        persona_traits=personality_traits
     )
     
     global_agent = agent
+    
+    # Store spawn position and genesis info
+    if spawn_pos:
+        agent.metadata['spawn_pos'] = spawn_pos
+        agent.metadata['spawn_x'], agent.metadata['spawn_y'], agent.metadata['spawn_z'] = spawn_pos
+    if genesis_ancestor:
+        agent.metadata['genesis_ancestor'] = genesis_ancestor
     
     # Start web server for frontend connection
     server_task = asyncio.create_task(run_server())
@@ -1067,6 +1157,44 @@ def main():
         help='Logging level (default: INFO)'
     )
     
+    # Genesis spawn arguments
+    parser.add_argument(
+        '--gender',
+        type=str,
+        choices=['male', 'female', 'dual'],
+        help='Agent gender for personality'
+    )
+    
+    parser.add_argument(
+        '--personality',
+        type=str,
+        help='JSON string of personality traits'
+    )
+    
+    parser.add_argument(
+        '--spawn-x',
+        type=float,
+        help='Spawn position X coordinate'
+    )
+    
+    parser.add_argument(
+        '--spawn-y',
+        type=float,
+        help='Spawn position Y coordinate'
+    )
+    
+    parser.add_argument(
+        '--spawn-z',
+        type=float,
+        help='Spawn position Z coordinate'
+    )
+    
+    parser.add_argument(
+        '--genesis-ancestor',
+        type=str,
+        help='Whether this is a genesis ancestor agent'
+    )
+    
     args = parser.parse_args()
     
     # Setup logging
@@ -1084,13 +1212,31 @@ def main():
     
     # Run agent
     try:
+        # Parse personality if provided
+        personality_traits = None
+        if args.personality:
+            try:
+                personality_traits = json.loads(args.personality)
+            except json.JSONDecodeError:
+                print(f"⚠️  Invalid personality JSON: {args.personality}")
+                personality_traits = None
+        
+        # Parse gender (GenderType is a Literal['male', 'female', 'dual'])
+        gender = None
+        if args.gender:
+            gender = args.gender  # Just pass the string directly
+        
         asyncio.run(run_standalone_agent(
             agent_id=args.agent_id,
             mode=args.mode,
             load_brain=args.load_brain,
             duration=args.duration,
             chat_interface=args.chat,
-            god_type=args.god_type
+            god_type=args.god_type,
+            gender=gender,
+            personality_traits=personality_traits,
+            spawn_pos=(args.spawn_x, args.spawn_y, args.spawn_z) if args.spawn_x is not None else None,
+            genesis_ancestor=args.genesis_ancestor == 'true' if args.genesis_ancestor else False
         ))
     except KeyboardInterrupt:
         print("\n✅ Agent stopped")

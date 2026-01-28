@@ -18,7 +18,7 @@ try:
     from cassandra.query import SimpleStatement, BatchStatement, ConsistencyLevel
     from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
     CASSANDRA_AVAILABLE = True
-except ImportError:
+except Exception:
     CASSANDRA_AVAILABLE = False
     Cluster = None
     SimpleStatement = None

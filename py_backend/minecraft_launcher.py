@@ -95,22 +95,36 @@ class UltimMCLauncher:
             else:
                 log.warning(f"Provided UltimMC path does not exist: {p}")
 
-        # Ask the user for the absolute path to the UltimMC executable
-        try:
-            print("Please enter the absolute path to the UltimMC executable (or leave blank to skip): ", end='', flush=True)
-            user_input = input().strip()
-        except Exception:
-            user_input = ''
+        # Try common installation paths
+        common_paths = [
+            Path.home() / ".local" / "bin" / "ultimmc",
+            Path.home() / ".local" / "bin" / "UltimMC",
+            Path("/opt/ultimmc"),
+            Path("/opt/UltimMC"),
+            Path("/usr/local/bin/ultimmc"),
+            Path("/usr/local/bin/UltimMC"),
+        ]
+        
+        for path in common_paths:
+            if path.exists():
+                log.info(f"Found UltimMC at: {path}")
+                return path
+        
+        # Also try checking in workspace for UltimMC folder
+        cwd = Path.cwd()
+        if cwd.name == "py_backend":
+            workspace_root = cwd.parent
+        else:
+            workspace_root = cwd
+        
+        ultimmc_folder = workspace_root / "UltimMC"
+        if ultimmc_folder.exists() and (ultimmc_folder / "bin" / "UltimMC").exists():
+            log.info(f"Found UltimMC folder at: {ultimmc_folder}")
+            return ultimmc_folder / "bin" / "UltimMC"
 
-        if user_input:
-            p = Path(os.path.expanduser(user_input))
-            if p.exists():
-                return p
-            else:
-                log.warning(f"User-provided UltimMC path does not exist: {p}")
-
-        # No explicit path provided or user skipped -- return None
-        log.info("UltimMC executable not configured; skipping automated UltimMC actions.")
+        # No UltimMC found - don't prompt user, just log warning
+        log.info("UltimMC executable not found in common paths; skipping automated UltimMC actions.")
+        log.info("To use UltimMC, set DW_ULTIMMC_PATH environment variable or install to ~/.local/bin/")
         return None
     
     def _find_file(self, explicit_path: Optional[str], filename: str) -> Optional[Path]:

@@ -1,0 +1,48 @@
+{
+  "speech_transformer": {
+    "responses_generated": 5,
+    "vocabulary_size": 4,
+    "language_stage": 0
+  },
+  "web_browsing": {
+    "pages_browsed": 1,
+    "web_memories_stored": 1,
+    "total_text_bytes": 127
+  },
+  "vision_learning": {
+    "images_processed": 0,
+    "vision_memories": 0
+  },
+  "memory_system": {
+    "total_memories": 14,
+    "retrieved_all": 10,
+    "chat_memories": 1,
+    "experience_memories": 0
+  },
+  "emotional_tagging": {
+    "emotional_memories": 4,
+    "dominant_emotion": "surprise",
+    "emotion_snapshot": {
+      "joy": 0.6516049999999999,
+      "sadness": 0.6859,
+      "anger": 0.0,
+      "fear": 0.722,
+      "trust": 0.0,
+      "surprise": 0.76,
+      "anticipation": 0.0,
+      "disgust": 0.0
+    }
+  },
+  "reward_system": {
+    "experiences_processed": 3,
+    "total_reward": 0.7,
+    "reward_memories": 4,
+    "reward_system_initialized": true
+  },
+  "world_model": {
+    "world_model_active": true,
+    "prediction_success": false,
+    "replay_buffer_size": 0,
+    "model_parameters": 21286946
+  }
+}

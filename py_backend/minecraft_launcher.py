@@ -211,7 +211,7 @@ class UltimMCLauncher:
         
         log.info(f"Creating local account: {username}")
         
-        accounts_file = self.ultimmc_dir / "accounts.json"
+        accounts_file = self.ultimmc_dir / "bin" / "accounts.json"
         
         if accounts_file.exists():
             try:

@@ -16,6 +16,7 @@ import sys
 import os
 import subprocess
 import signal
+import uuid
 import psutil
 import json
 import time
@@ -33,9 +34,14 @@ import argparse
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from ai_core import memory
 from config import Config
 from auto_packager import EnhancedAgentSpawner
 from auto_connect_system import integrate_with_backend
+
+# Import UltimMC launcher
+from minecraft_launcher import UltimMCLauncher, MultiAgentLauncher
+
 
 # Initialize logging
 from ai_core.logger_setup import initialize_logging
@@ -48,6 +54,7 @@ Config.ensure_dirs()
 if not Config.validate():
     logging.critical("Configuration validation failed!")
     sys.exit(1)
+
 class MinecraftServerIntegration:
     """Handles Minecraft server folder integration and agent registration."""
         
@@ -55,11 +62,9 @@ class MinecraftServerIntegration:
         self.server_folder: Optional[Path] = None
         self.usercache_path: Optional[Path] = None
         self.usernamecache_path: Optional[Path] = None
-    #can  you add taking input for the server folder path
+    
 
-    def get_server_folder(self) -> Path:
-        
-        
+    def get_server_folder(self) -> Path: 
         try:
             from config import Config
             self.folder = Path(Config.SERVER_FOLDER)
@@ -70,7 +75,6 @@ class MinecraftServerIntegration:
             )
             if not self.folder.is_absolute() or not self.folder.is_dir():
                 raise RuntimeError("Invalid Minecraft server folder")
-
         return self.folder
 
     def set_server_folder(self, folder: Path):
@@ -96,6 +100,48 @@ class MinecraftServerIntegration:
         
         return agents
     
+    def register_agent(self, agent_id: str, agent_uuid: str):
+        """Register agent in server cache files"""
+        if not self.server_folder:
+            log.warning("Server folder not configured, skipping registration")
+            return
+        
+        # Update usercache.json
+        if self.usercache_path.exists():
+            with open(self.usercache_path, 'r', encoding='utf-8') as f:
+                usercache_data = json.load(f)
+        else:
+            usercache_data = []
+        
+        # Check if already registered
+        existing = next((e for e in usercache_data if e.get('name') == agent_id), None)
+        if not existing:
+            usercache_data.append({
+                'name': agent_id,
+                'uuid': agent_uuid,
+                'expiresOn': '2099-12-31 23:59:59 +0000'
+            })
+            
+            with open(self.usercache_path, 'w', encoding='utf-8') as f:
+                json.dump(usercache_data, f, indent=2)
+            
+            log.info(f"✅ Registered {agent_id} in usercache.json")
+        
+        # Update usernamecache.json
+        if self.usernamecache_path.exists():
+            with open(self.usernamecache_path, 'r', encoding='utf-8') as f:
+                usernamecache_data = json.load(f)
+        else:
+            usernamecache_data = {}
+        
+        if agent_id not in usernamecache_data:
+            usernamecache_data[agent_id] = agent_uuid
+            
+            with open(self.usernamecache_path, 'w', encoding='utf-8') as f:
+                json.dump(usernamecache_data, f, indent=2)
+            
+            log.info(f"✅ Registered {agent_id} in usernamecache.json")
+
 server_integration = MinecraftServerIntegration()
 
 
@@ -184,7 +230,19 @@ class AgentProcessManager:
     def __init__(self):
         self.agent_processes: Dict[str, subprocess.Popen] = {}
         self.agent_info: Dict[str, Dict[str, Any]] = {}
+        self.minecraft_processes: Dict[str, subprocess.Popen] = {}
         
+        # Initialize UltimMC multi-agent launcher
+        self.ultimmc_launcher = MultiAgentLauncher(
+            base_dir=str(Config.NPC_APPLICATIONS_DIR/ ".divine-world" / "ultimmc_agents") 
+        )
+        
+        # Create source launcher for finding UltimMC
+        self.source_launcher = UltimMCLauncher(
+            client_jar_path=str(Config.CLIENT_JAR) if Config.CLIENT_JAR else None,
+            mod_jar_path=str(Config.MOD_JAR) if Config.MOD_JAR else None
+        )
+
         self.spawner = EnhancedAgentSpawner(
             client_jar_path=str(Config.CLIENT_JAR) if Config.CLIENT_JAR else None,
             auto_package=True,
@@ -192,25 +250,64 @@ class AgentProcessManager:
         )
         
         log.info("AgentProcessManager initialized")
+
+    def _generate_agent_uuid(self, agent_id: str, agent_type: str = 'npc') -> str:
+        """Generate unique UUID for agent (Minecraft offline mode compatible)"""
+        # Use MD5 namespace UUID for consistency
+        namespace = uuid.UUID("00000000-0000-0000-0000-000000000000")
+        name = f"OfflinePlayer:AI_{agent_type}_{agent_id}"
+        return str(uuid.uuid3(namespace, name))
     
-    def start_agent_process(self, agent_id: str, mode: str = 'autonomous',
+    def start_agent_process(self, agent_id: str, mode: str = 'minecraft',
+                           server_addr: str = "127.0.0.1:25565",
                            load_brain: Optional[str] = None,
                            additional_args: List[str] = None,
                            agent_type: str = 'npc',  # 'npc' or 'god_<type>'
-                           custom_name: Optional[str] = None) -> bool:
+                           custom_name: Optional[str] = None,
+                           memory_mb: int = 2048) -> bool:
         """Start agent in separate process with auto-packaging."""
         if agent_id in self.agent_processes:
             log.warning(f"Agent {agent_id} already running")
             return False
         
         try:
+            
             # Check if packaged exe exists
             exe_path = Path(Config.NPC_APPLICATIONS_DIR) / agent_id / f"DW_Agent_{agent_id}"
             if exe_path.exists():
                 cmd = [str(exe_path)]
                 log.info(f"Running packaged agent: {exe_path}")
             else:
+
+                # Generate unique UUID
+                agent_uuid = self._generate_agent_uuid(agent_id, agent_type)
+            
+                # Register in server files
+                server_integration.register_agent(agent_id, agent_uuid)
+            
+                # For minecraft mode, setup UltimMC
+                if mode == 'minecraft':
+                    log.info(f"🚀 Setting up UltimMC for {agent_id}...")
+                
+                    # Setup agent with dedicated UltimMC
+                    success = self.ultimmc_launcher.setup_agent(
+                        agent_id=agent_id,
+                        server_addr=server_addr,
+                        custom_uuid=agent_uuid,
+                        source_launcher=self.source_launcher
+                    )
+                
+                    if not success:
+                        log.error(f"Failed to setup UltimMC for {agent_id}")
+                        return False
+                
+                    log.info(f"✅ UltimMC setup complete for {agent_id}")
+                # Start agent backend process
                 agent_script = Path(__file__).parent.parent / "ai_core" / "agent.py"
+
+                # Allocate unique backend port
+                backend_port = Config.BASE_BACKEND_PORT + (abs(hash(agent_id)) % 9000)
+            
                 
                 cmd = [
                     sys.executable,
@@ -225,6 +322,8 @@ class AgentProcessManager:
                 
                 if additional_args:
                     cmd.extend(additional_args)
+                
+            log.info(f"Starting agent backend: {' '.join(cmd)}")
             
             log.info(f"Starting agent process: {' '.join(cmd)}")
             
@@ -241,11 +340,14 @@ class AgentProcessManager:
                 'agent_id': agent_id,
                 'mode': mode,
                 'pid': process.pid,
+                'backend_port': backend_port,
                 'started_at': asyncio.get_event_loop().time(),
                 'brain_path': load_brain,
                 'status': 'running',
                 'agent_type': agent_type,
-                'custom_name': custom_name or "Unnamed"
+                'custom_name': custom_name or "Unnamed",
+                'uuid': agent_uuid,
+                'server_addr': server_addr
             }
             
             asyncio.create_task(self._monitor_process_logs(agent_id, process))
@@ -254,10 +356,44 @@ class AgentProcessManager:
             asyncio.create_task(self._auto_package_agent(agent_id, agent_type, custom_name))
             
             log.info(f"✅ Agent {agent_id} started (PID: {process.pid})")
+            if mode == 'minecraft':
+                # Wait for backend to initialize
+                time.sleep(3)
+                
+                log.info(f"🎮 Launching UltimMC client for {agent_id}...")
+                
+                # Launch Minecraft client
+                minecraft_process = self.ultimmc_launcher.launch_agent(
+                    agent_id=agent_id,
+                    server_addr=server_addr,
+                    backend_url=f"http://127.0.0.1:{backend_port}",
+                    memory_mb=memory_mb,
+                    headless=False  # Set to True for headless mode
+                )
+                
+                if minecraft_process:
+                    self.minecraft_processes[agent_id] = minecraft_process
+                    self.agent_info[agent_id]['minecraft_pid'] = minecraft_process.pid
+                    self.agent_info[agent_id]['status'] = 'running'
+                    
+                    log.info(f"✅ UltimMC launched for {agent_id} (PID: {minecraft_process.pid})")
+                    log.info(f"   Server: {server_addr}")
+                    log.info(f"   Backend: http://127.0.0.1:{backend_port}")
+                else:
+                    log.error(f"Failed to launch UltimMC for {agent_id}")
+                    # Keep backend running, user can connect manually
+                    self.agent_info[agent_id]['status'] = 'backend_only'
+            
+            # Auto-package after brain creation
+            if mode == 'minecraft':
+                asyncio.create_task(self._auto_package_agent(agent_id, agent_type, custom_name))
+            
             return True
             
         except Exception as e:
             log.error(f"Failed to start agent {agent_id}: {e}")
+            import traceback
+            log.error(traceback.format_exc())
             return False
     
     async def _auto_package_agent(self, agent_id: str, agent_type: str, custom_name: Optional[str]):
@@ -271,8 +407,8 @@ class AgentProcessManager:
             
             log.info(f"[Auto-Package] Waiting for brain file: {brain_path}")
             
-            # Wait up to 60 seconds for brain file to be created
-            max_wait = 60
+            # Wait up to 300 seconds for brain file to be created
+            max_wait = 300
             for i in range(max_wait):
                 if brain_path.exists():
                     log.info(f"[Auto-Package] Brain file found after {i} seconds")
@@ -342,9 +478,63 @@ class AgentProcessManager:
             if agent_id in self.agent_processes:
                 del self.agent_processes[agent_id]
     
+    def stop_agent_process(self, agent_id: str) -> bool:
+        """Stop agent and cleanup"""
+        if agent_id not in self.agent_processes:
+            return False
+        
+        try:
+            # Stop Minecraft client if running
+            if agent_id in self.minecraft_processes:
+                minecraft_proc = self.minecraft_processes[agent_id]
+                try:
+                    minecraft_proc.terminate()
+                    minecraft_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    minecraft_proc.kill()
+                    minecraft_proc.wait()
+                
+                del self.minecraft_processes[agent_id]
+                log.info(f"Stopped Minecraft client for {agent_id}")
+            
+            # Stop agent backend
+            process = self.agent_processes[agent_id]
+            process.terminate()
+            process.wait(timeout=5)
+            
+            log.info(f"Stopped agent {agent_id}")
+            return True
+            
+        except Exception as e:
+            log.error(f"Error stopping {agent_id}: {e}")
+            return False
+
+
+    def list_running_agents(self) -> List[str]:
+        """List all running agents"""
+        return list(self.agent_processes.keys())
+    
+    def get_agent_status(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Get agent status"""
+        return self.agent_info.get(agent_id)
+
     def cleanup_all(self):
         """Clean up all agent processes and spawner resources."""
         log.info("Cleaning up agent processes...")
+
+        # Stop all Minecraft clients
+        for agent_id in list(self.minecraft_processes.keys()):
+            try:
+                self.ultimmc_launcher.stop_agent(agent_id)
+            except:
+                pass
+        
+        # Stop all agent backends
+        for agent_id in list(self.agent_processes.keys()):
+            try:
+                self.stop_agent_process(agent_id)
+            except:
+                pass        
         
         if hasattr(self.spawner, 'cleanup_all'):
             self.spawner.cleanup_all()
@@ -362,6 +552,11 @@ class AgentProcessManager:
         self.agent_info.clear()
         log.info("Agent cleanup complete")
 
+# Global manager
+agent_manager = AgentProcessManager()
+
+# Integrate with auto-connect system
+integrate_with_backend(app, agent_manager)
 
 # Updated spawn_god endpoint with proper agent_type
 @app.post("/api/gods/spawn")
@@ -929,9 +1124,11 @@ async def genesis_spawn(request: Request):
         spawner_name = data.get('spawner')
         world_name = data.get('world')
         spawn_positions = data.get('spawn_positions', [])
+        server_addr = data.get('server_addr', Config.DEFAULT_SERVER)
         
         log.info(f"🌟 GENESIS: Spawning {len(spawn_positions)} agents by {spawner_name}")
-        
+        log.info(f"   Server: {server_addr}")
+
         agents_spawned = []
         
         for i, spawn_data in enumerate(spawn_positions):
@@ -989,6 +1186,7 @@ async def genesis_spawn(request: Request):
             success = agent_manager.start_agent_process(
                 agent_id=agent_id,
                 mode='minecraft',
+                server_addr=server_addr,
                 additional_args=[
                     '--gender', gender,
                     '--personality', json.dumps(personality),
@@ -998,7 +1196,8 @@ async def genesis_spawn(request: Request):
                     '--genesis-ancestor', 'true'  # Mark as genesis ancestor
                 ],
                 agent_type='npc',  # Genesis agents are NPCs
-                custom_name=display_name  # Use clean name
+                custom_name=display_name,  # Use clean name
+                memory_mb=2048
             )
             
             if success:
@@ -1025,12 +1224,14 @@ async def genesis_spawn(request: Request):
             "genetic_info": {
                 "adam_traits": "Higher boldness (0.8) and curiosity (0.9)",
                 "eve_traits": "Higher agreeableness (0.9) and conscientiousness (0.8)",
-                "offspring_will_inherit": "Blend of parent traits with mutation"
+                "offspring_will_inherit": "Blend of parent traits with mutation",
+            "note": "Agents are launching with UltimMC and will connect to server automatically"    
             }
         }
     
     except Exception as e:
-        log.error(f"Genesis spawn error: {e}")
+        import traceback
+        log.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 

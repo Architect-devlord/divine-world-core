@@ -24,7 +24,7 @@
 - ✅ Better for production deployment
 
 **Cons:**
-- ❌ Harder to debug visually
+- ❌ Harder to debug visually 
 - ❌ Need good logging/monitoring
 - ❌ Can't see what agents are doing
 

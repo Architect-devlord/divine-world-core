@@ -35,13 +35,13 @@ class UltimMCLauncher:
         
         Args:
             ultimmc_path: Path to UltimMC executable (source to copy from)
-            client_jar_path: Path to DWClientBot.jar
-            mod_jar_path: Path to DivineWorld.jar
+            client_jar_path: Path to dwclient-1.0.0.jar
+            mod_jar_path: Path to divineworld-1.0.0-all.jar
             custom_ultimmc_dir: Custom UltimMC directory (if already copied)
         """
         self.source_ultimmc_path = self._find_ultimmc(ultimmc_path)
-        self.client_jar = self._find_file(client_jar_path, "DWClientBot.jar")
-        self.mod_jar = self._find_file(mod_jar_path, "DivineWorld-1.0.0.jar")
+        self.client_jar = self._find_file(client_jar_path, "dwclient-1.0.0.jar")
+        self.mod_jar = self._find_file(mod_jar_path, "divineworld-1.0.0-all.jar")
         
         # For custom instances, we'll set these per-agent
         self.ultimmc_dir = custom_ultimmc_dir
@@ -56,14 +56,14 @@ class UltimMCLauncher:
             log.warning("⚠️ UltimMC not found - install from https://github.com/UltimMC/Launcher or https://github.com/Architect-devlord/Launcher")
         
         if self.client_jar:
-            log.info(f"✅ DWClientBot found at: {self.client_jar}")
+            log.info(f"✅ dwclient-1.0.0.jar found at: {self.client_jar}")
         else:
-            log.warning("⚠️ DWClientBot.jar not found")
+            log.warning("⚠️ dwclient-1.0.0.jar not found")
         
         if self.mod_jar:
-            log.info(f"✅ DivineWorld mod found at: {self.mod_jar}")
+            log.info(f"✅ divineworld-1.0.0-all.jar found at: {self.mod_jar}")
         else:
-            log.warning("⚠️ DivineWorld.jar not found")
+            log.warning("⚠️ divineworld-1.0.0-all.jar not found")
     
     def _find_executable_in_dir(self):
         """Find UltimMC executable in the custom directory"""
@@ -72,8 +72,9 @@ class UltimMCLauncher:
         
         # Look for executable
         candidates = [
-            self.ultimmc_dir / "UltimMC",
+            # Prefer the bundled binary under `bin/` when duplicates exist
             self.ultimmc_dir / "bin" / "UltimMC",
+            self.ultimmc_dir / "UltimMC",
             self.ultimmc_dir / "ultimmc",
         ]
         
@@ -570,6 +571,7 @@ class MultiAgentLauncher:
     
     def setup_agent(self, agent_id: str, server_addr: str = "127.0.0.1:25565",
                    custom_uuid: Optional[str] = None,
+                   agent_type: str = 'npc',
                    source_launcher: Optional[UltimMCLauncher] = None) -> bool:
         """
         Setup an agent with its own UltimMC copy.
@@ -578,6 +580,7 @@ class MultiAgentLauncher:
             agent_id: Agent identifier
             server_addr: Server address
             custom_uuid: Custom UUID for the agent
+            agent_type: 'npc' or 'god_<type>' - determines username format
             source_launcher: Source launcher to copy from
             
         Returns:
@@ -589,8 +592,17 @@ class MultiAgentLauncher:
         
         instance_name = f"agent_{agent_id}"
         
-        # Create account
-        if not launcher.create_account(agent_id, make_active=True, custom_uuid=custom_uuid):
+        # Generate username in DW_ or DWGOD_ format (matches DWEventHandler.java)
+        # This must match what DWEventHandler expects for player detection
+        if agent_type and agent_type.startswith('god_'):
+            god_type = agent_type.replace('god_', '').upper()
+            username = f"DWGOD_{god_type}_{agent_id}"
+        else:
+            username = f"DW_{agent_id}"
+        
+        # Create account with proper username format
+        if not launcher.create_account(username, make_active=True, custom_uuid=custom_uuid):
+            log.error(f"Failed to create account {username} for {agent_id}")
             return False
         
         # Create instance
@@ -601,13 +613,14 @@ class MultiAgentLauncher:
         if not launcher.install_mods(instance_name):
             log.warning(f"Some mods failed to install for {agent_id}")
         
-        log.info(f"✅ Agent {agent_id} fully configured")
+        log.info(f"✅ Agent {agent_id} configured with username: {username}")
         return True
     
     def launch_agent(self, agent_id: str, server_addr: str,
                     backend_url: str, memory_mb: int = 2048,
                     extra_jvm_args: Optional[List[str]] = None,
-                    headless: bool = False) -> Optional[subprocess.Popen]:
+                    headless: bool = False,
+                    agent_type: str = 'npc') -> Optional[subprocess.Popen]:
         """
         Launch an agent.
         
@@ -618,6 +631,7 @@ class MultiAgentLauncher:
             memory_mb: Memory allocation
             extra_jvm_args: Extra JVM arguments
             headless: Run headless with xvfb-run
+            agent_type: 'npc' or 'god_<type>' - determines offline username
             
         Returns:
             Process handle or None
@@ -629,11 +643,18 @@ class MultiAgentLauncher:
         launcher = self.launchers[agent_id]
         instance_name = f"agent_{agent_id}"
         
+        # Generate offline username in DW_ or DWGOD_ format
+        if agent_type and agent_type.startswith('god_'):
+            god_type = agent_type.replace('god_', '').upper()
+            offline_username = f"DWGOD_{god_type}_{agent_id}"
+        else:
+            offline_username = f"DW_{agent_id}"
+        
         process = launcher.launch_instance(
             instance_name=instance_name,
             server_addr=server_addr,
             offline=True,
-            offline_name=agent_id,
+            offline_name=offline_username,  # Use properly formatted username
             agent_id=agent_id,
             backend_url=backend_url,
             memory_mb=memory_mb,
@@ -674,6 +695,7 @@ class MultiAgentLauncher:
                     agent_id=agent_id,
                     server_addr=config.get("server", "127.0.0.1:25565"),
                     custom_uuid=config.get("uuid"),
+                    agent_type=config.get("agent_type", "npc"),  # Pass agent_type
                     source_launcher=source_launcher
                 )
                 if not success:
@@ -687,7 +709,8 @@ class MultiAgentLauncher:
                 backend_url=config.get("backend", "http://127.0.0.1:11400"),
                 memory_mb=config.get("memory", 2048),
                 extra_jvm_args=config.get("extra_jvm_args"),
-                headless=config.get("headless", headless)
+                headless=config.get("headless", headless),
+                agent_type=config.get("agent_type", "npc")  # Pass agent_type
             )
             
             if process:

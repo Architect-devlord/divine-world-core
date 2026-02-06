@@ -1,48 +1,62 @@
-# ai_core/agent.py - STANDALONE AGENT RUNTIME WITH WEBSOCKET
+# ai_core/agent.py - UNIFIED AGENT RUNTIME & BOOTSTRAP
 """
-Standalone Agent Runtime - Primary Entry Point
-==============================================
-Run this file directly to start an autonomous agent.
-No longer depends on main.py for execution.
+Unified Agent Runtime - Primary Agent Implementation
+===================================================
+Fully integrated standalone agent with WebSocket support and executable generation.
+Handles NPCs, God agents, and dynamic spawning (breeding, genesis, spawning commands).
 
-Usage:
-    python ai_core/agent.py --agent-id alice --mode autonomous
-    python ai_core/agent.py --agent-id bob --mode chat --load-brain data/brains/bob/brain.pcap
+Unified Structure:
+- Agent class: Core NPC/God agent logic
+- Executable generation: PyInstaller bundling for spawned agents
+- WebSocket server: Real-time agent communication
+- Personality system: Gender-based, not name-dependent
+
+Usage as Python Script:
+    python -m ai_core.agent --agent-id alice --mode autonomous
+    python -m ai_core.agent --agent-id bob --mode chat --load-brain data/brains/bob/brain.pcap
+
+Usage as PyInstaller Executable:
+    ./DW_Agent_alice --agent-id alice --port 8001
+    ./DW_Agent_god_agent --agent-id god_agent --god-type creation
 """
 
 import asyncio
 import argparse
 import sys
+import os
 import time
 import signal
 import logging
+import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 import json
-
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
 import numpy as np
 
-from ai_core.personality import Personality, GenderType
+from ai_core.personality import Personality, GenderType, assign_npc_gender, assign_god_gender
 from ai_core.emotion import EmotionSystem
 from ai_core.reward_system import ImprovedRewardSystem
 from ai_core.brain_core import BrainCore
 from ai_core.planner import CognitivePlanner
 from ai_core.unified_memory import UnifiedMemoryStore
 from ai_core.cognitive_loop import CognitiveLoop
+from ai_core.communication_protocol import handle_agent_websocket
+from ai_core.config import Config
 
 from fastapi import FastAPI, Form, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-# Import communication protocol handler
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from communication_protocol import handle_agent_websocket
-
 log = logging.getLogger("agent")
+
+# Configure logging early if running as script
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s] %(levelname)s - %(name)s - %(message)s'
+    )
 
 app = FastAPI()
 app.add_middleware(
@@ -901,8 +915,16 @@ class NPCAgent:
         if self.cognitive_loop:
             await self.stop_autonomous_mode()
         
-        # Save state
-        brain_path = Path(f"data/brains/{self.agent_id}/brain.pcap")
+        # Save state - use provided path if available, otherwise use relative path
+        brain_save_path = self.metadata.get('brain_save_path')
+        
+        if brain_save_path:
+            # Use absolute path provided from backend
+            brain_path = Path(brain_save_path)
+        else:
+            # Fallback to relative path (for standalone execution)
+            brain_path = Path(f"data/brains/{self.agent_id}/brain.pcap")
+        
         brain_path.parent.mkdir(parents=True, exist_ok=True)
         self.save(str(brain_path))
         
@@ -926,6 +948,7 @@ async def run_server():
 
 async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
                                load_brain: Optional[str] = None,
+                               brain_save_path: Optional[str] = None,
                                duration: Optional[float] = None,
                                chat_interface: bool = False,
                                god_type: Optional[str] = None,
@@ -940,6 +963,7 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         agent_id: Unique identifier
         mode: 'autonomous', 'chat', or 'minecraft'
         load_brain: Path to brain.pcap to load
+        brain_save_path: Path where brain should be saved (absolute path from backend)
         duration: How long to run (None = indefinite)
         chat_interface: Enable terminal chat interface
         god_type: Type of god agent (if applicable)
@@ -968,6 +992,10 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         gender=gender,
         persona_traits=personality_traits
     )
+    
+    # Store brain save path if provided (from backend)
+    if brain_save_path:
+        agent.metadata['brain_save_path'] = brain_save_path
     
     global_agent = agent
     
@@ -1031,7 +1059,13 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
             
             # Auto-save every 5 minutes
             if (time.time() - start_time) % 300 < 1:
-                brain_path = Path(f"data/brains/{agent.agent_id}/brain.pcap")
+                brain_save_path = agent.metadata.get('brain_save_path')
+                
+                if brain_save_path:
+                    brain_path = Path(brain_save_path)
+                else:
+                    brain_path = Path(f"data/brains/{agent.agent_id}/brain.pcap")
+                
                 brain_path.parent.mkdir(parents=True, exist_ok=True)
                 agent.save(str(brain_path))
                 log.info(f"💾 Auto-saved {agent.agent_id}")
@@ -1100,8 +1134,172 @@ async def chat_loop(agent):
 
 
 # =============================================================================
-# CLI ENTRY POINT
+# EXECUTABLE GENERATION FOR SPAWNED AGENTS (Breeding, Genesis, Spawning)
 # =============================================================================
+
+class AgentExecutableGenerator:
+    """Generate standalone PyInstaller executables for dynamically spawned agents"""
+    
+    def __init__(self, output_dir: str = "build/agents/dist"):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.build_temp = Path("build/agents/build_temp")
+        self.build_temp.mkdir(parents=True, exist_ok=True)
+    
+    def generate_executable(self, agent_id: str, agent_type: Literal['npc', 'god'] = 'npc',
+                           god_type: Optional[str] = None, gender: Optional[GenderType] = None,
+                           personality_traits: Optional[Dict[str, float]] = None) -> Optional[Path]:
+        """
+        Generate a PyInstaller executable for a spawned agent.
+        
+        Args:
+            agent_id: Unique agent identifier
+            agent_type: 'npc' or 'god'
+            god_type: Type of god agent (if agent_type='god')
+            gender: gender assignment (auto-assigned if None)
+            personality_traits: custom personality traits
+        
+        Returns:
+            Path to generated executable or None on error
+        """
+        
+        # Auto-assign gender if not provided
+        if gender is None:
+            if agent_type == 'god':
+                gender = assign_god_gender()
+            else:
+                gender = assign_npc_gender()
+        
+        # Create wrapper script for this specific agent
+        wrapper_script = self.build_temp / f"{agent_id}_wrapper.py"
+        
+        # Personality as JSON string
+        personality_json = json.dumps(personality_traits or {})
+        god_arg = f" --god-type {god_type}" if god_type else ""
+        
+        wrapper_content = f'''
+#!/usr/bin/env python3
+"""
+Auto-generated wrapper for {agent_id} executable
+Generated: {time.time()}
+Agent Type: {agent_type}
+Gender: {gender}
+"""
+
+import sys
+from ai_core.agent import main
+
+# Override sys.argv for this specific agent
+sys.argv = [
+    sys.argv[0],
+    '--agent-id', '{agent_id}',
+    '--mode', 'autonomous',
+    '--gender', '{gender}',
+    '--personality', '{personality_json}'{god_arg}
+]
+
+if __name__ == '__main__':
+    main()
+'''
+        
+        wrapper_script.write_text(wrapper_content)
+        log.info(f"📝 Generated wrapper: {wrapper_script}")
+        
+        # Build PyInstaller command
+        exe_name = f"DW_Agent_{agent_id.replace(' ', '_')}" if agent_type == 'npc' else f"DW_God_{agent_id.replace(' ', '_')}"
+        
+        try:
+            import PyInstaller.__main__
+        except ImportError:
+            log.error("PyInstaller not installed. Cannot generate executable.")
+            log.info("Install with: pip install PyInstaller")
+            return None
+        
+        # PyInstaller arguments
+        pyinstaller_args = [
+            '--onefile',
+            f'--name={exe_name}',
+            f'--distpath={self.output_dir}',
+            f'--buildpath={self.build_temp}',
+            f'--specpath={self.build_temp}',
+            '--hidden-import=torch',
+            '--hidden-import=numpy',
+            '--hidden-import=fastapi',
+            '--hidden-import=uvicorn',
+            '--hidden-import=websockets',
+            '--hidden-import=ai_core',
+            '--collect-all=ai_core',
+            '--collect-all=torch',
+            '--console',
+            str(wrapper_script)
+        ]
+        
+        log.info(f"🔨 Building executable: {exe_name}")
+        log.info(f"   Agent ID: {agent_id}")
+        log.info(f"   Type: {agent_type}")
+        log.info(f"   Gender: {gender}")
+        
+        try:
+            # Run PyInstaller
+            PyInstaller.__main__.run(pyinstaller_args)
+            
+            exe_path = self.output_dir / exe_name
+            if exe_path.exists():
+                log.info(f"✅ Executable created: {exe_path}")
+                return exe_path
+            else:
+                log.error(f"❌ Executable not found: {exe_path}")
+                return None
+                
+        except Exception as e:
+            log.error(f"❌ Failed to generate executable: {e}")
+            return None
+    
+    def launch_executable(self, exe_path: Path, port: int = 8001,
+                         minecraft: bool = False, ultimmc_path: Optional[str] = None) -> Optional[subprocess.Popen]:
+        """
+        Launch a generated executable.
+        
+        Args:
+            exe_path: Path to the executable
+            port: WebSocket port
+            minecraft: Enable Minecraft launching
+            ultimmc_path: Path to UltimMC
+        
+        Returns:
+            subprocess.Popen object or None on error
+        """
+        
+        if not exe_path.exists():
+            log.error(f"Executable not found: {exe_path}")
+            return None
+        
+        cmd = [str(exe_path), '--port', str(port)]
+        
+        if minecraft:
+            cmd.append('--minecraft')
+            if ultimmc_path:
+                cmd.extend(['--ultimmc-path', ultimmc_path])
+        
+        log.info(f"🚀 Launching: {exe_path.name}")
+        log.info(f"   Command: {' '.join(cmd)}")
+        
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            log.info(f"✅ Process started (PID: {process.pid})")
+            return process
+        except Exception as e:
+            log.error(f"Failed to launch executable: {e}")
+            return None
+
+
+# =============================================================================
+# CLI ENTRY POINT
 
 def main():
     """CLI entry point for standalone agent execution"""
@@ -1135,6 +1333,12 @@ def main():
         '--load-brain',
         type=str,
         help='Path to brain.pcap to load'
+    )
+    
+    parser.add_argument(
+        '--brain-save-path',
+        type=str,
+        help='Path where brain should be saved (absolute path)'
     )
     
     parser.add_argument(
@@ -1230,6 +1434,7 @@ def main():
             agent_id=args.agent_id,
             mode=args.mode,
             load_brain=args.load_brain,
+            brain_save_path=args.brain_save_path,
             duration=args.duration,
             chat_interface=args.chat,
             god_type=args.god_type,

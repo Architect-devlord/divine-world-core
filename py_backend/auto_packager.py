@@ -282,7 +282,7 @@ class EnhancedAgentSpawner(AgentSpawner):
     Handles complete lifecycle of agent spawn → setup → package
     """
     
-    def __init__(self, client_jar_path: Optional[str] = "DWClientBot.jar",
+    def __init__(self, client_jar_path: Optional[str] = "dwclient-1.0.0.jar",
                  auto_package: bool = True,
                  package_output_dir: str = "npc_applications",
                  use_ultimmc: bool = None):
@@ -290,7 +290,7 @@ class EnhancedAgentSpawner(AgentSpawner):
         Initialize enhanced spawner.
         
         Args:
-            client_jar_path: Path to DWClientBot.jar
+            client_jar_path: Path to dwclient-1.0.0.jar
             auto_package: Enable auto-packaging
             package_output_dir: Output directory for packages
             use_ultimmc: Use UltimMC for automation (auto-detect if None)

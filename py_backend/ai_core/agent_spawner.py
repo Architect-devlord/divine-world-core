@@ -55,7 +55,7 @@ class AgentClientManager:
     Can operate without client jar for chat/learning-only mode.
     """
     
-    def __init__(self, client_jar_path: Optional[str] = "DWClientBot.jar", 
+    def __init__(self, client_jar_path: Optional[str] = "dwclient-1.0.0.jar", 
                  base_backend_port: int = 11400):
         # CRITICAL FIX: Handle None client_jar_path
         if client_jar_path is None:
@@ -252,19 +252,25 @@ class AgentSpawner:
         }
     }
     
-    def __init__(self, client_jar_path: Optional[str] = "DWClientBot.jar"):
+    def __init__(self, client_jar_path: Optional[str] = "dwclient-1.0.0.jar"):
         # CRITICAL FIX: Pass None properly to AgentClientManager
         self.client_manager = AgentClientManager(client_jar_path)
         self.agents: dict[str, NPCAgent] = {}
         self.lock = threading.Lock()
         
+        # Initialize executable generator for dynamic spawning
+        from ai_core.agent import AgentExecutableGenerator
+        self.exe_generator = AgentExecutableGenerator(output_dir="build/agents/dist")
+        
         mode = "CHAT-ONLY" if not self.client_manager.minecraft_mode else "MINECRAFT"
         log.info(f"AgentSpawner initialized in {mode} mode")
+        log.info(f"Executable generator ready for dynamic agent creation")
     
     def spawn_npc(self, agent_id: str, server_addr: str = "127.0.0.1:25565",
                   persona_traits: Optional[dict[str, float]] = None,
                   memory_mb: int = 2048,
-                  gender: Optional[GenderType] = None) -> NPCAgent:
+                  gender: Optional[GenderType] = None,
+                  create_executable: bool = True) -> NPCAgent:
         """
         Spawn a regular NPC agent with custom personality.
         
@@ -274,6 +280,7 @@ class AgentSpawner:
             persona_traits: Custom personality traits (optional)
             memory_mb: JVM memory allocation (ignored in chat-only mode)
             gender: Gender assignment (optional, auto-assigned if None)
+            create_executable: Whether to generate PyInstaller executable
             
         Returns:
             NPCAgent instance
@@ -322,11 +329,24 @@ class AgentSpawner:
             
             self.agents[agent_id] = agent
             
+            # Generate executable for spawned agent (async, non-blocking)
+            if create_executable:
+                exe_path = self.exe_generator.generate_executable(
+                    agent_id=agent_id,
+                    agent_type='npc',
+                    gender=gender,
+                    personality_traits=persona_traits
+                )
+                if exe_path:
+                    agent.metadata['executable_path'] = str(exe_path)
+                    log.info(f"📦 NPC executable: {exe_path}")
+            
             log.info(f"Spawned NPC: {agent_id} (gender: {gender})")
             return agent
     
     def spawn_god(self, god_type: str, server_addr: str = "127.0.0.1:25565",
-                  custom_traits: Optional[dict[str, float]] = None) -> NPCAgent:
+                  custom_traits: Optional[dict[str, float]] = None,
+                  create_executable: bool = True) -> NPCAgent:
         """
         Spawn a god-tier entity with predefined characteristics.
         
@@ -334,6 +354,7 @@ class AgentSpawner:
             god_type: Type of god ('wither', 'dragon', 'oracle', etc.)
             server_addr: Minecraft server address (ignored in chat-only mode)
             custom_traits: Override default traits (optional)
+            create_executable: Whether to generate PyInstaller executable
             
         Returns:
             NPCAgent instance
@@ -377,6 +398,19 @@ class AgentSpawner:
             self._save_agent_brain(agent)
             
             self.agents[agent_id] = agent
+            
+            # Generate executable for god agent (async, non-blocking)
+            if create_executable:
+                exe_path = self.exe_generator.generate_executable(
+                    agent_id=agent_id,
+                    agent_type='god',
+                    god_type=god_type,
+                    gender=gender,
+                    personality_traits=persona_traits
+                )
+                if exe_path:
+                    agent.metadata['executable_path'] = str(exe_path)
+                    log.info(f"👑 God executable: {exe_path}")
             
             log.info(f"Spawned God: {god_type} ({agent_id})")
             log.info(f"  Description: {config['description']}")

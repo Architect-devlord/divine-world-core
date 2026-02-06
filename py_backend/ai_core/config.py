@@ -16,12 +16,12 @@ class Config:
     """Global configuration"""
     
     # ==================== PATHS ====================
-    # __file__ is: /home/devlord/divine-world-core/py_backend/config.py
-    # Go up: config.py -> py_backend -> divine-world-core
-    PY_BACKEND_DIR = Path(__file__).parent  # .../py_backend/
+    # __file__ is: /home/devlord/divine-world-core/py_backend/ai_core/config.py
+    # Go up: config.py -> ai_core -> py_backend -> divine-world-core
+    AI_CORE_DIR = Path(__file__).parent  # .../py_backend/ai_core/
+    PY_BACKEND_DIR = Path(__file__).parent.parent  # .../py_backend/
     BASE_DIR = PY_BACKEND_DIR.parent  # .../divine-world-core/
     HOME = BASE_DIR.parent  # .../divine-world-core/
-    AI_CORE_DIR = PY_BACKEND_DIR / "ai_core"  # .../py_backend/ai_core/
 
     SERVER_FOLDER = HOME / "DW_Server"
 

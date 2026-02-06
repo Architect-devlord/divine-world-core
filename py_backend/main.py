@@ -1,17 +1,27 @@
 # py_backend/main.py
 """
-Divine World Management Server
-====================================================
+Divine World Management Server - Agent Manager
+==============================================================
+Central management system for all Divine World agents.
+Coordinates spawning, breeding, genesis, and executable creation.
+
+Features:
+- Agent Spawning API (NPC, God agents)
+- Breeding System (genetic inheritance)
+- Genesis Spawning (command-based)
+- Dynamic Executable Generation (PyInstaller)
+- Minecraft Server Integration
+- Event Handler Communication
+
 Fixed to match actual Java mod API calls from:
-- DWEventHandler.java
-- BreedingEventHandler.java
-- PythonBackendClient.java
-- GodCommand.java
-- DivineCommands.java
+- DWEventHandler.java (agent spawn events)
+- BreedingEventHandler.java (breeding events)
+- PythonBackendClient.java (Java-Python communication)
+- GodCommand.java (god entity commands)
+- DivineCommands.java (custom commands)
 """
 
 import asyncio
-from curses import raw
 import sys
 import os
 import subprocess
@@ -35,7 +45,9 @@ import argparse
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_core import memory
-from config import Config
+from ai_core.config import Config
+from ai_core.agent_spawner import AgentSpawner, EnhancedAgentSpawner
+from ai_core.personality import assign_npc_gender, assign_god_gender
 from auto_packager import EnhancedAgentSpawner
 from auto_connect_system import integrate_with_backend
 
@@ -47,13 +59,12 @@ from minecraft_launcher import UltimMCLauncher, MultiAgentLauncher
 from ai_core.logger_setup import initialize_logging
 initialize_logging()
 
-log = logging.getLogger("management_server")
+log = logging.getLogger("agent_manager")
 
 # Initialize config
 Config.ensure_dirs()
 if not Config.validate():
-    logging.critical("Configuration validation failed!")
-    sys.exit(1)
+    log.warning("Configuration validation failed - some features may not work")
 
 class MinecraftServerIntegration:
     """Handles Minecraft server folder integration and agent registration."""
@@ -66,7 +77,7 @@ class MinecraftServerIntegration:
 
     def get_server_folder(self) -> Path: 
         try:
-            from config import Config
+            from ai_core.config import Config
             self.folder = Path(Config.SERVER_FOLDER)
             return self.folder
         except Exception:
@@ -252,10 +263,21 @@ class AgentProcessManager:
         log.info("AgentProcessManager initialized")
 
     def _generate_agent_uuid(self, agent_id: str, agent_type: str = 'npc') -> str:
-        """Generate unique UUID for agent (Minecraft offline mode compatible)"""
-        # Use MD5 namespace UUID for consistency
+        """Generate unique UUID for agent (Minecraft offline mode compatible).
+        Must match DWEventHandler.java UUID detection.
+        """
+        # Generate offline UUID from Minecraft standard namespace
         namespace = uuid.UUID("00000000-0000-0000-0000-000000000000")
-        name = f"OfflinePlayer:AI_{agent_type}_{agent_id}"
+        
+        # Generate username based on agent type
+        if agent_type.startswith('god_'):
+            god_type = agent_type.replace('god_', '').upper()
+            username = f"DWGOD_{god_type}_{agent_id}"
+        else:
+            username = f"DW_{agent_id}"
+        
+        # Create UUID from Minecraft offline standard
+        name = f"OfflinePlayer:{username}"
         return str(uuid.uuid3(namespace, name))
     
     def start_agent_process(self, agent_id: str, mode: str = 'minecraft',
@@ -271,6 +293,10 @@ class AgentProcessManager:
             return False
         
         try:
+            # Ensure brain directory exists for this agent
+            brain_dir = Config.BRAINS_DIR / agent_id
+            brain_dir.mkdir(parents=True, exist_ok=True)
+            log.info(f"✓ Brain directory created/verified: {brain_dir}")
             
             # Check if packaged exe exists
             exe_path = Path(Config.NPC_APPLICATIONS_DIR) / agent_id / f"DW_Agent_{agent_id}"
@@ -279,11 +305,21 @@ class AgentProcessManager:
                 log.info(f"Running packaged agent: {exe_path}")
             else:
 
-                # Generate unique UUID
+                # Generate username in DW_ or DWGOD_ format based on type
+                if agent_type.startswith('god_'):
+                    god_type = agent_type.replace('god_', '').upper()
+                    username = f"DWGOD_{god_type}_{agent_id}"
+                else:
+                    username = f"DW_{agent_id}"
+                
+                # Generate unique UUID from username
                 agent_uuid = self._generate_agent_uuid(agent_id, agent_type)
+                
+                # Log the mapping for debugging
+                log.info(f"🔗 Agent Registration: agent_id={agent_id}, username={username}, uuid={agent_uuid}")
             
-                # Register in server files
-                server_integration.register_agent(agent_id, agent_uuid)
+                # Register in server files with proper username
+                server_integration.register_agent(username, agent_uuid)
             
                 # For minecraft mode, setup UltimMC
                 if mode == 'minecraft':
@@ -308,13 +344,16 @@ class AgentProcessManager:
                 # Allocate unique backend port
                 backend_port = Config.BASE_BACKEND_PORT + (abs(hash(agent_id)) % 9000)
             
+                # Get the absolute brain save path
+                brain_save_path = str(Config.get_agent_brain_path(agent_id))
                 
                 cmd = [
                     sys.executable,
                     str(agent_script),
                     '--agent-id', agent_id,
                     '--mode', mode,
-                    '--log-level', 'INFO'
+                    '--log-level', 'INFO',
+                    '--brain-save-path', brain_save_path
                 ]
                 
                 if load_brain:
@@ -324,8 +363,6 @@ class AgentProcessManager:
                     cmd.extend(additional_args)
                 
             log.info(f"Starting agent backend: {' '.join(cmd)}")
-            
-            log.info(f"Starting agent process: {' '.join(cmd)}")
             
             process = subprocess.Popen(
                 cmd,
@@ -356,32 +393,43 @@ class AgentProcessManager:
             asyncio.create_task(self._auto_package_agent(agent_id, agent_type, custom_name))
             
             log.info(f"✅ Agent {agent_id} started (PID: {process.pid})")
+            log.info(f"   Brain will be saved to: {Config.get_agent_brain_path(agent_id)}")
+            
             if mode == 'minecraft':
                 # Wait for backend to initialize
+                log.info(f"⏳ Waiting for agent backend to initialize...")
                 time.sleep(3)
                 
                 log.info(f"🎮 Launching UltimMC client for {agent_id}...")
+                log.info(f"   Agent Type: {agent_type}")
+                log.info(f"   Custom Name: {custom_name or 'None'}")
                 
                 # Launch Minecraft client
-                minecraft_process = self.ultimmc_launcher.launch_agent(
-                    agent_id=agent_id,
-                    server_addr=server_addr,
-                    backend_url=f"http://127.0.0.1:{backend_port}",
-                    memory_mb=memory_mb,
-                    headless=False  # Set to True for headless mode
-                )
-                
-                if minecraft_process:
-                    self.minecraft_processes[agent_id] = minecraft_process
-                    self.agent_info[agent_id]['minecraft_pid'] = minecraft_process.pid
-                    self.agent_info[agent_id]['status'] = 'running'
+                try:
+                    minecraft_process = self.ultimmc_launcher.launch_agent(
+                        agent_id=agent_id,
+                        server_addr=server_addr,
+                        backend_url=f"http://127.0.0.1:{backend_port}",
+                        memory_mb=memory_mb,
+                        headless=False,  # Set to True for headless mode
+                        agent_type=agent_type  # Pass agent type for proper username
+                    )
                     
-                    log.info(f"✅ UltimMC launched for {agent_id} (PID: {minecraft_process.pid})")
-                    log.info(f"   Server: {server_addr}")
-                    log.info(f"   Backend: http://127.0.0.1:{backend_port}")
-                else:
-                    log.error(f"Failed to launch UltimMC for {agent_id}")
-                    # Keep backend running, user can connect manually
+                    if minecraft_process:
+                        self.minecraft_processes[agent_id] = minecraft_process
+                        self.agent_info[agent_id]['minecraft_pid'] = minecraft_process.pid
+                        self.agent_info[agent_id]['status'] = 'running'
+                        
+                        log.info(f"✅ UltimMC launched for {agent_id} (PID: {minecraft_process.pid})")
+                        log.info(f"   Server: {server_addr}")
+                        log.info(f"   Backend: http://127.0.0.1:{backend_port}")
+                    else:
+                        log.error(f"❌ Failed to launch UltimMC for {agent_id}")
+                        # Keep backend running, user can connect manually
+                        self.agent_info[agent_id]['status'] = 'backend_only'
+                except Exception as ult_err:
+                    log.error(f"❌ UltimMC launch error for {agent_id}: {ult_err}")
+                    log.error(f"   Agent backend is still running on port {backend_port}")
                     self.agent_info[agent_id]['status'] = 'backend_only'
             
             # Auto-package after brain creation
@@ -404,18 +452,40 @@ class AgentProcessManager:
         try:
             # Wait for agent to initialize and create brain file
             brain_path = Config.get_agent_brain_path(agent_id)
+            brain_dir = brain_path.parent
             
             log.info(f"[Auto-Package] Waiting for brain file: {brain_path}")
+            log.info(f"[Auto-Package] Brain directory: {brain_dir}")
+            log.info(f"[Auto-Package] Directory exists: {brain_dir.exists()}")
             
             # Wait up to 300 seconds for brain file to be created
             max_wait = 300
-            for i in range(max_wait):
+            check_interval = 2  # Check every 2 seconds instead of every 1
+            checks_remaining = max_wait // check_interval
+            
+            for check_num in range(checks_remaining):
                 if brain_path.exists():
-                    log.info(f"[Auto-Package] Brain file found after {i} seconds")
+                    file_size = brain_path.stat().st_size
+                    log.info(f"✅ [Auto-Package] Brain file found after {check_num * check_interval}s")
+                    log.info(f"   File size: {file_size} bytes")
                     break
-                await asyncio.sleep(1)
+                
+                # Log progress every 30 seconds
+                if check_num % 15 == 0 and check_num > 0:
+                    elapsed = check_num * check_interval
+                    log.info(f"⏳ [Auto-Package] Still waiting for brain file ({elapsed}s elapsed)...")
+                    # Check what files exist in the directory
+                    if brain_dir.exists():
+                        files = list(brain_dir.iterdir())
+                        log.debug(f"   Files in {brain_dir}: {[f.name for f in files]}")
+                
+                await asyncio.sleep(check_interval)
             else:
-                log.warning(f"[Auto-Package] Brain file not created after {max_wait}s: {agent_id}")
+                elapsed = max_wait
+                log.error(f"❌ [Auto-Package] Brain file NOT created after {elapsed}s: {agent_id}")
+                log.error(f"   Expected path: {brain_path}")
+                log.error(f"   Agent backend may not be running correctly")
+                log.error(f"   Check agent process logs for errors")
                 return
             
             # Give brain a moment to finish writing
@@ -559,164 +629,9 @@ agent_manager = AgentProcessManager()
 integrate_with_backend(app, agent_manager)
 
 # Updated spawn_god endpoint with proper agent_type
-@app.post("/api/gods/spawn")
-async def spawn_god(request: Request):
-    """
-    Spawn god-tier entity.
-    Called by: PythonBackendClient.spawnGodAgent
-    """
-    try:
-        data = await request.json()
-        
-        god_type = data.get('god_type')
-        spawner_name = data.get('spawner')
-        world_name = data.get('world')
-        spawn_pos = data.get('spawn_position', {})
-        
-        # God configurations
-        GOD_CONFIGS = {
-            'wither': {
-                'memory_mb': 3072,
-                'persona_traits': {
-                    'boldness': 0.9,
-                    'agreeableness': -0.8,
-                    'neuroticism': 0.7,
-                    'curiosity': 0.3
-                },
-                'description': 'Aggressive boss entity with destructive tendencies'
-            },
-            'warden': {
-                'memory_mb': 3072,
-                'persona_traits': {
-                    'boldness': 0.9,
-                    'curiosity': 0.3,
-                    'neuroticism': 0.1,
-                    'agreeableness': -0.7
-                },
-                'description': 'Blind but powerful deep dark guardian'
-            },
-            'dragon': {
-                'memory_mb': 4096,
-                'persona_traits': {
-                    'boldness': 1.0,
-                    'sociability': -0.9,
-                    'openness': 0.5,
-                    'neuroticism': -0.3
-                },
-                'description': 'Ender Dragon - ultimate boss entity'
-            },
-            'ender_dragon': {
-                'memory_mb': 4096,
-                'persona_traits': {
-                    'boldness': 1.0,
-                    'sociability': -0.9,
-                    'openness': 0.5,
-                    'neuroticism': -0.3
-                },
-                'description': 'Ender Dragon - ultimate boss entity'
-            },
-            'oracle': {
-                'memory_mb': 2048,
-                'persona_traits': {
-                    'curiosity': 0.9,
-                    'sociability': 0.7,
-                    'openness': 0.9,
-                    'conscientiousness': 0.6
-                },
-                'description': 'Wise entity that provides guidance - dual-gendered mystic'
-            },
-            'creaking': {
-                'memory_mb': 2048,
-                'persona_traits': {
-                    'curiosity': 0.8,
-                    'boldness': 0.4,
-                    'neuroticism': 0.6,
-                    'sociability': -0.2
-                },
-                'description': 'Mysterious pale garden entity - dual-gendered forest spirit'
-            },
-            'elder_guardian': {
-                'memory_mb': 2560,
-                'persona_traits': {
-                    'boldness': 0.85,
-                    'agreeableness': -0.6,
-                    'conscientiousness': 0.7,
-                    'sociability': -0.5
-                },
-                'description': 'Ancient ocean temple guardian - dual-gendered aquatic deity'
-            }
-        }
-        
-        if god_type not in GOD_CONFIGS:
-            log.warning(f"Unknown god type: {god_type}, using default config")
-            config = {
-                'memory_mb': 2048,
-                'persona_traits': {}
-            }
-        else:
-            config = GOD_CONFIGS[god_type]
-        
-        # Generate god agent ID (unique identifier)
-        timestamp = int(time.time() * 1000)
-        agent_id = f"{god_type}_{timestamp}"
-        
-        # Display name is "Unnamed" for gods
-        display_name = "Unnamed"
-        
-        log.info(f"👑 Spawning god: {god_type} (ID: {agent_id}, Name: {display_name}) - DUAL GENDERED")
-        
-        # Start god process with CORRECT agent_type for packaging
-        success = agent_manager.start_agent_process(
-            agent_id=agent_id,
-            mode='minecraft',
-            additional_args=[
-                '--gender', 'dual',  # Gods are dual-gendered
-                '--personality', json.dumps(config['persona_traits']),
-                '--memory-mb', str(config['memory_mb']),
-                '--spawn-x', str(spawn_pos.get('x', 0)),
-                '--spawn-y', str(spawn_pos.get('y', 64)),
-                '--spawn-z', str(spawn_pos.get('z', 0))
-            ],
-            agent_type=f'god_{god_type}',  # ✅ CRITICAL: Proper god type for packaging
-            custom_name=display_name  # Gods are "Unnamed"
-        )
-        
-        if success:
-            return {
-                "status": "success",
-                "god_type": god_type,
-                "agent_id": agent_id,
-                "display_name": display_name,
-                "gender": "dual",
-                "spawner": spawner_name,
-                "world": world_name,
-                "position": spawn_pos,
-                "personality": config['persona_traits'],
-                "memory_mb": config['memory_mb'],
-                "divine_attributes": {
-                    "gender_type": "dual (hermaphroditic - both male and female)",
-                    "can_breed": False,
-                    "can_breed_with_npcs": True,
-                    "offspring_type": "demigod (50% god traits + 50% NPC traits)",
-                    "divine_power": 100,
-                    "genesis_immune": True
-                },
-                "god_description": config.get('description', f"{god_type} god entity"),
-                "note": "God will be auto-packaged after brain creation",
-                "packaging": "Auto-packaging enabled - package will be created in ~5 seconds"
-            }
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to spawn god {god_type}"
-            )
-    
-    except Exception as e:
-        log.error(f"God spawn error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # NEW ENDPOINT: Spawn single agent (for /dw npc spawn command)
+
 @app.post("/api/agents/spawn_single")
 async def spawn_single_agent(request: Request):
     """
@@ -745,9 +660,11 @@ async def spawn_single_agent(request: Request):
         if not agent_name:
             raise HTTPException(status_code=400, detail="Missing agent_name")
         
-        # Generate unique agent ID
-        timestamp = int(time.time() * 1000)
-        agent_id = f"npc_{agent_name.lower().replace(' ', '_')}_{timestamp}"
+        # Generate simple NPC agent ID (npc1, npc2, etc.)
+        # Format ensures easy extraction by DWEventHandler
+        import glob
+        existing_npcs = len(glob.glob(str(Config.NPC_APPLICATIONS_DIR / "npc*")))
+        agent_id = f"npc{existing_npcs + 1}"
         
         log.info(f"🧑 Spawning single NPC: {agent_name} (ID: {agent_id})")
         
@@ -768,6 +685,16 @@ async def spawn_single_agent(request: Request):
                 'sociability': 0.7
             }
         
+        # Log spawn coordinates
+        spawn_x = spawn_pos.get('x', 0)
+        spawn_y = spawn_pos.get('y', 64)
+        spawn_z = spawn_pos.get('z', 0)
+        log.info(f"🧑 Spawning single NPC: {agent_name}")
+        log.info(f"   Spawn Position: ({spawn_x}, {spawn_y}, {spawn_z})")
+        log.info(f"   Gender: {gender}")
+        log.info(f"   World: {world_name}")
+        log.info(f"   Spawner: {spawner_name}")
+        
         # Start agent process
         success = agent_manager.start_agent_process(
             agent_id=agent_id,
@@ -775,9 +702,9 @@ async def spawn_single_agent(request: Request):
             additional_args=[
                 '--gender', gender,
                 '--personality', json.dumps(personality),
-                '--spawn-x', str(spawn_pos.get('x', 0)),
-                '--spawn-y', str(spawn_pos.get('y', 64)),
-                '--spawn-z', str(spawn_pos.get('z', 0))
+                '--spawn-x', str(spawn_x),
+                '--spawn-y', str(spawn_y),
+                '--spawn-z', str(spawn_z)
             ],
             agent_type='npc',  # Regular NPC
             custom_name=agent_name  # Use provided name
@@ -791,8 +718,14 @@ async def spawn_single_agent(request: Request):
                 "gender": gender,
                 "spawner": spawner_name,
                 "world": world_name,
-                "position": spawn_pos,
+                "position": {
+                    'x': spawn_x,
+                    'y': spawn_y,
+                    'z': spawn_z,
+                    'formatted': f"({spawn_x}, {spawn_y}, {spawn_z})"
+                },
                 "personality": personality,
+                "brain_path": str(Config.get_agent_brain_path(agent_id)),
                 "message": f"NPC {agent_name} spawned successfully",
                 "note": "Agent will be auto-packaged after brain creation"
             }
@@ -918,7 +851,8 @@ async def handle_player_event(request: Request):
         agent_type = data.get('agent_type')
         event = data.get('event')
         
-        log.info(f"[Player Event] {event}: {agent_id} (type: {agent_type}, UUID: {player_uuid})")
+        log.info(f"[Player Event] {event}: agent_id={agent_id}, type={agent_type}, uuid={player_uuid}")
+        log.debug(f"  Looking for running agent process: {agent_id}")
         
         if event == 'connected':
             # Agent connected to Minecraft server
@@ -934,11 +868,12 @@ async def handle_player_event(request: Request):
                     god_type = agent_type.replace('god_', '')
                     args.extend(['--gender', 'dual'])  # Gods are dual-gendered
                 
+                # Use the agent_type from the event (may be 'npc' or 'god_<type>')
                 agent_manager.start_agent_process(
                     agent_id=agent_id,
                     mode=mode,
                     additional_args=args,
-                    agent_type='npc'  # Player connections are NPCs
+                    agent_type=agent_type if agent_type else 'npc'
                 )
             
             return {
@@ -1133,15 +1068,19 @@ async def genesis_spawn(request: Request):
         
         for i, spawn_data in enumerate(spawn_positions):
             gender = spawn_data.get('gender', 'random')
-            pos = f"({spawn_data.get('x')}, {spawn_data.get('y')}, {spawn_data.get('z')})"
+            spawn_x = spawn_data.get('x', 0)
+            spawn_y = spawn_data.get('y', 64)
+            spawn_z = spawn_data.get('z', 0)
+            pos = f"({spawn_x}, {spawn_y}, {spawn_z})"
             
-            # Generate unique agent ID
-            timestamp = int(time.time() * 1000)
+            log.info(f"  Spawn position {i+1}: {pos} (Gender: {gender})")
             
-            # Generate agent ID based on gender
+            # Generate simple agent IDs for Genesis (adam, eve)
+            # This ensures easy extraction by DWEventHandler
+            
             if gender == 'male':
-                agent_id = f"adam_{timestamp}_{i}"
-                display_name = "Adam"  # Clean name without timestamp
+                agent_id = "adam"
+                display_name = "Adam"
                 # Male personality: higher boldness, curiosity
                 personality = {
                     'boldness': 0.8,
@@ -1153,8 +1092,8 @@ async def genesis_spawn(request: Request):
                     'sociability': 0.6
                 }
             elif gender == 'female':
-                agent_id = f"eve_{timestamp}_{i}"
-                display_name = "Eve"  # Clean name without timestamp
+                agent_id = "eve"
+                display_name = "Eve"
                 # Female personality: higher agreeableness, conscientiousness
                 personality = {
                     'boldness': 0.6,
@@ -1169,7 +1108,7 @@ async def genesis_spawn(request: Request):
                 # Random gender
                 import random
                 gender = random.choice(['male', 'female'])
-                agent_id = f"genesis_{gender}_{timestamp}_{i}"
+                agent_id = f"genesis_{i+1}"
                 display_name = "Unnamed"  # Default name
                 # Balanced personality
                 personality = {
@@ -1205,7 +1144,12 @@ async def genesis_spawn(request: Request):
                     'agent_id': agent_id,
                     'display_name': display_name,
                     'gender': gender,
-                    'position': pos,
+                    'position': {
+                        'x': spawn_x,
+                        'y': spawn_y,
+                        'z': spawn_z,
+                        'formatted': pos
+                    },
                     'role': 'Genesis ancestor',
                     'personality': personality,
                     'description': f"First {gender} - ancestor of all agents"
@@ -1213,6 +1157,7 @@ async def genesis_spawn(request: Request):
                 
                 log.info(f"✅ Genesis agent spawned: {display_name} (ID: {agent_id}, {gender}) at {pos}")
                 log.info(f"   Personality: {personality}")
+                log.info(f"   Brain path: {Config.get_agent_brain_path(agent_id)}")
         
         return {
             "status": "success",
@@ -1476,14 +1421,25 @@ async def spawn_god(request: Request):
         else:
             config = GOD_CONFIGS[god_type]
         
-        # Generate god agent ID (unique identifier)
-        timestamp = int(time.time() * 1000)
-        agent_id = f"{god_type}_{timestamp}"
+        # Generate simple god agent ID
+        # Format: god1, god2, god3, etc. for easy extraction by DWEventHandler
+        import glob
+        existing_gods = len(glob.glob(str(Config.NPC_APPLICATIONS_DIR / "god*")))
+        agent_id = f"god{existing_gods + 1}"
         
         # Display name is "Unnamed" for gods
         display_name = "Unnamed"
         
+        # Extract spawn coordinates
+        spawn_x = spawn_pos.get('x', 0)
+        spawn_y = spawn_pos.get('y', 64)
+        spawn_z = spawn_pos.get('z', 0)
+        
         log.info(f"👑 Spawning god: {god_type} (ID: {agent_id}, Name: {display_name}) - DUAL GENDERED")
+        log.info(f"   Spawn Position: ({spawn_x}, {spawn_y}, {spawn_z})")
+        log.info(f"   World: {world_name}")
+        log.info(f"   Spawner: {spawner_name}")
+        log.info(f"   Brain Directory: {Config.BRAINS_DIR / agent_id}")
         
         # Start god process
         success = agent_manager.start_agent_process(
@@ -1510,7 +1466,13 @@ async def spawn_god(request: Request):
                 "gender": "dual",  # Gods are dual-gendered (both male and female)
                 "spawner": spawner_name,
                 "world": world_name,
-                "position": spawn_pos,
+                "position": {
+                    'x': spawn_x,
+                    'y': spawn_y,
+                    'z': spawn_z,
+                    'formatted': f"({spawn_x}, {spawn_y}, {spawn_z})"
+                },
+                "brain_path": str(Config.get_agent_brain_path(agent_id)),
                 "personality": config['persona_traits'],
                 "memory_mb": config['memory_mb'],
                 "divine_attributes": {
@@ -2056,9 +2018,9 @@ async def root():
         
         "agent_naming_convention": {
             "genesis_agents": "Adam_<timestamp> or Eve_<timestamp>",
-            "god_agents": "GOD_<type>_<timestamp>",
+            "god_agents": "DWGOD_<type>_<timestamp>",
             "offspring_agents": "offspring_<parent1>_<parent2>_<timestamp>",
-            "regular_agents": "AI_<name> or custom naming"
+            "regular_agents": "DW_<name> or custom naming"
         }
     }
 

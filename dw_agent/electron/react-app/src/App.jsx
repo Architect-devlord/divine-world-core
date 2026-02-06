@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Globe, Plus, Trash2, Check, X, Box, Upload } from "lucide-react";
+import { Globe, Plus, Trash2, Check, X, Box, Upload, Brain } from "lucide-react";
 import MessageBubble from "./components/MessageBubble.jsx";
 import AgentStatus from "./components/AgentStatus.jsx";
 import FileDropZone from "./components/FileDropZone.jsx";
 import ControllerSafety from "./ControllerSafety.jsx";
 import WorldModelVisualizer from "./components/WorldModelVisualizer.jsx";
+import MentalMatrixModal from "./components/MentalMatrixModal.jsx";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 const WS_URL = "ws://127.0.0.1:8000/ws";
@@ -527,6 +528,7 @@ function App() {
   const [showWebManager, setShowWebManager] = useState(false);
   const [brainActive, setBrainActive] = useState(false);
   const [worldModelData, setWorldModelData] = useState(null);
+  const [showMentalMatrix, setShowMentalMatrix] = useState(false);
 
 
   const wsRef = useRef(null);
@@ -962,10 +964,20 @@ useEffect(() => {
         <div className={`navbar border-b ${
           theme === "dark" ? "border-slate-800" : "border-amber-100 bg-amber-50/50"
         }`}>
-          <h2 className="text-xl font-semibold px-4 flex items-center gap-2">
-            <Box className="w-5 h-5" />
-            Agent Thoughts
-          </h2>
+          <div className="flex-1 flex items-center gap-2">
+            <h2 className="text-xl font-semibold px-4 flex items-center gap-2">
+              <Box className="w-5 h-5" />
+              Agent Thoughts
+            </h2>
+          </div>
+          <button
+            onClick={() => setShowMentalMatrix(true)}
+            className="btn btn-sm btn-primary gap-2 mx-4"
+            title="Open Mental Matrix Simulator"
+          >
+            <Brain className="w-4 h-4" />
+            Mental Matrix
+          </button>
         </div>
         
         <div className="p-4 border-b border-slate-800 flex-1 flex flex-col min-h-0 max-h-[55%]">
@@ -996,6 +1008,13 @@ useEffect(() => {
       </div>
         </div>
       )}
+
+      {/* Mental Matrix Modal */}
+      <MentalMatrixModal
+        isOpen={showMentalMatrix}
+        onClose={() => setShowMentalMatrix(false)}
+        agentId={AGENT_ID}
+      />
     </>
   );
 }

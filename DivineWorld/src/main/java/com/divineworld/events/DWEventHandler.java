@@ -30,11 +30,11 @@ public class DWEventHandler {
         DWMod.LOGGER.info("Player joined: {} (UUID: {})", username, player.getUUID());
 
         // PATTERN 1: Username-based detection
-        // Format: AI_<agentId> or GOD_<type>_<agentId>
+        // Format: DW_<agentId> or DWGOD_<type>_<agentId>
 
-        if (username.startsWith("GOD_")) {
+        if (username.startsWith("DWGOD_")) {
             // God-tier agent
-            // Format: GOD_<type>_<agentId>
+            // Format: DWGOD_<type>_<agentId>
             String[] parts = username.substring(4).split("_", 2);
             if (parts.length == 2) {
                 String godType = parts[0].toLowerCase();
@@ -47,9 +47,9 @@ public class DWEventHandler {
                         username, godType, agentId);
             }
         }
-        else if (username.startsWith("AI_")) {
+        else if (username.startsWith("DW_")) {
             // Regular NPC agent
-            String agentId = username.substring(3); // Remove "AI_" prefix
+            String agentId = username.substring(3); // Remove "DW_" prefix
 
             DWNPCManager.registerAIPlayer(player, agentId);
             notifyBackendPlayerConnected(agentId, player.getUUID().toString(), "npc");

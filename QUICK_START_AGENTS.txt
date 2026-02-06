@@ -1,0 +1,98 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║         DIVINE WORLD - STANDALONE AGENTS QUICK START GUIDE              ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+✨ SETUP (One-time only)
+────────────────────────
+  1. pip install pyinstaller
+  2. cd /home/devlord/divine-world-core
+  3. ./verify_standalone_setup.sh
+
+🚀 BUILD AGENTS
+───────────────
+  # Single agent
+  ./build_agents.sh alice
+
+  # Multiple agents
+  ./build_agents.sh alice bob eve
+
+  # All known agents
+  ./build_agents.sh all
+
+  → Executables in: build/agents/dist/
+
+▶️  RUN AGENTS
+──────────────
+  # Basic (port 8001)
+  ./build/agents/dist/DW_Agent_Alice --agent-id alice
+
+  # Specific port
+  ./build/agents/dist/DW_Agent_Bob --agent-id bob --port 8002
+
+  # With brain file
+  ./build/agents/dist/DW_Agent_Eve --agent-id eve --brain brain.pcap
+
+  # Debug mode
+  ./build/agents/dist/DW_Agent_Adam --agent-id adam --mode debug
+
+📡 CONNECT TO AGENT
+────────────────────
+  WebSocket: ws://127.0.0.1:8001/ws
+  Health: http://127.0.0.1:8001/health
+
+📁 KEY FILES
+─────────────
+  • build_agents.sh              Build script
+  • ai_core/agent_standalone.py  Bootstrap entry point
+  • verify_standalone_setup.sh   Verification tool
+  • README_STANDALONE_AGENTS.md  Full documentation
+
+⚙️  COMMAND-LINE OPTIONS
+────────────────────────
+  --agent-id ID       Unique identifier (required)
+  --port PORT         Port number (default: 8001)
+  --brain PATH        Brain state file to load
+  --server ADDRESS    Backend server (default: 127.0.0.1:11400)
+  --mode MODE         autonomous|chat|debug (default: autonomous)
+  --log-level LEVEL   DEBUG|INFO|WARNING|ERROR (default: INFO)
+  --headless          WebSocket only, no UI
+
+🎯 DEPLOYMENT
+──────────────
+  Single Machine:
+    ./build/agents/dist/DW_Agent_Alice --agent-id alice --port 8001 &
+    ./build/agents/dist/DW_Agent_Bob --agent-id bob --port 8002 &
+
+  Multiple Machines:
+    1. Build: ./build_agents.sh all
+    2. Copy: scp build/agents/dist/* remote:/opt/agents/
+    3. Run: ssh remote "/opt/agents/DW_Agent_Alice --agent-id alice"
+
+✅ VERIFICATION
+────────────────
+  ./verify_standalone_setup.sh    Check setup status
+  python3 -c "from ai_core import *"  Test imports
+
+📊 SPECS
+─────────
+  Executable Size: 150-300 MB
+  Memory Usage: 500-800 MB per agent
+  Startup: 2-5 seconds
+  WebSocket Latency: <50ms
+
+🐛 TROUBLESHOOTING
+────────────────────
+  Port in use:          lsof -i :8001
+  Missing module:       pip install <module>
+  Build fails:          pip install pyinstaller --upgrade
+  Import errors:        ./verify_standalone_setup.sh
+
+📚 DOCUMENTATION
+─────────────────
+  README_STANDALONE_AGENTS.md     Comprehensive guide
+  STANDALONE_AGENT_SETUP_SUMMARY.md  Technical details
+  ai_core/agent_standalone.py     Source code
+
+─────────────────────────────────────────────────────────────────────────────
+Setup complete! Run ./verify_standalone_setup.sh to confirm everything works.
+─────────────────────────────────────────────────────────────────────────────

@@ -5523,3 +5523,1594 @@ TypeError: AgentProcessManager.start_agent_process() got an unexpected keyword a
 [2026-01-30 15:02:46,046][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
 [2026-01-30 15:02:46,046][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
 [2026-01-30 15:02:46,047][INFO] minecraft_launcher: Copying UltimMC from /home/devlord/divine-world-core/UltimMC to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam_1769785329844_0
+[2026-01-31 13:08:15,552][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-01-31 13:08:15,575][INFO] management_server: Server folder set to: /home/devlord/DW_Server
+[2026-01-31 13:08:15,576][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-01-31 13:08:15,576][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:16,080][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:08:16,080][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:16,080][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:08:16,080][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:16,080][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-01-31 13:08:16,080][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-01-31 13:08:16,081][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/DivineWorld.jar
+[2026-01-31 13:08:16,081][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:16,081][INFO] auto_packager: 📦 Packaging worker started
+[2026-01-31 13:08:16,082][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-01-31 13:08:16,082][INFO] auto_packager: Auto-packaging enabled
+[2026-01-31 13:08:16,082][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:16,082][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-01-31 13:08:16,082][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:16,450][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:08:16,450][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:16,450][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:08:16,450][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-01-31 13:08:16,450][INFO] management_server: AgentProcessManager initialized
+[2026-01-31 13:08:16,450][INFO] auto_connect: AutoConnect System initialized
+[2026-01-31 13:08:16,450][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-01-31 13:08:16,450][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-01-31 13:08:16,452][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-01-31 13:08:16,453][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-01-31 13:08:16,453][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:16,819][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:08:16,819][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:16,819][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:08:16,819][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:16,819][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-01-31 13:08:16,820][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-01-31 13:08:16,820][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/DivineWorld.jar
+[2026-01-31 13:08:16,820][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:16,820][INFO] auto_packager: 📦 Packaging worker started
+[2026-01-31 13:08:16,821][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-01-31 13:08:16,821][INFO] auto_packager: Auto-packaging enabled
+[2026-01-31 13:08:16,821][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:16,821][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-01-31 13:08:16,821][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:17,191][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:08:17,191][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:17,191][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:08:17,191][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-01-31 13:08:17,191][INFO] management_server: AgentProcessManager initialized
+[2026-01-31 13:08:17,191][INFO] auto_connect: AutoConnect System initialized
+[2026-01-31 13:08:17,191][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-01-31 13:08:17,191][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-01-31 13:08:17,193][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-01-31 13:08:17,323][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-01-31 13:08:17,324][INFO] management_server: Server folder set to: /home/devlord/DW_Server
+[2026-01-31 13:08:17,324][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-01-31 13:08:17,325][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:17,702][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:08:17,702][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:17,702][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:08:17,702][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:17,702][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-01-31 13:08:17,703][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-01-31 13:08:17,703][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/DivineWorld.jar
+[2026-01-31 13:08:17,703][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:17,703][INFO] auto_packager: 📦 Packaging worker started
+[2026-01-31 13:08:17,703][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-01-31 13:08:17,703][INFO] auto_packager: Auto-packaging enabled
+[2026-01-31 13:08:17,704][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:17,704][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-01-31 13:08:17,704][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:18,072][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:08:18,072][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:18,072][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:08:18,072][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-01-31 13:08:18,072][INFO] management_server: AgentProcessManager initialized
+[2026-01-31 13:08:18,072][INFO] auto_connect: AutoConnect System initialized
+[2026-01-31 13:08:18,072][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-01-31 13:08:18,072][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-01-31 13:08:18,074][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-01-31 13:08:18,074][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-01-31 13:08:18,074][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:18,446][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:08:18,446][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:18,446][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:08:18,447][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:18,447][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-01-31 13:08:18,447][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-01-31 13:08:18,447][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/DivineWorld.jar
+[2026-01-31 13:08:18,447][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:18,448][INFO] auto_packager: 📦 Packaging worker started
+[2026-01-31 13:08:18,448][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-01-31 13:08:18,448][INFO] auto_packager: Auto-packaging enabled
+[2026-01-31 13:08:18,448][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:18,448][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-01-31 13:08:18,448][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-01-31 13:08:18,819][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:08:18,819][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:08:18,820][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:08:18,820][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-01-31 13:08:18,820][INFO] management_server: AgentProcessManager initialized
+[2026-01-31 13:08:18,820][INFO] auto_connect: AutoConnect System initialized
+[2026-01-31 13:08:18,820][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-01-31 13:08:18,820][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-01-31 13:08:18,821][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-01-31 13:08:18,826][INFO] management_server: ======================================================================
+[2026-01-31 13:08:18,826][INFO] management_server:   🎮 Divine World Management Server
+[2026-01-31 13:08:18,826][INFO] management_server: ======================================================================
+[2026-01-31 13:08:18,826][INFO] management_server:   Version: 3.0.0 (Endpoints Corrected + Server Integration)
+[2026-01-31 13:08:18,826][INFO] management_server:   Role: Agent Management for Minecraft Mod
+[2026-01-31 13:08:18,826][INFO] management_server:   Mod: Divine World 1.20.1
+[2026-01-31 13:08:18,827][INFO] management_server:   Agent Runtime: Separate processes (agent.py)
+[2026-01-31 13:08:18,827][INFO] management_server: ======================================================================
+[2026-01-31 13:08:18,827][INFO] management_server:   CORRECTED ENDPOINTS:
+[2026-01-31 13:08:18,827][INFO] management_server:     ✅ /api/player_event (DWEventHandler)
+[2026-01-31 13:08:18,827][INFO] management_server:     ✅ /api/breeding/event (BreedingEventHandler)
+[2026-01-31 13:08:18,827][INFO] management_server:     ✅ /api/genesis/spawn (DivineCommands)
+[2026-01-31 13:08:18,827][INFO] management_server:     ✅ /api/divine_reset (DivineCommands)
+[2026-01-31 13:08:18,827][INFO] management_server:     ✅ /api/agents/clear_memories (DivineCommands)
+[2026-01-31 13:08:18,827][INFO] management_server:     ✅ /api/gods/spawn (DivineCommands)
+[2026-01-31 13:08:18,827][INFO] management_server:     ✅ /api/gods/ability (DivineCommands)
+[2026-01-31 13:08:18,827][INFO] management_server:     ✅ /api/gods/transform (DivineCommands)
+[2026-01-31 13:08:18,827][INFO] management_server: ======================================================================
+[2026-01-31 13:08:18,827][INFO] management_server:   SERVER INTEGRATION:
+[2026-01-31 13:08:18,827][INFO] management_server:     📝 Auto-registers agents in usercache.json
+[2026-01-31 13:08:18,827][INFO] management_server:     📝 Auto-registers agents in usernamecache.json
+[2026-01-31 13:08:18,827][INFO] management_server:     🔄 UUID generation (Minecraft offline mode)
+[2026-01-31 13:08:18,827][INFO] management_server:     🏷️  Naming: AI_<n> for NPCs, GOD_<type>_<n> for gods
+[2026-01-31 13:08:18,828][INFO] management_server: ======================================================================
+[2026-01-31 13:08:18,828][INFO] management_server: 
+[2026-01-31 13:08:18,828][INFO] management_server: ⚠️  IMPORTANT: Configure server folder for agent registration!
+[2026-01-31 13:08:18,828][INFO] management_server:    Use: POST /api/server/configure
+[2026-01-31 13:08:18,828][INFO] management_server:    Body: {"server_folder": "/path/to/minecraft/server"}
+[2026-01-31 13:08:18,828][INFO] management_server: 
+[2026-01-31 13:08:18,828][INFO] management_server: ✅ Server started and ready for Minecraft mod connections
+[2026-01-31 13:12:44,680][INFO] management_server: 🌟 GENESIS: Spawning 2 agents by Devlord
+[2026-01-31 13:12:44,717][INFO] management_server:    Server: 127.0.0.1:25565
+[2026-01-31 13:12:44,790][INFO] management_server: ✅ Registered adam_1769865164718_0 in usercache.json
+[2026-01-31 13:12:44,906][INFO] management_server: ✅ Registered adam_1769865164718_0 in usernamecache.json
+[2026-01-31 13:12:44,907][INFO] management_server: 🚀 Setting up UltimMC for adam_1769865164718_0...
+[2026-01-31 13:12:45,756][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:12:45,757][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:12:45,757][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:12:45,757][INFO] minecraft_launcher: Copying UltimMC from /home/devlord/divine-world-core/UltimMC to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam_1769865164718_0
+[2026-01-31 13:13:48,067][INFO] minecraft_launcher: ✅ Copied UltimMC installation to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam_1769865164718_0
+[2026-01-31 13:13:48,084][INFO] minecraft_launcher: Found UltimMC executable: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam_1769865164718_0/bin/UltimMC
+[2026-01-31 13:13:48,084][INFO] minecraft_launcher: Created launcher for adam_1769865164718_0 at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam_1769865164718_0
+[2026-01-31 13:13:48,084][INFO] minecraft_launcher: Creating local account: adam_1769865164718_0
+[2026-01-31 13:13:48,092][INFO] minecraft_launcher: Using custom UUID: 39084694-e116-3bdd-91c2-243a2d472a82
+[2026-01-31 13:13:48,092][INFO] minecraft_launcher: ✅ Account created/updated: adam_1769865164718_0
+[2026-01-31 13:13:48,092][INFO] minecraft_launcher:    UUID: 39084694-e116-3bdd-91c2-243a2d472a82
+[2026-01-31 13:13:48,093][INFO] minecraft_launcher:    Active: True
+[2026-01-31 13:13:48,093][INFO] minecraft_launcher: Creating Minecraft instance: agent_adam_1769865164718_0
+[2026-01-31 13:13:48,093][INFO] minecraft_launcher: ✅ Instance created: agent_adam_1769865164718_0
+[2026-01-31 13:13:48,127][INFO] minecraft_launcher: ✅ Installed DWClientBot mod: DWClientBot.jar
+[2026-01-31 13:13:48,127][INFO] minecraft_launcher: ✅ Agent adam_1769865164718_0 fully configured
+[2026-01-31 13:13:48,128][INFO] management_server: ✅ UltimMC setup complete for adam_1769865164718_0
+[2026-01-31 13:13:48,128][INFO] management_server: Starting agent backend: /home/devlord/divine-world-core/py_backend/dw_env/bin/python3 /home/devlord/divine-world-core/ai_core/agent.py --agent-id adam_1769865164718_0 --mode minecraft --log-level INFO --gender male --personality {"boldness": 0.8, "curiosity": 0.9, "agreeableness": 0.5, "conscientiousness": 0.6, "neuroticism": 0.3, "openness": 0.7, "sociability": 0.6} --spawn-x 0 --spawn-y 67 --spawn-z -272 --genesis-ancestor true
+[2026-01-31 13:13:48,128][INFO] management_server: Starting agent process: /home/devlord/divine-world-core/py_backend/dw_env/bin/python3 /home/devlord/divine-world-core/ai_core/agent.py --agent-id adam_1769865164718_0 --mode minecraft --log-level INFO --gender male --personality {"boldness": 0.8, "curiosity": 0.9, "agreeableness": 0.5, "conscientiousness": 0.6, "neuroticism": 0.3, "openness": 0.7, "sociability": 0.6} --spawn-x 0 --spawn-y 67 --spawn-z -272 --genesis-ancestor true
+[2026-01-31 13:13:48,131][INFO] management_server: ✅ Agent adam_1769865164718_0 started (PID: 13118)
+[2026-01-31 13:13:51,131][INFO] management_server: 🎮 Launching UltimMC client for adam_1769865164718_0...
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher: Launching UltimMC instance: agent_adam_1769865164718_0
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher:   Working directory: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam_1769865164718_0
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher:   Server: 127.0.0.1:25565
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher:   Profile: None
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher:   Offline: True (name: adam_1769865164718_0)
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher:   Agent ID: adam_1769865164718_0
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher:   Backend: http://127.0.0.1:18827
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher:   Memory: 2048MB
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher:   Headless: False
+[2026-01-31 13:13:51,132][INFO] minecraft_launcher:   Command: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam_1769865164718_0/bin/UltimMC -d . -l agent_adam_1769865164718_0 -s 127.0.0.1:25565 -o -n adam_1769865164718_0
+[2026-01-31 13:13:51,143][INFO] minecraft_launcher: ✅ UltimMC launched with PID: 13124
+[2026-01-31 13:13:51,143][INFO] management_server: ✅ UltimMC launched for adam_1769865164718_0 (PID: 13124)
+[2026-01-31 13:13:51,143][INFO] management_server:    Server: 127.0.0.1:25565
+[2026-01-31 13:13:51,143][INFO] management_server:    Backend: http://127.0.0.1:18827
+[2026-01-31 13:13:51,143][INFO] management_server: ✅ Genesis agent spawned: Adam (ID: adam_1769865164718_0, male) at (0, 67, -272)
+[2026-01-31 13:13:51,144][INFO] management_server:    Personality: {'boldness': 0.8, 'curiosity': 0.9, 'agreeableness': 0.5, 'conscientiousness': 0.6, 'neuroticism': 0.3, 'openness': 0.7, 'sociability': 0.6}
+[2026-01-31 13:13:51,201][INFO] management_server: ✅ Registered eve_1769865231144_1 in usercache.json
+[2026-01-31 13:13:51,237][INFO] management_server: ✅ Registered eve_1769865231144_1 in usernamecache.json
+[2026-01-31 13:13:51,237][INFO] management_server: 🚀 Setting up UltimMC for eve_1769865231144_1...
+[2026-01-31 13:13:52,736][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-01-31 13:13:52,736][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-01-31 13:13:52,736][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-01-31 13:13:52,737][INFO] minecraft_launcher: Copying UltimMC from /home/devlord/divine-world-core/UltimMC to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve_1769865231144_1
+[2026-01-31 13:15:38,293][INFO] minecraft_launcher: ✅ Copied UltimMC installation to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve_1769865231144_1
+[2026-01-31 13:15:38,318][INFO] minecraft_launcher: Found UltimMC executable: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve_1769865231144_1/bin/UltimMC
+[2026-01-31 13:15:38,318][INFO] minecraft_launcher: Created launcher for eve_1769865231144_1 at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve_1769865231144_1
+[2026-01-31 13:15:38,318][INFO] minecraft_launcher: Creating local account: eve_1769865231144_1
+[2026-01-31 13:15:38,377][INFO] minecraft_launcher: Using custom UUID: f90c54cf-4b4b-3e6e-a096-3d74bd1d03fb
+[2026-01-31 13:15:38,379][INFO] minecraft_launcher: ✅ Account created/updated: eve_1769865231144_1
+[2026-01-31 13:15:38,379][INFO] minecraft_launcher:    UUID: f90c54cf-4b4b-3e6e-a096-3d74bd1d03fb
+[2026-01-31 13:15:38,379][INFO] minecraft_launcher:    Active: True
+[2026-01-31 13:15:38,380][INFO] minecraft_launcher: Creating Minecraft instance: agent_eve_1769865231144_1
+[2026-01-31 13:15:38,381][INFO] minecraft_launcher: ✅ Instance created: agent_eve_1769865231144_1
+[2026-01-31 13:15:38,436][INFO] minecraft_launcher: ✅ Installed DWClientBot mod: DWClientBot.jar
+[2026-01-31 13:15:38,436][INFO] minecraft_launcher: ✅ Agent eve_1769865231144_1 fully configured
+[2026-01-31 13:15:38,436][INFO] management_server: ✅ UltimMC setup complete for eve_1769865231144_1
+[2026-01-31 13:15:38,437][INFO] management_server: Starting agent backend: /home/devlord/divine-world-core/py_backend/dw_env/bin/python3 /home/devlord/divine-world-core/ai_core/agent.py --agent-id eve_1769865231144_1 --mode minecraft --log-level INFO --gender female --personality {"boldness": 0.6, "curiosity": 0.7, "agreeableness": 0.9, "conscientiousness": 0.8, "neuroticism": 0.4, "openness": 0.7, "sociability": 0.8} --spawn-x 1 --spawn-y 67 --spawn-z -272 --genesis-ancestor true
+[2026-01-31 13:15:38,437][INFO] management_server: Starting agent process: /home/devlord/divine-world-core/py_backend/dw_env/bin/python3 /home/devlord/divine-world-core/ai_core/agent.py --agent-id eve_1769865231144_1 --mode minecraft --log-level INFO --gender female --personality {"boldness": 0.6, "curiosity": 0.7, "agreeableness": 0.9, "conscientiousness": 0.8, "neuroticism": 0.4, "openness": 0.7, "sociability": 0.8} --spawn-x 1 --spawn-y 67 --spawn-z -272 --genesis-ancestor true
+[2026-01-31 13:15:38,447][INFO] management_server: ✅ Agent eve_1769865231144_1 started (PID: 13484)
+[2026-01-31 13:15:41,447][INFO] management_server: 🎮 Launching UltimMC client for eve_1769865231144_1...
+[2026-01-31 13:15:41,448][INFO] minecraft_launcher: Launching UltimMC instance: agent_eve_1769865231144_1
+[2026-01-31 13:15:41,449][INFO] minecraft_launcher:   Working directory: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve_1769865231144_1
+[2026-01-31 13:15:41,449][INFO] minecraft_launcher:   Server: 127.0.0.1:25565
+[2026-01-31 13:15:41,449][INFO] minecraft_launcher:   Profile: None
+[2026-01-31 13:15:41,449][INFO] minecraft_launcher:   Offline: True (name: eve_1769865231144_1)
+[2026-01-31 13:15:41,450][INFO] minecraft_launcher:   Agent ID: eve_1769865231144_1
+[2026-01-31 13:15:41,450][INFO] minecraft_launcher:   Backend: http://127.0.0.1:15560
+[2026-01-31 13:15:41,450][INFO] minecraft_launcher:   Memory: 2048MB
+[2026-01-31 13:15:41,450][INFO] minecraft_launcher:   Headless: False
+[2026-01-31 13:15:41,450][INFO] minecraft_launcher:   Command: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve_1769865231144_1/bin/UltimMC -d . -l agent_eve_1769865231144_1 -s 127.0.0.1:25565 -o -n eve_1769865231144_1
+[2026-01-31 13:15:41,898][INFO] minecraft_launcher: ✅ UltimMC launched with PID: 13491
+[2026-01-31 13:15:41,899][INFO] management_server: ✅ UltimMC launched for eve_1769865231144_1 (PID: 13491)
+[2026-01-31 13:15:41,899][INFO] management_server:    Server: 127.0.0.1:25565
+[2026-01-31 13:15:41,900][INFO] management_server:    Backend: http://127.0.0.1:15560
+[2026-01-31 13:15:41,901][INFO] management_server: ✅ Genesis agent spawned: Eve (ID: eve_1769865231144_1, female) at (1, 67, -272)
+[2026-01-31 13:15:41,902][INFO] management_server:    Personality: {'boldness': 0.6, 'curiosity': 0.7, 'agreeableness': 0.9, 'conscientiousness': 0.8, 'neuroticism': 0.4, 'openness': 0.7, 'sociability': 0.8}
+[2026-01-31 13:15:41,910][WARNING] management_server: Agent adam_1769865164718_0 exited with code: 2
+[2026-01-31 13:15:41,975][INFO] management_server: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/adam_1769865164718_0/brain.pcap
+[2026-01-31 13:15:41,976][INFO] management_server: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/adam_1769865164718_0/brain.pcap
+[2026-01-31 13:15:41,976][WARNING] management_server: Agent eve_1769865231144_1 exited with code: 2
+[2026-01-31 13:15:41,976][INFO] management_server: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/eve_1769865231144_1/brain.pcap
+[2026-01-31 13:15:41,976][INFO] management_server: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/eve_1769865231144_1/brain.pcap
+[2026-01-31 13:20:42,349][WARNING] management_server: [Auto-Package] Brain file not created after 300s: adam_1769865164718_0
+[2026-01-31 13:20:42,350][WARNING] management_server: [Auto-Package] Brain file not created after 300s: adam_1769865164718_0
+[2026-01-31 13:20:42,350][WARNING] management_server: [Auto-Package] Brain file not created after 300s: eve_1769865231144_1
+[2026-01-31 13:20:42,350][WARNING] management_server: [Auto-Package] Brain file not created after 300s: eve_1769865231144_1
+[2026-01-31 13:25:47,651][INFO] management_server: 🛑 Shutting down management server...
+[2026-01-31 13:25:47,651][INFO] management_server: Cleaning up agent processes...
+[2026-01-31 13:25:47,652][INFO] minecraft_launcher: ✅ Stopped adam_1769865164718_0
+[2026-01-31 13:25:47,652][INFO] minecraft_launcher: ✅ Stopped eve_1769865231144_1
+[2026-01-31 13:25:47,652][INFO] agent_spawner: Cleaning up all agents...
+[2026-01-31 13:25:47,653][INFO] agent_spawner: Cleanup complete
+[2026-01-31 13:25:47,653][INFO] auto_packager: Shutting down auto-packaging system...
+[2026-01-31 13:25:47,666][INFO] auto_packager: Packaging worker stopped
+[2026-01-31 13:25:47,666][INFO] auto_packager: Auto-packaging system stopped
+[2026-01-31 13:25:47,666][INFO] management_server: Agent cleanup complete
+[2026-01-31 13:25:47,666][INFO] management_server: ✅ Shutdown complete
+[2026-02-01 14:42:11,328][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 14:42:11,352][ERROR] config: Config validation failed: ai_core directory not found: /home/devlord/divine-world-core/py_backend/ai_core/ai_core
+[2026-02-01 14:42:11,352][CRITICAL] root: Configuration validation failed!
+[2026-02-01 14:43:03,655][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 14:43:03,656][ERROR] config: Config validation failed: ai_core directory not found: /home/devlord/divine-world-core/py_backend/ai_core/ai_core
+[2026-02-01 14:43:03,656][CRITICAL] root: Configuration validation failed!
+[2026-02-01 14:43:25,610][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 14:43:25,611][ERROR] config: Config validation failed: ai_core directory not found: /home/devlord/divine-world-core/py_backend/ai_core/ai_core
+[2026-02-01 14:43:25,611][WARNING] agent_manager: Configuration validation failed - some features may not work
+[2026-02-01 14:43:25,611][INFO] agent_manager: Server folder set to: /home/devlord/divine-world-core/DW_Server
+[2026-02-01 14:43:25,634][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/py_backend/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 14:43:25,645][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:43:32,825][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:43:32,825][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/build/agents/data/mods/DWClientBot.jar
+[2026-02-01 14:43:32,825][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:43:32,825][INFO] agent_spawner: AgentClientManager initialized in CHAT-ONLY mode (no Minecraft)
+[2026-02-01 14:43:32,825][INFO] agent_spawner: AgentSpawner initialized in CHAT-ONLY mode
+[2026-02-01 14:43:32,825][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:43:32,826][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 14:43:32,826][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 14:43:32,826][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:43:32,827][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 14:43:32,827][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/py_backend/npc_applications)
+[2026-02-01 14:43:32,827][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 14:43:32,827][INFO] agent_spawner: AgentClientManager initialized in CHAT-ONLY mode (no Minecraft)
+[2026-02-01 14:43:32,828][INFO] agent_spawner: AgentSpawner initialized in CHAT-ONLY mode
+[2026-02-01 14:43:32,828][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:43:32,828][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:43:33,654][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:43:33,654][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/build/agents/data/mods/DWClientBot.jar
+[2026-02-01 14:43:33,654][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:43:33,655][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 14:43:33,655][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 14:43:33,655][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 14:43:33,655][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 14:43:33,655][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 14:43:33,657][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 14:43:33,657][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/py_backend/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 14:43:33,658][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:43:34,635][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:43:34,635][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/build/agents/data/mods/DWClientBot.jar
+[2026-02-01 14:43:34,635][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:43:34,635][INFO] agent_spawner: AgentClientManager initialized in CHAT-ONLY mode (no Minecraft)
+[2026-02-01 14:43:34,636][INFO] agent_spawner: AgentSpawner initialized in CHAT-ONLY mode
+[2026-02-01 14:43:34,636][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:43:34,636][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 14:43:34,636][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 14:43:34,637][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:43:34,637][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 14:43:34,637][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/py_backend/npc_applications)
+[2026-02-01 14:43:34,637][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 14:43:34,638][INFO] agent_spawner: AgentClientManager initialized in CHAT-ONLY mode (no Minecraft)
+[2026-02-01 14:43:34,638][INFO] agent_spawner: AgentSpawner initialized in CHAT-ONLY mode
+[2026-02-01 14:43:34,638][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:43:34,638][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:43:35,416][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:43:35,416][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/build/agents/data/mods/DWClientBot.jar
+[2026-02-01 14:43:35,416][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:43:35,416][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 14:43:35,417][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 14:43:35,417][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 14:43:35,417][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 14:43:35,417][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 14:43:35,418][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 14:43:35,577][ERROR] config: Config validation failed: ai_core directory not found: /home/devlord/divine-world-core/py_backend/ai_core/ai_core
+[2026-02-01 14:46:09,052][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 14:46:09,052][ERROR] config: Config validation failed: ai_core directory not found: /home/devlord/divine-world-core/py_backend/ai_core/ai_core
+[2026-02-01 14:46:09,053][WARNING] agent_manager: Configuration validation failed - some features may not work
+[2026-02-01 14:46:09,053][INFO] agent_manager: Server folder set to: /home/devlord/divine-world-core/DW_Server
+[2026-02-01 14:46:09,053][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/py_backend/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 14:46:09,054][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:46:09,801][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:46:09,801][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/build/agents/data/mods/DWClientBot.jar
+[2026-02-01 14:46:09,801][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:46:09,801][INFO] agent_spawner: AgentClientManager initialized in CHAT-ONLY mode (no Minecraft)
+[2026-02-01 14:46:09,801][INFO] agent_spawner: AgentSpawner initialized in CHAT-ONLY mode
+[2026-02-01 14:46:09,802][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:46:09,802][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 14:46:09,802][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 14:46:09,803][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:46:09,803][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 14:46:09,803][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/py_backend/npc_applications)
+[2026-02-01 14:46:09,803][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 14:46:09,803][INFO] agent_spawner: AgentClientManager initialized in CHAT-ONLY mode (no Minecraft)
+[2026-02-01 14:46:09,804][INFO] agent_spawner: AgentSpawner initialized in CHAT-ONLY mode
+[2026-02-01 14:46:09,804][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:46:09,804][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:46:10,586][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:46:10,586][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/build/agents/data/mods/DWClientBot.jar
+[2026-02-01 14:46:10,586][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:46:10,587][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 14:46:10,587][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 14:46:10,587][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 14:46:10,587][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 14:46:10,587][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 14:46:10,589][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 14:46:10,589][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/py_backend/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 14:46:10,590][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:46:11,421][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:46:11,422][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/build/agents/data/mods/DWClientBot.jar
+[2026-02-01 14:46:11,422][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:46:11,423][INFO] agent_spawner: AgentClientManager initialized in CHAT-ONLY mode (no Minecraft)
+[2026-02-01 14:46:11,423][INFO] agent_spawner: AgentSpawner initialized in CHAT-ONLY mode
+[2026-02-01 14:46:11,423][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:46:11,423][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 14:46:11,424][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 14:46:11,424][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:46:11,424][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 14:46:11,424][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/py_backend/npc_applications)
+[2026-02-01 14:46:11,424][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 14:46:11,425][INFO] agent_spawner: AgentClientManager initialized in CHAT-ONLY mode (no Minecraft)
+[2026-02-01 14:46:11,425][INFO] agent_spawner: AgentSpawner initialized in CHAT-ONLY mode
+[2026-02-01 14:46:11,425][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:46:11,425][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:46:12,181][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:46:12,181][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/build/agents/data/mods/DWClientBot.jar
+[2026-02-01 14:46:12,181][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:46:12,181][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 14:46:12,181][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 14:46:12,181][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 14:46:12,181][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 14:46:12,182][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 14:46:12,183][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 14:50:20,845][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 14:50:20,846][INFO] agent_manager: Server folder set to: /home/devlord/divine-world-core/DW_Server
+[2026-02-01 14:50:20,847][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 14:50:20,847][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:21,371][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:50:21,371][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:21,371][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:50:21,372][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:21,372][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 14:50:21,372][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:50:21,372][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 14:50:21,373][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 14:50:21,373][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:21,373][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 14:50:21,374][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 14:50:21,374][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 14:50:21,374][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:21,374][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 14:50:21,374][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:50:21,375][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:21,873][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:50:21,873][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:21,873][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:50:21,873][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 14:50:21,873][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 14:50:21,873][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 14:50:21,874][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 14:50:21,874][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 14:50:21,875][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 14:50:21,876][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 14:50:21,876][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:22,322][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:50:22,323][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:22,323][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:50:22,324][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:22,324][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 14:50:22,324][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:50:22,324][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 14:50:22,325][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 14:50:22,325][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:22,325][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 14:50:22,326][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 14:50:22,326][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 14:50:22,326][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:22,326][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 14:50:22,326][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:50:22,327][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:22,794][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:50:22,794][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:22,794][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:50:22,795][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 14:50:22,795][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 14:50:22,795][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 14:50:22,795][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 14:50:22,795][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 14:50:22,796][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 14:50:48,843][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 14:50:48,843][INFO] agent_manager: Server folder set to: /home/devlord/divine-world-core/DW_Server
+[2026-02-01 14:50:48,843][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 14:50:48,844][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:49,300][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:50:49,301][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:49,301][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:50:49,301][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:49,301][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 14:50:49,301][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:50:49,302][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 14:50:49,302][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 14:50:49,302][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:49,303][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 14:50:49,303][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 14:50:49,303][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 14:50:49,304][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:49,304][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 14:50:49,304][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:50:49,304][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:49,760][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:50:49,760][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:49,760][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:50:49,760][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 14:50:49,760][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 14:50:49,761][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 14:50:49,761][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 14:50:49,761][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 14:50:49,763][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 14:50:49,763][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 14:50:49,763][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:50,231][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:50:50,231][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:50,231][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:50:50,231][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:50,231][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 14:50:50,231][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:50:50,232][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 14:50:50,232][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 14:50:50,232][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:50,232][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 14:50:50,233][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 14:50:50,233][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 14:50:50,233][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:50,233][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 14:50:50,233][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 14:50:50,234][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 14:50:50,666][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 14:50:50,666][INFO] minecraft_launcher: ✅ DWClientBot found at: /home/devlord/divine-world-core/DWClientBot/build/libs/DWClientBot.jar
+[2026-02-01 14:50:50,667][WARNING] minecraft_launcher: ⚠️ DivineWorld.jar not found
+[2026-02-01 14:50:50,667][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 14:50:50,667][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 14:50:50,667][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 14:50:50,667][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 14:50:50,667][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 14:50:50,669][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 15:41:01,740][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 15:41:01,767][INFO] agent_manager: Server folder set to: /home/devlord/divine-world-core/DW_Server
+[2026-02-01 15:41:01,783][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 15:41:01,809][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:01,809][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 15:41:01,809][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,809][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:01,810][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,835][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 15:41:01,835][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 15:41:01,849][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 15:41:01,850][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:01,850][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:01,851][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 15:41:01,851][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 15:41:01,851][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 15:41:01,851][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,851][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 15:41:01,852][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 15:41:01,852][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:01,852][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 15:41:01,852][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,853][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:01,853][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 15:41:01,853][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 15:41:01,853][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 15:41:01,853][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 15:41:01,853][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 15:41:01,856][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 15:41:01,857][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 15:41:01,857][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:01,857][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 15:41:01,858][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,858][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:01,858][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,858][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 15:41:01,858][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 15:41:01,858][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 15:41:01,859][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:01,859][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:01,860][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 15:41:01,860][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 15:41:01,860][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 15:41:01,860][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,860][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 15:41:01,861][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 15:41:01,861][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:01,861][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 15:41:01,861][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,861][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:01,862][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 15:41:01,862][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 15:41:01,862][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 15:41:01,862][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 15:41:01,862][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 15:41:01,864][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 15:41:01,996][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 15:41:01,996][INFO] agent_manager: Server folder set to: /home/devlord/divine-world-core/DW_Server
+[2026-02-01 15:41:01,996][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 15:41:01,997][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:01,997][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 15:41:01,997][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,997][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:01,997][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,997][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 15:41:01,997][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 15:41:01,997][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 15:41:01,998][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:01,998][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:01,998][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 15:41:01,998][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 15:41:01,998][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 15:41:01,998][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,999][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 15:41:01,999][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 15:41:01,999][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:01,999][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 15:41:01,999][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:01,999][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:01,999][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 15:41:01,999][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 15:41:02,000][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 15:41:02,000][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 15:41:02,000][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 15:41:02,002][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 15:41:02,003][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 15:41:02,003][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:02,003][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 15:41:02,003][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:02,004][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:02,004][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:02,004][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 15:41:02,004][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 15:41:02,004][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 15:41:02,005][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:02,005][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:02,005][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 15:41:02,005][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 15:41:02,006][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 15:41:02,006][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:02,006][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 15:41:02,006][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 15:41:02,006][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 15:41:02,006][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 15:41:02,006][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 15:41:02,007][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 15:41:02,007][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 15:41:02,007][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 15:41:02,007][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 15:41:02,007][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 15:41:02,007][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 15:41:02,008][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 15:41:02,016][INFO] agent_manager: ======================================================================
+[2026-02-01 15:41:02,016][INFO] agent_manager:   🎮 Divine World Management Server
+[2026-02-01 15:41:02,016][INFO] agent_manager: ======================================================================
+[2026-02-01 15:41:02,016][INFO] agent_manager:   Version: 3.0.0 (Endpoints Corrected + Server Integration)
+[2026-02-01 15:41:02,016][INFO] agent_manager:   Role: Agent Management for Minecraft Mod
+[2026-02-01 15:41:02,016][INFO] agent_manager:   Mod: Divine World 1.20.1
+[2026-02-01 15:41:02,016][INFO] agent_manager:   Agent Runtime: Separate processes (agent.py)
+[2026-02-01 15:41:02,016][INFO] agent_manager: ======================================================================
+[2026-02-01 15:41:02,016][INFO] agent_manager:   CORRECTED ENDPOINTS:
+[2026-02-01 15:41:02,016][INFO] agent_manager:     ✅ /api/player_event (DWEventHandler)
+[2026-02-01 15:41:02,016][INFO] agent_manager:     ✅ /api/breeding/event (BreedingEventHandler)
+[2026-02-01 15:41:02,016][INFO] agent_manager:     ✅ /api/genesis/spawn (DivineCommands)
+[2026-02-01 15:41:02,017][INFO] agent_manager:     ✅ /api/divine_reset (DivineCommands)
+[2026-02-01 15:41:02,017][INFO] agent_manager:     ✅ /api/agents/clear_memories (DivineCommands)
+[2026-02-01 15:41:02,017][INFO] agent_manager:     ✅ /api/gods/spawn (DivineCommands)
+[2026-02-01 15:41:02,017][INFO] agent_manager:     ✅ /api/gods/ability (DivineCommands)
+[2026-02-01 15:41:02,017][INFO] agent_manager:     ✅ /api/gods/transform (DivineCommands)
+[2026-02-01 15:41:02,017][INFO] agent_manager: ======================================================================
+[2026-02-01 15:41:02,017][INFO] agent_manager:   SERVER INTEGRATION:
+[2026-02-01 15:41:02,017][INFO] agent_manager:     📝 Auto-registers agents in usercache.json
+[2026-02-01 15:41:02,017][INFO] agent_manager:     📝 Auto-registers agents in usernamecache.json
+[2026-02-01 15:41:02,017][INFO] agent_manager:     🔄 UUID generation (Minecraft offline mode)
+[2026-02-01 15:41:02,017][INFO] agent_manager:     🏷️  Naming: AI_<n> for NPCs, GOD_<type>_<n> for gods
+[2026-02-01 15:41:02,017][INFO] agent_manager: ======================================================================
+[2026-02-01 15:41:02,017][INFO] agent_manager: 
+[2026-02-01 15:41:02,017][INFO] agent_manager: ⚠️  IMPORTANT: Configure server folder for agent registration!
+[2026-02-01 15:41:02,017][INFO] agent_manager:    Use: POST /api/server/configure
+[2026-02-01 15:41:02,018][INFO] agent_manager:    Body: {"server_folder": "/path/to/minecraft/server"}
+[2026-02-01 15:41:02,018][INFO] agent_manager: 
+[2026-02-01 15:41:02,018][INFO] agent_manager: ✅ Server started and ready for Minecraft mod connections
+[2026-02-01 15:41:25,381][INFO] agent_manager: 🛑 Shutting down management server...
+[2026-02-01 15:41:25,381][INFO] agent_manager: Cleaning up agent processes...
+[2026-02-01 15:41:25,381][INFO] agent_spawner: Cleaning up all agents...
+[2026-02-01 15:41:25,381][INFO] agent_spawner: Cleanup complete
+[2026-02-01 15:41:25,381][INFO] auto_packager: Shutting down auto-packaging system...
+[2026-02-01 15:41:26,009][INFO] auto_packager: Packaging worker stopped
+[2026-02-01 15:41:26,009][INFO] auto_packager: Auto-packaging system stopped
+[2026-02-01 15:41:26,009][INFO] agent_manager: Agent cleanup complete
+[2026-02-01 15:41:26,009][INFO] agent_manager: ✅ Shutdown complete
+[2026-02-01 16:01:38,345][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 16:01:38,362][INFO] agent_manager: Server folder set to: /home/devlord/divine-world-core/DW_Server
+[2026-02-01 16:01:38,377][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:01:38,402][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,402][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:01:38,403][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,403][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,403][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,428][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:01:38,428][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:01:38,442][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:01:38,443][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,443][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,444][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:01:38,444][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:01:38,444][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:01:38,444][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,444][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:01:38,444][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:01:38,444][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,444][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:01:38,445][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,445][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,445][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:01:38,445][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:01:38,445][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:01:38,445][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:01:38,445][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:01:38,447][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:01:38,448][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:01:38,448][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,448][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:01:38,448][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,448][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,449][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,449][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:01:38,449][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:01:38,449][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:01:38,449][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,449][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,450][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:01:38,450][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:01:38,450][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:01:38,450][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,450][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:01:38,450][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:01:38,451][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,451][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:01:38,451][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,451][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,451][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:01:38,452][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:01:38,452][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:01:38,452][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:01:38,452][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:01:38,454][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:01:38,601][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 16:01:38,602][INFO] agent_manager: Server folder set to: /home/devlord/divine-world-core/DW_Server
+[2026-02-01 16:01:38,602][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:01:38,603][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,603][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:01:38,603][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,604][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,604][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,604][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:01:38,604][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:01:38,605][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:01:38,605][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,606][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,606][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:01:38,606][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:01:38,607][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:01:38,607][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,607][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:01:38,607][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:01:38,607][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,608][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:01:38,608][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,608][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,608][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:01:38,608][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:01:38,608][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:01:38,608][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:01:38,608][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:01:38,609][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:01:38,610][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:01:38,610][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,610][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:01:38,610][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,611][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,611][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,611][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:01:38,611][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:01:38,611][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:01:38,611][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,612][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,612][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:01:38,612][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:01:38,612][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:01:38,612][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,612][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:01:38,612][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:01:38,613][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:01:38,613][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:01:38,613][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:01:38,613][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:01:38,613][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:01:38,613][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:01:38,613][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:01:38,613][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:01:38,613][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:01:38,615][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:01:38,621][INFO] agent_manager: ======================================================================
+[2026-02-01 16:01:38,621][INFO] agent_manager:   🎮 Divine World Management Server
+[2026-02-01 16:01:38,621][INFO] agent_manager: ======================================================================
+[2026-02-01 16:01:38,622][INFO] agent_manager:   Version: 3.0.0 (Endpoints Corrected + Server Integration)
+[2026-02-01 16:01:38,622][INFO] agent_manager:   Role: Agent Management for Minecraft Mod
+[2026-02-01 16:01:38,622][INFO] agent_manager:   Mod: Divine World 1.20.1
+[2026-02-01 16:01:38,622][INFO] agent_manager:   Agent Runtime: Separate processes (agent.py)
+[2026-02-01 16:01:38,622][INFO] agent_manager: ======================================================================
+[2026-02-01 16:01:38,622][INFO] agent_manager:   CORRECTED ENDPOINTS:
+[2026-02-01 16:01:38,622][INFO] agent_manager:     ✅ /api/player_event (DWEventHandler)
+[2026-02-01 16:01:38,622][INFO] agent_manager:     ✅ /api/breeding/event (BreedingEventHandler)
+[2026-02-01 16:01:38,622][INFO] agent_manager:     ✅ /api/genesis/spawn (DivineCommands)
+[2026-02-01 16:01:38,622][INFO] agent_manager:     ✅ /api/divine_reset (DivineCommands)
+[2026-02-01 16:01:38,622][INFO] agent_manager:     ✅ /api/agents/clear_memories (DivineCommands)
+[2026-02-01 16:01:38,622][INFO] agent_manager:     ✅ /api/gods/spawn (DivineCommands)
+[2026-02-01 16:01:38,622][INFO] agent_manager:     ✅ /api/gods/ability (DivineCommands)
+[2026-02-01 16:01:38,622][INFO] agent_manager:     ✅ /api/gods/transform (DivineCommands)
+[2026-02-01 16:01:38,622][INFO] agent_manager: ======================================================================
+[2026-02-01 16:01:38,623][INFO] agent_manager:   SERVER INTEGRATION:
+[2026-02-01 16:01:38,623][INFO] agent_manager:     📝 Auto-registers agents in usercache.json
+[2026-02-01 16:01:38,623][INFO] agent_manager:     📝 Auto-registers agents in usernamecache.json
+[2026-02-01 16:01:38,623][INFO] agent_manager:     🔄 UUID generation (Minecraft offline mode)
+[2026-02-01 16:01:38,623][INFO] agent_manager:     🏷️  Naming: AI_<n> for NPCs, GOD_<type>_<n> for gods
+[2026-02-01 16:01:38,623][INFO] agent_manager: ======================================================================
+[2026-02-01 16:01:38,623][INFO] agent_manager: 
+[2026-02-01 16:01:38,623][INFO] agent_manager: ⚠️  IMPORTANT: Configure server folder for agent registration!
+[2026-02-01 16:01:38,623][INFO] agent_manager:    Use: POST /api/server/configure
+[2026-02-01 16:01:38,623][INFO] agent_manager:    Body: {"server_folder": "/path/to/minecraft/server"}
+[2026-02-01 16:01:38,623][INFO] agent_manager: 
+[2026-02-01 16:01:38,623][INFO] agent_manager: ✅ Server started and ready for Minecraft mod connections
+[2026-02-01 16:04:26,741][INFO] agent_manager: 🌟 GENESIS: Spawning 2 agents by Devlord
+[2026-02-01 16:04:26,774][INFO] agent_manager:    Server: 127.0.0.1:25565
+[2026-02-01 16:04:26,774][INFO] agent_manager:   Spawn position 1: (-11, 76, -261) (Gender: male)
+[2026-02-01 16:04:26,803][INFO] agent_manager: ✓ Brain directory created/verified: /home/devlord/divine-world-core/npc_applications/data/brains/adam
+[2026-02-01 16:04:26,894][INFO] agent_manager: 🔗 Agent Registration: agent_id=adam, username=DW_adam, uuid=b404e21c-7468-325b-a6fe-70e85dbcdcb2
+[2026-02-01 16:04:26,914][ERROR] agent_manager: Failed to start agent adam: [Errno 2] No such file or directory: '/home/devlord/divine-world-core/DW_Server/usercache.json'
+[2026-02-01 16:04:26,928][ERROR] agent_manager: Traceback (most recent call last):
+  File "/home/devlord/divine-world-core/py_backend/main.py", line 322, in start_agent_process
+    server_integration.register_agent(username, agent_uuid)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/devlord/divine-world-core/py_backend/main.py", line 136, in register_agent
+    with open(self.usercache_path, 'w', encoding='utf-8') as f:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/home/devlord/divine-world-core/DW_Server/usercache.json'
+
+[2026-02-01 16:04:26,929][INFO] agent_manager:   Spawn position 2: (-15, 76, -261) (Gender: female)
+[2026-02-01 16:04:27,187][INFO] agent_manager: ✓ Brain directory created/verified: /home/devlord/divine-world-core/npc_applications/data/brains/eve
+[2026-02-01 16:04:27,196][INFO] agent_manager: 🔗 Agent Registration: agent_id=eve, username=DW_eve, uuid=e2465495-d929-3531-a4a0-2bc79ca47c9f
+[2026-02-01 16:04:27,197][ERROR] agent_manager: Failed to start agent eve: [Errno 2] No such file or directory: '/home/devlord/divine-world-core/DW_Server/usercache.json'
+[2026-02-01 16:04:27,198][ERROR] agent_manager: Traceback (most recent call last):
+  File "/home/devlord/divine-world-core/py_backend/main.py", line 322, in start_agent_process
+    server_integration.register_agent(username, agent_uuid)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/devlord/divine-world-core/py_backend/main.py", line 136, in register_agent
+    with open(self.usercache_path, 'w', encoding='utf-8') as f:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/home/devlord/divine-world-core/DW_Server/usercache.json'
+
+[2026-02-01 16:05:39,844][INFO] agent_manager: 🛑 Shutting down management server...
+[2026-02-01 16:05:39,860][INFO] agent_manager: Cleaning up agent processes...
+[2026-02-01 16:05:39,861][INFO] agent_spawner: Cleaning up all agents...
+[2026-02-01 16:05:39,862][INFO] agent_spawner: Cleanup complete
+[2026-02-01 16:05:39,863][INFO] auto_packager: Shutting down auto-packaging system...
+[2026-02-01 16:05:40,845][INFO] auto_packager: Packaging worker stopped
+[2026-02-01 16:05:40,845][INFO] auto_packager: Auto-packaging system stopped
+[2026-02-01 16:05:40,846][INFO] agent_manager: Agent cleanup complete
+[2026-02-01 16:05:40,846][INFO] agent_manager: ✅ Shutdown complete
+[2026-02-01 16:12:04,002][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 16:12:04,058][INFO] agent_manager: Server folder set to: /home/devlord/DW_Server
+[2026-02-01 16:12:04,058][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:12:04,073][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:04,074][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:12:04,074][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:04,074][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:04,075][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:04,075][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:12:04,075][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:12:04,075][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:12:04,170][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:04,171][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:04,171][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:12:04,172][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:12:04,172][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:12:04,172][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:04,173][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:12:04,173][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:12:04,173][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:04,174][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:12:04,174][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:04,174][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:04,174][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:12:04,174][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:12:04,175][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:12:04,175][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:12:04,175][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:12:04,178][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:12:04,179][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:12:04,180][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:04,180][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:12:04,180][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:04,180][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:04,181][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:04,181][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:12:04,181][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:12:04,182][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:12:04,182][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:04,182][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:04,183][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:12:04,183][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:12:04,184][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:12:04,184][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:04,184][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:12:04,184][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:12:04,185][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:04,185][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:12:04,185][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:04,185][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:04,185][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:12:04,185][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:12:04,185][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:12:04,186][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:12:04,186][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:12:04,187][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:12:05,944][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 16:12:06,001][INFO] agent_manager: Server folder set to: /home/devlord/DW_Server
+[2026-02-01 16:12:06,008][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:12:06,008][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:06,023][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:12:06,023][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:06,024][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:06,024][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:06,024][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:12:06,025][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:12:06,035][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:12:06,038][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:06,038][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:06,046][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:12:06,048][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:12:06,048][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:12:06,048][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:06,048][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:12:06,049][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:12:06,050][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:06,052][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:12:06,052][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:06,053][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:06,053][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:12:06,053][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:12:06,053][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:12:06,054][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:12:06,054][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:12:06,056][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:12:06,057][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:12:06,057][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:06,057][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:12:06,057][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:06,057][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:06,058][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:06,058][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:12:06,058][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:12:06,065][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:12:06,066][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:06,072][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:06,107][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:12:06,108][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:12:06,109][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:12:06,109][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:06,110][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:12:06,110][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:12:06,114][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:12:06,115][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:12:06,115][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:12:06,115][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:12:06,116][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:12:06,116][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:12:06,116][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:12:06,116][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:12:06,116][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:12:06,118][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:12:06,146][INFO] agent_manager: ======================================================================
+[2026-02-01 16:12:06,147][INFO] agent_manager:   🎮 Divine World Management Server
+[2026-02-01 16:12:06,147][INFO] agent_manager: ======================================================================
+[2026-02-01 16:12:06,147][INFO] agent_manager:   Version: 3.0.0 (Endpoints Corrected + Server Integration)
+[2026-02-01 16:12:06,147][INFO] agent_manager:   Role: Agent Management for Minecraft Mod
+[2026-02-01 16:12:06,147][INFO] agent_manager:   Mod: Divine World 1.20.1
+[2026-02-01 16:12:06,148][INFO] agent_manager:   Agent Runtime: Separate processes (agent.py)
+[2026-02-01 16:12:06,148][INFO] agent_manager: ======================================================================
+[2026-02-01 16:12:06,148][INFO] agent_manager:   CORRECTED ENDPOINTS:
+[2026-02-01 16:12:06,148][INFO] agent_manager:     ✅ /api/player_event (DWEventHandler)
+[2026-02-01 16:12:06,149][INFO] agent_manager:     ✅ /api/breeding/event (BreedingEventHandler)
+[2026-02-01 16:12:06,149][INFO] agent_manager:     ✅ /api/genesis/spawn (DivineCommands)
+[2026-02-01 16:12:06,149][INFO] agent_manager:     ✅ /api/divine_reset (DivineCommands)
+[2026-02-01 16:12:06,149][INFO] agent_manager:     ✅ /api/agents/clear_memories (DivineCommands)
+[2026-02-01 16:12:06,150][INFO] agent_manager:     ✅ /api/gods/spawn (DivineCommands)
+[2026-02-01 16:12:06,152][INFO] agent_manager:     ✅ /api/gods/ability (DivineCommands)
+[2026-02-01 16:12:06,152][INFO] agent_manager:     ✅ /api/gods/transform (DivineCommands)
+[2026-02-01 16:12:06,152][INFO] agent_manager: ======================================================================
+[2026-02-01 16:12:06,153][INFO] agent_manager:   SERVER INTEGRATION:
+[2026-02-01 16:12:06,153][INFO] agent_manager:     📝 Auto-registers agents in usercache.json
+[2026-02-01 16:12:06,162][INFO] agent_manager:     📝 Auto-registers agents in usernamecache.json
+[2026-02-01 16:12:06,162][INFO] agent_manager:     🔄 UUID generation (Minecraft offline mode)
+[2026-02-01 16:12:06,162][INFO] agent_manager:     🏷️  Naming: AI_<n> for NPCs, GOD_<type>_<n> for gods
+[2026-02-01 16:12:06,162][INFO] agent_manager: ======================================================================
+[2026-02-01 16:12:06,162][INFO] agent_manager: 
+[2026-02-01 16:12:06,163][INFO] agent_manager: ⚠️  IMPORTANT: Configure server folder for agent registration!
+[2026-02-01 16:12:06,163][INFO] agent_manager:    Use: POST /api/server/configure
+[2026-02-01 16:12:06,163][INFO] agent_manager:    Body: {"server_folder": "/path/to/minecraft/server"}
+[2026-02-01 16:12:06,163][INFO] agent_manager: 
+[2026-02-01 16:12:06,164][INFO] agent_manager: ✅ Server started and ready for Minecraft mod connections
+[2026-02-01 16:16:35,696][INFO] agent_manager: 🌟 GENESIS: Spawning 2 agents by Devlord
+[2026-02-01 16:16:35,740][INFO] agent_manager:    Server: 127.0.0.1:25565
+[2026-02-01 16:16:35,740][INFO] agent_manager:   Spawn position 1: (-9, 75, -257) (Gender: male)
+[2026-02-01 16:16:35,761][INFO] agent_manager: ✓ Brain directory created/verified: /home/devlord/divine-world-core/npc_applications/data/brains/adam
+[2026-02-01 16:16:35,888][INFO] agent_manager: 🔗 Agent Registration: agent_id=adam, username=DW_adam, uuid=b404e21c-7468-325b-a6fe-70e85dbcdcb2
+[2026-02-01 16:16:35,912][INFO] agent_manager: ✅ Registered DW_adam in usercache.json
+[2026-02-01 16:16:36,040][INFO] agent_manager: ✅ Registered DW_adam in usernamecache.json
+[2026-02-01 16:16:36,041][INFO] agent_manager: 🚀 Setting up UltimMC for adam...
+[2026-02-01 16:16:36,064][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:16:36,064][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:16:36,064][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:16:36,065][INFO] minecraft_launcher: Copying UltimMC from /home/devlord/divine-world-core/UltimMC to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam
+[2026-02-01 16:17:40,771][INFO] minecraft_launcher: ✅ Copied UltimMC installation to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam
+[2026-02-01 16:17:40,789][INFO] minecraft_launcher: Found UltimMC executable: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam/bin/UltimMC
+[2026-02-01 16:17:40,789][INFO] minecraft_launcher: Created launcher for adam at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam
+[2026-02-01 16:17:40,789][INFO] minecraft_launcher: Creating local account: DW_adam
+[2026-02-01 16:17:40,790][INFO] minecraft_launcher: Using custom UUID: b404e21c-7468-325b-a6fe-70e85dbcdcb2
+[2026-02-01 16:17:40,792][INFO] minecraft_launcher: ✅ Account created/updated: DW_adam
+[2026-02-01 16:17:40,792][INFO] minecraft_launcher:    UUID: b404e21c-7468-325b-a6fe-70e85dbcdcb2
+[2026-02-01 16:17:40,792][INFO] minecraft_launcher:    Active: True
+[2026-02-01 16:17:40,794][INFO] minecraft_launcher: Creating Minecraft instance: agent_adam
+[2026-02-01 16:17:40,794][INFO] minecraft_launcher: ✅ Instance created: agent_adam
+[2026-02-01 16:17:40,864][INFO] minecraft_launcher: ✅ Installed DivineWorld mod: divineworld-1.0.0-all.jar
+[2026-02-01 16:17:40,879][INFO] minecraft_launcher: ✅ Installed DWClientBot mod: dwclient-1.0.0.jar
+[2026-02-01 16:17:40,879][INFO] minecraft_launcher: ✅ Agent adam configured with username: DW_adam
+[2026-02-01 16:17:40,880][INFO] agent_manager: ✅ UltimMC setup complete for adam
+[2026-02-01 16:17:40,880][INFO] agent_manager: Starting agent backend: /home/devlord/divine-world-core/py_backend/dw_env/bin/python /home/devlord/divine-world-core/ai_core/agent.py --agent-id adam --mode minecraft --log-level INFO --brain-save-path /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap --gender male --personality {"boldness": 0.8, "curiosity": 0.9, "agreeableness": 0.5, "conscientiousness": 0.6, "neuroticism": 0.3, "openness": 0.7, "sociability": 0.6} --spawn-x -9 --spawn-y 75 --spawn-z -257 --genesis-ancestor true
+[2026-02-01 16:17:40,962][INFO] agent_manager: ✅ Agent adam started (PID: 10270)
+[2026-02-01 16:17:40,963][INFO] agent_manager:    Brain will be saved to: /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap
+[2026-02-01 16:17:40,963][INFO] agent_manager: ⏳ Waiting for agent backend to initialize...
+[2026-02-01 16:17:43,963][INFO] agent_manager: 🎮 Launching UltimMC client for adam...
+[2026-02-01 16:17:43,963][INFO] agent_manager:    Agent Type: npc
+[2026-02-01 16:17:43,963][INFO] agent_manager:    Custom Name: Adam
+[2026-02-01 16:17:43,964][INFO] minecraft_launcher: Launching UltimMC instance: agent_adam
+[2026-02-01 16:17:43,964][INFO] minecraft_launcher:   Working directory: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam
+[2026-02-01 16:17:43,965][INFO] minecraft_launcher:   Server: 127.0.0.1:25565
+[2026-02-01 16:17:43,965][INFO] minecraft_launcher:   Profile: None
+[2026-02-01 16:17:43,965][INFO] minecraft_launcher:   Offline: True (name: DW_adam)
+[2026-02-01 16:17:43,965][INFO] minecraft_launcher:   Agent ID: adam
+[2026-02-01 16:17:43,965][INFO] minecraft_launcher:   Backend: http://127.0.0.1:15345
+[2026-02-01 16:17:43,965][INFO] minecraft_launcher:   Memory: 2048MB
+[2026-02-01 16:17:43,965][INFO] minecraft_launcher:   Headless: False
+[2026-02-01 16:17:43,965][INFO] minecraft_launcher:   Command: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam/bin/UltimMC -d . -l agent_adam -s 127.0.0.1:25565 -o -n DW_adam
+[2026-02-01 16:17:43,967][INFO] minecraft_launcher: ✅ UltimMC launched with PID: 10277
+[2026-02-01 16:17:43,967][INFO] agent_manager: ✅ UltimMC launched for adam (PID: 10277)
+[2026-02-01 16:17:43,967][INFO] agent_manager:    Server: 127.0.0.1:25565
+[2026-02-01 16:17:43,967][INFO] agent_manager:    Backend: http://127.0.0.1:15345
+[2026-02-01 16:17:43,968][INFO] agent_manager: ✅ Genesis agent spawned: Adam (ID: adam, male) at (-9, 75, -257)
+[2026-02-01 16:17:43,968][INFO] agent_manager:    Personality: {'boldness': 0.8, 'curiosity': 0.9, 'agreeableness': 0.5, 'conscientiousness': 0.6, 'neuroticism': 0.3, 'openness': 0.7, 'sociability': 0.6}
+[2026-02-01 16:17:43,968][INFO] agent_manager:    Brain path: /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap
+[2026-02-01 16:17:43,968][INFO] agent_manager:   Spawn position 2: (-13, 75, -257) (Gender: female)
+[2026-02-01 16:17:43,969][INFO] agent_manager: ✓ Brain directory created/verified: /home/devlord/divine-world-core/npc_applications/data/brains/eve
+[2026-02-01 16:17:44,012][INFO] agent_manager: 🔗 Agent Registration: agent_id=eve, username=DW_eve, uuid=e2465495-d929-3531-a4a0-2bc79ca47c9f
+[2026-02-01 16:17:44,013][INFO] agent_manager: ✅ Registered DW_eve in usercache.json
+[2026-02-01 16:17:44,013][INFO] agent_manager: ✅ Registered DW_eve in usernamecache.json
+[2026-02-01 16:17:44,014][INFO] agent_manager: 🚀 Setting up UltimMC for eve...
+[2026-02-01 16:17:44,014][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:17:44,014][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:17:44,014][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:17:44,014][INFO] minecraft_launcher: Copying UltimMC from /home/devlord/divine-world-core/UltimMC to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve
+[2026-02-01 16:18:46,446][INFO] minecraft_launcher: ✅ Copied UltimMC installation to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve
+[2026-02-01 16:18:46,458][INFO] minecraft_launcher: Found UltimMC executable: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve/bin/UltimMC
+[2026-02-01 16:18:46,458][INFO] minecraft_launcher: Created launcher for eve at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve
+[2026-02-01 16:18:46,458][INFO] minecraft_launcher: Creating local account: DW_eve
+[2026-02-01 16:18:46,470][INFO] minecraft_launcher: Using custom UUID: e2465495-d929-3531-a4a0-2bc79ca47c9f
+[2026-02-01 16:18:46,471][INFO] minecraft_launcher: ✅ Account created/updated: DW_eve
+[2026-02-01 16:18:46,471][INFO] minecraft_launcher:    UUID: e2465495-d929-3531-a4a0-2bc79ca47c9f
+[2026-02-01 16:18:46,471][INFO] minecraft_launcher:    Active: True
+[2026-02-01 16:18:46,471][INFO] minecraft_launcher: Creating Minecraft instance: agent_eve
+[2026-02-01 16:18:46,472][INFO] minecraft_launcher: ✅ Instance created: agent_eve
+[2026-02-01 16:18:46,546][INFO] minecraft_launcher: ✅ Installed DivineWorld mod: divineworld-1.0.0-all.jar
+[2026-02-01 16:18:46,833][INFO] minecraft_launcher: ✅ Installed DWClientBot mod: dwclient-1.0.0.jar
+[2026-02-01 16:18:46,833][INFO] minecraft_launcher: ✅ Agent eve configured with username: DW_eve
+[2026-02-01 16:18:46,833][INFO] agent_manager: ✅ UltimMC setup complete for eve
+[2026-02-01 16:18:46,833][INFO] agent_manager: Starting agent backend: /home/devlord/divine-world-core/py_backend/dw_env/bin/python /home/devlord/divine-world-core/ai_core/agent.py --agent-id eve --mode minecraft --log-level INFO --brain-save-path /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap --gender female --personality {"boldness": 0.6, "curiosity": 0.7, "agreeableness": 0.9, "conscientiousness": 0.8, "neuroticism": 0.4, "openness": 0.7, "sociability": 0.8} --spawn-x -13 --spawn-y 75 --spawn-z -257 --genesis-ancestor true
+[2026-02-01 16:18:46,834][INFO] agent_manager: ✅ Agent eve started (PID: 10519)
+[2026-02-01 16:18:46,834][INFO] agent_manager:    Brain will be saved to: /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap
+[2026-02-01 16:18:46,835][INFO] agent_manager: ⏳ Waiting for agent backend to initialize...
+[2026-02-01 16:18:49,835][INFO] agent_manager: 🎮 Launching UltimMC client for eve...
+[2026-02-01 16:18:49,835][INFO] agent_manager:    Agent Type: npc
+[2026-02-01 16:18:49,835][INFO] agent_manager:    Custom Name: Eve
+[2026-02-01 16:18:49,835][INFO] minecraft_launcher: Launching UltimMC instance: agent_eve
+[2026-02-01 16:18:49,836][INFO] minecraft_launcher:   Working directory: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve
+[2026-02-01 16:18:49,836][INFO] minecraft_launcher:   Server: 127.0.0.1:25565
+[2026-02-01 16:18:49,836][INFO] minecraft_launcher:   Profile: None
+[2026-02-01 16:18:49,836][INFO] minecraft_launcher:   Offline: True (name: DW_eve)
+[2026-02-01 16:18:49,836][INFO] minecraft_launcher:   Agent ID: eve
+[2026-02-01 16:18:49,836][INFO] minecraft_launcher:   Backend: http://127.0.0.1:15651
+[2026-02-01 16:18:49,836][INFO] minecraft_launcher:   Memory: 2048MB
+[2026-02-01 16:18:49,836][INFO] minecraft_launcher:   Headless: False
+[2026-02-01 16:18:49,836][INFO] minecraft_launcher:   Command: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve/bin/UltimMC -d . -l agent_eve -s 127.0.0.1:25565 -o -n DW_eve
+[2026-02-01 16:18:49,844][INFO] minecraft_launcher: ✅ UltimMC launched with PID: 10526
+[2026-02-01 16:18:49,844][INFO] agent_manager: ✅ UltimMC launched for eve (PID: 10526)
+[2026-02-01 16:18:49,844][INFO] agent_manager:    Server: 127.0.0.1:25565
+[2026-02-01 16:18:49,844][INFO] agent_manager:    Backend: http://127.0.0.1:15651
+[2026-02-01 16:18:49,844][INFO] agent_manager: ✅ Genesis agent spawned: Eve (ID: eve, female) at (-13, 75, -257)
+[2026-02-01 16:18:49,845][INFO] agent_manager:    Personality: {'boldness': 0.6, 'curiosity': 0.7, 'agreeableness': 0.9, 'conscientiousness': 0.8, 'neuroticism': 0.4, 'openness': 0.7, 'sociability': 0.8}
+[2026-02-01 16:18:49,845][INFO] agent_manager:    Brain path: /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap
+[2026-02-01 16:18:49,850][WARNING] agent_manager: Agent adam exited with code: 2
+[2026-02-01 16:18:49,850][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap
+[2026-02-01 16:18:49,850][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/adam
+[2026-02-01 16:18:49,851][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:18:49,947][INFO] agent_manager: ✅ [Auto-Package] Brain file found after 0s
+[2026-02-01 16:18:49,947][INFO] agent_manager:    File size: 99881181 bytes
+[2026-02-01 16:18:49,966][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap
+[2026-02-01 16:18:49,966][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/adam
+[2026-02-01 16:18:49,966][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:18:49,967][INFO] agent_manager: ✅ [Auto-Package] Brain file found after 0s
+[2026-02-01 16:18:49,967][INFO] agent_manager:    File size: 99881181 bytes
+[2026-02-01 16:18:49,967][WARNING] agent_manager: Agent eve exited with code: 2
+[2026-02-01 16:18:49,967][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap
+[2026-02-01 16:18:49,967][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/eve
+[2026-02-01 16:18:49,967][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:18:50,009][INFO] agent_manager: ✅ [Auto-Package] Brain file found after 0s
+[2026-02-01 16:18:50,009][INFO] agent_manager:    File size: 99881182 bytes
+[2026-02-01 16:18:50,009][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap
+[2026-02-01 16:18:50,010][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/eve
+[2026-02-01 16:18:50,010][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:18:50,010][INFO] agent_manager: ✅ [Auto-Package] Brain file found after 0s
+[2026-02-01 16:18:50,010][INFO] agent_manager:    File size: 99881182 bytes
+[2026-02-01 16:18:51,968][INFO] agent_manager: [Auto-Package] Starting package for adam (type: npc)
+[2026-02-01 16:18:51,968][ERROR] agent_manager: [Auto-Package] Error packaging adam: 'EnhancedAgentSpawner' object has no attribute 'package_agent'
+[2026-02-01 16:18:51,969][INFO] agent_manager: [Auto-Package] Starting package for adam (type: npc)
+[2026-02-01 16:18:51,969][ERROR] agent_manager: [Auto-Package] Error packaging adam: 'EnhancedAgentSpawner' object has no attribute 'package_agent'
+[2026-02-01 16:18:52,010][INFO] agent_manager: [Auto-Package] Starting package for eve (type: npc)
+[2026-02-01 16:18:52,010][ERROR] agent_manager: [Auto-Package] Error packaging eve: 'EnhancedAgentSpawner' object has no attribute 'package_agent'
+[2026-02-01 16:18:52,010][INFO] agent_manager: [Auto-Package] Starting package for eve (type: npc)
+[2026-02-01 16:18:52,010][ERROR] agent_manager: [Auto-Package] Error packaging eve: 'EnhancedAgentSpawner' object has no attribute 'package_agent'
+[2026-02-01 16:20:09,298][INFO] agent_manager: 🛑 Shutting down management server...
+[2026-02-01 16:20:09,298][INFO] agent_manager: Cleaning up agent processes...
+[2026-02-01 16:20:09,299][INFO] minecraft_launcher: ✅ Stopped adam
+[2026-02-01 16:20:09,299][INFO] minecraft_launcher: ✅ Stopped eve
+[2026-02-01 16:20:09,299][INFO] agent_spawner: Cleaning up all agents...
+[2026-02-01 16:20:09,299][INFO] agent_spawner: Cleanup complete
+[2026-02-01 16:20:09,299][INFO] auto_packager: Shutting down auto-packaging system...
+[2026-02-01 16:20:09,405][INFO] auto_packager: Packaging worker stopped
+[2026-02-01 16:20:09,406][INFO] auto_packager: Auto-packaging system stopped
+[2026-02-01 16:20:09,406][INFO] agent_manager: Agent cleanup complete
+[2026-02-01 16:20:09,406][INFO] agent_manager: ✅ Shutdown complete
+[2026-02-01 16:20:45,270][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 16:20:45,271][INFO] agent_manager: Server folder set to: /home/devlord/DW_Server
+[2026-02-01 16:20:45,271][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:20:45,286][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,287][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:20:45,287][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,287][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,287][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,308][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:20:45,308][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:20:45,331][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:20:45,331][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,332][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,332][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:20:45,333][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:20:45,333][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:20:45,333][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,333][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:20:45,333][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:20:45,334][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,334][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:20:45,334][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,334][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,334][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:20:45,334][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:20:45,334][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:20:45,334][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:20:45,334][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:20:45,337][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:20:45,338][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:20:45,338][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,338][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:20:45,338][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,338][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,338][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,339][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:20:45,339][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:20:45,339][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:20:45,339][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,339][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,340][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:20:45,340][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:20:45,340][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:20:45,340][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,340][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:20:45,340][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:20:45,341][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,341][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:20:45,341][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,341][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,341][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:20:45,341][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:20:45,341][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:20:45,341][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:20:45,341][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:20:45,343][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:20:45,565][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 16:20:45,565][INFO] agent_manager: Server folder set to: /home/devlord/DW_Server
+[2026-02-01 16:20:45,566][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:20:45,566][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,567][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:20:45,567][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,567][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,567][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,567][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:20:45,567][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:20:45,567][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:20:45,568][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,568][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,568][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:20:45,568][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:20:45,569][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:20:45,569][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,569][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:20:45,569][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:20:45,570][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,570][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:20:45,570][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,570][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,570][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:20:45,570][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:20:45,570][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:20:45,571][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:20:45,571][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:20:45,573][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:20:45,573][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:20:45,574][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,575][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:20:45,575][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,575][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,575][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,575][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:20:45,576][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:20:45,576][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:20:45,576][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,577][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,577][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:20:45,577][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:20:45,577][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:20:45,578][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,578][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:20:45,578][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:20:45,578][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:20:45,579][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:20:45,579][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:20:45,579][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:20:45,579][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:20:45,579][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:20:45,579][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:20:45,579][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:20:45,579][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:20:45,581][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:20:45,589][INFO] agent_manager: ======================================================================
+[2026-02-01 16:20:45,589][INFO] agent_manager:   🎮 Divine World Management Server
+[2026-02-01 16:20:45,590][INFO] agent_manager: ======================================================================
+[2026-02-01 16:20:45,590][INFO] agent_manager:   Version: 3.0.0 (Endpoints Corrected + Server Integration)
+[2026-02-01 16:20:45,590][INFO] agent_manager:   Role: Agent Management for Minecraft Mod
+[2026-02-01 16:20:45,590][INFO] agent_manager:   Mod: Divine World 1.20.1
+[2026-02-01 16:20:45,590][INFO] agent_manager:   Agent Runtime: Separate processes (agent.py)
+[2026-02-01 16:20:45,590][INFO] agent_manager: ======================================================================
+[2026-02-01 16:20:45,590][INFO] agent_manager:   CORRECTED ENDPOINTS:
+[2026-02-01 16:20:45,590][INFO] agent_manager:     ✅ /api/player_event (DWEventHandler)
+[2026-02-01 16:20:45,590][INFO] agent_manager:     ✅ /api/breeding/event (BreedingEventHandler)
+[2026-02-01 16:20:45,590][INFO] agent_manager:     ✅ /api/genesis/spawn (DivineCommands)
+[2026-02-01 16:20:45,590][INFO] agent_manager:     ✅ /api/divine_reset (DivineCommands)
+[2026-02-01 16:20:45,590][INFO] agent_manager:     ✅ /api/agents/clear_memories (DivineCommands)
+[2026-02-01 16:20:45,590][INFO] agent_manager:     ✅ /api/gods/spawn (DivineCommands)
+[2026-02-01 16:20:45,590][INFO] agent_manager:     ✅ /api/gods/ability (DivineCommands)
+[2026-02-01 16:20:45,590][INFO] agent_manager:     ✅ /api/gods/transform (DivineCommands)
+[2026-02-01 16:20:45,591][INFO] agent_manager: ======================================================================
+[2026-02-01 16:20:45,591][INFO] agent_manager:   SERVER INTEGRATION:
+[2026-02-01 16:20:45,591][INFO] agent_manager:     📝 Auto-registers agents in usercache.json
+[2026-02-01 16:20:45,591][INFO] agent_manager:     📝 Auto-registers agents in usernamecache.json
+[2026-02-01 16:20:45,591][INFO] agent_manager:     🔄 UUID generation (Minecraft offline mode)
+[2026-02-01 16:20:45,591][INFO] agent_manager:     🏷️  Naming: AI_<n> for NPCs, GOD_<type>_<n> for gods
+[2026-02-01 16:20:45,591][INFO] agent_manager: ======================================================================
+[2026-02-01 16:20:45,591][INFO] agent_manager: 
+[2026-02-01 16:20:45,591][INFO] agent_manager: ⚠️  IMPORTANT: Configure server folder for agent registration!
+[2026-02-01 16:20:45,591][INFO] agent_manager:    Use: POST /api/server/configure
+[2026-02-01 16:20:45,591][INFO] agent_manager:    Body: {"server_folder": "/path/to/minecraft/server"}
+[2026-02-01 16:20:45,591][INFO] agent_manager: 
+[2026-02-01 16:20:45,591][INFO] agent_manager: ✅ Server started and ready for Minecraft mod connections
+[2026-02-01 16:21:27,074][INFO] agent_manager: 🧑 Spawning single NPC: alice (ID: npc1)
+[2026-02-01 16:21:27,075][INFO] agent_manager: 🧑 Spawning single NPC: alice
+[2026-02-01 16:21:27,075][INFO] agent_manager:    Spawn Position: (-25, 67, -254)
+[2026-02-01 16:21:27,075][INFO] agent_manager:    Gender: female
+[2026-02-01 16:21:27,075][INFO] agent_manager:    World: minecraft:overworld
+[2026-02-01 16:21:27,075][INFO] agent_manager:    Spawner: Devlord
+[2026-02-01 16:21:27,082][INFO] agent_manager: ✓ Brain directory created/verified: /home/devlord/divine-world-core/npc_applications/data/brains/npc1
+[2026-02-01 16:21:27,083][INFO] agent_manager: 🔗 Agent Registration: agent_id=npc1, username=DW_npc1, uuid=9ba6073b-c282-396d-9c5d-e950d5fc387f
+[2026-02-01 16:21:27,092][INFO] agent_manager: ✅ Registered DW_npc1 in usercache.json
+[2026-02-01 16:21:27,093][INFO] agent_manager: ✅ Registered DW_npc1 in usernamecache.json
+[2026-02-01 16:21:27,093][INFO] agent_manager: 🚀 Setting up UltimMC for npc1...
+[2026-02-01 16:21:27,093][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:21:27,093][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:21:27,093][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:21:27,093][INFO] minecraft_launcher: Copying UltimMC from /home/devlord/divine-world-core/UltimMC to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/npc1
+[2026-02-01 16:22:15,005][INFO] minecraft_launcher: ✅ Copied UltimMC installation to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/npc1
+[2026-02-01 16:22:15,017][INFO] minecraft_launcher: Found UltimMC executable: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/npc1/bin/UltimMC
+[2026-02-01 16:22:15,017][INFO] minecraft_launcher: Created launcher for npc1 at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/npc1
+[2026-02-01 16:22:15,017][INFO] minecraft_launcher: Creating local account: DW_npc1
+[2026-02-01 16:22:15,028][INFO] minecraft_launcher: Using custom UUID: 9ba6073b-c282-396d-9c5d-e950d5fc387f
+[2026-02-01 16:22:15,029][INFO] minecraft_launcher: ✅ Account created/updated: DW_npc1
+[2026-02-01 16:22:15,029][INFO] minecraft_launcher:    UUID: 9ba6073b-c282-396d-9c5d-e950d5fc387f
+[2026-02-01 16:22:15,029][INFO] minecraft_launcher:    Active: True
+[2026-02-01 16:22:15,029][INFO] minecraft_launcher: Creating Minecraft instance: agent_npc1
+[2026-02-01 16:22:15,030][INFO] minecraft_launcher: ✅ Instance created: agent_npc1
+[2026-02-01 16:22:15,094][INFO] minecraft_launcher: ✅ Installed DivineWorld mod: divineworld-1.0.0-all.jar
+[2026-02-01 16:22:15,125][INFO] minecraft_launcher: ✅ Installed DWClientBot mod: dwclient-1.0.0.jar
+[2026-02-01 16:22:15,126][INFO] minecraft_launcher: ✅ Agent npc1 configured with username: DW_npc1
+[2026-02-01 16:22:15,126][INFO] agent_manager: ✅ UltimMC setup complete for npc1
+[2026-02-01 16:22:15,127][INFO] agent_manager: Starting agent backend: /home/devlord/divine-world-core/py_backend/dw_env/bin/python /home/devlord/divine-world-core/ai_core/agent.py --agent-id npc1 --mode minecraft --log-level INFO --brain-save-path /home/devlord/divine-world-core/npc_applications/data/brains/npc1/brain.pcap --gender female --personality {"boldness": 0.7, "curiosity": 0.8, "agreeableness": 0.7, "conscientiousness": 0.7, "neuroticism": 0.3, "openness": 0.7, "sociability": 0.7} --spawn-x -25 --spawn-y 67 --spawn-z -254
+[2026-02-01 16:22:15,127][INFO] agent_manager: ✅ Agent npc1 started (PID: 11119)
+[2026-02-01 16:22:15,129][INFO] agent_manager:    Brain will be saved to: /home/devlord/divine-world-core/npc_applications/data/brains/npc1/brain.pcap
+[2026-02-01 16:22:15,129][INFO] agent_manager: ⏳ Waiting for agent backend to initialize...
+[2026-02-01 16:22:18,129][INFO] agent_manager: 🎮 Launching UltimMC client for npc1...
+[2026-02-01 16:22:18,130][INFO] agent_manager:    Agent Type: npc
+[2026-02-01 16:22:18,130][INFO] agent_manager:    Custom Name: alice
+[2026-02-01 16:22:18,130][INFO] minecraft_launcher: Launching UltimMC instance: agent_npc1
+[2026-02-01 16:22:18,130][INFO] minecraft_launcher:   Working directory: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/npc1
+[2026-02-01 16:22:18,131][INFO] minecraft_launcher:   Server: 127.0.0.1:25565
+[2026-02-01 16:22:18,131][INFO] minecraft_launcher:   Profile: None
+[2026-02-01 16:22:18,131][INFO] minecraft_launcher:   Offline: True (name: DW_npc1)
+[2026-02-01 16:22:18,131][INFO] minecraft_launcher:   Agent ID: npc1
+[2026-02-01 16:22:18,131][INFO] minecraft_launcher:   Backend: http://127.0.0.1:15260
+[2026-02-01 16:22:18,131][INFO] minecraft_launcher:   Memory: 2048MB
+[2026-02-01 16:22:18,131][INFO] minecraft_launcher:   Headless: False
+[2026-02-01 16:22:18,131][INFO] minecraft_launcher:   Command: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/npc1/bin/UltimMC -d . -l agent_npc1 -s 127.0.0.1:25565 -o -n DW_npc1
+[2026-02-01 16:22:18,143][INFO] minecraft_launcher: ✅ UltimMC launched with PID: 11126
+[2026-02-01 16:22:18,143][INFO] agent_manager: ✅ UltimMC launched for npc1 (PID: 11126)
+[2026-02-01 16:22:18,143][INFO] agent_manager:    Server: 127.0.0.1:25565
+[2026-02-01 16:22:18,143][INFO] agent_manager:    Backend: http://127.0.0.1:15260
+[2026-02-01 16:22:18,145][WARNING] agent_manager: Agent npc1 exited with code: 2
+[2026-02-01 16:22:18,145][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/npc1/brain.pcap
+[2026-02-01 16:22:18,145][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/npc1
+[2026-02-01 16:22:18,145][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:22:18,145][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/npc1/brain.pcap
+[2026-02-01 16:22:18,146][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/npc1
+[2026-02-01 16:22:18,146][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:22:48,158][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (30s elapsed)...
+[2026-02-01 16:22:48,159][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (30s elapsed)...
+[2026-02-01 16:23:18,173][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (60s elapsed)...
+[2026-02-01 16:23:18,174][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (60s elapsed)...
+[2026-02-01 16:23:48,184][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (90s elapsed)...
+[2026-02-01 16:23:48,185][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (90s elapsed)...
+[2026-02-01 16:24:18,237][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (120s elapsed)...
+[2026-02-01 16:24:18,237][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (120s elapsed)...
+[2026-02-01 16:24:48,253][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (150s elapsed)...
+[2026-02-01 16:24:48,253][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (150s elapsed)...
+[2026-02-01 16:25:18,265][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (180s elapsed)...
+[2026-02-01 16:25:18,266][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (180s elapsed)...
+[2026-02-01 16:25:48,280][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (210s elapsed)...
+[2026-02-01 16:25:48,281][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (210s elapsed)...
+[2026-02-01 16:26:18,294][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (240s elapsed)...
+[2026-02-01 16:26:18,295][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (240s elapsed)...
+[2026-02-01 16:26:48,329][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (270s elapsed)...
+[2026-02-01 16:26:48,330][INFO] agent_manager: ⏳ [Auto-Package] Still waiting for brain file (270s elapsed)...
+[2026-02-01 16:27:12,169][INFO] agent_manager: 🛑 Shutting down management server...
+[2026-02-01 16:27:12,169][INFO] agent_manager: Cleaning up agent processes...
+[2026-02-01 16:27:12,169][INFO] minecraft_launcher: ✅ Stopped npc1
+[2026-02-01 16:27:12,169][INFO] agent_spawner: Cleaning up all agents...
+[2026-02-01 16:27:12,170][INFO] agent_spawner: Cleanup complete
+[2026-02-01 16:27:12,170][INFO] auto_packager: Shutting down auto-packaging system...
+[2026-02-01 16:27:12,884][INFO] auto_packager: Packaging worker stopped
+[2026-02-01 16:27:12,885][INFO] auto_packager: Auto-packaging system stopped
+[2026-02-01 16:27:12,885][INFO] agent_manager: Agent cleanup complete
+[2026-02-01 16:27:12,885][INFO] agent_manager: ✅ Shutdown complete
+[2026-02-01 16:31:22,265][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 16:31:22,385][INFO] agent_manager: Server folder set to: /home/devlord/DW_Server
+[2026-02-01 16:31:22,386][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:31:22,387][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,390][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:31:22,391][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,392][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,392][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,392][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:31:22,392][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:31:22,393][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:31:22,394][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,395][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,396][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:31:22,397][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:31:22,398][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:31:22,398][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,399][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:31:22,399][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:31:22,401][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,404][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:31:22,404][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,405][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,405][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:31:22,406][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:31:22,407][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:31:22,409][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:31:22,410][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:31:22,419][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:31:22,420][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:31:22,421][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,421][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:31:22,421][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,421][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,423][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,423][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:31:22,423][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:31:22,424][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:31:22,424][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,424][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,426][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:31:22,426][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:31:22,429][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:31:22,429][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,429][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:31:22,429][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:31:22,430][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,430][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:31:22,430][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,430][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,431][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:31:22,432][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:31:22,432][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:31:22,432][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:31:22,432][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:31:22,438][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:31:22,911][INFO] root: Logging initialized at INFO level. Log file: data/logs/divine_world.log
+[2026-02-01 16:31:22,912][INFO] agent_manager: Server folder set to: /home/devlord/DW_Server
+[2026-02-01 16:31:22,912][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:31:22,913][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,913][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:31:22,913][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,913][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,914][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,914][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:31:22,914][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:31:22,914][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:31:22,915][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,915][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,916][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:31:22,916][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:31:22,917][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:31:22,917][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,917][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:31:22,917][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:31:22,918][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,918][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:31:22,918][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,919][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,919][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:31:22,919][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:31:22,919][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:31:22,919][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:31:22,919][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:31:22,923][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:31:22,923][INFO] minecraft_launcher: Multi-agent launcher initialized at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents
+[2026-02-01 16:31:22,924][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,924][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:31:22,925][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,925][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,925][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,926][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:31:22,926][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:31:22,928][INFO] packager: ✅ Found frontend at: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-02-01 16:31:22,929][INFO] packager: ✅ Found mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,929][INFO] packager: ✅ Found UltimMC at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,929][INFO] auto_packager: 📦 Packaging worker started
+[2026-02-01 16:31:22,929][INFO] auto_packager: AutoPackaging system initialized (output: /home/devlord/divine-world-core/npc_applications)
+[2026-02-01 16:31:22,930][INFO] auto_packager: Auto-packaging enabled
+[2026-02-01 16:31:22,930][INFO] agent_spawner: AgentClientManager initialized with Minecraft support: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,930][INFO] agent_spawner: AgentSpawner initialized in MINECRAFT mode
+[2026-02-01 16:31:22,930][INFO] agent_spawner: Executable generator ready for dynamic agent creation
+[2026-02-01 16:31:22,931][INFO] minecraft_launcher: Found UltimMC folder at: /home/devlord/divine-world-core/UltimMC
+[2026-02-01 16:31:22,931][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:31:22,931][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:31:22,931][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:31:22,931][WARNING] auto_packager: UltimMC not available: 'UltimMCLauncher' object has no attribute 'ultimmc_path'
+[2026-02-01 16:31:22,932][INFO] agent_manager: AgentProcessManager initialized
+[2026-02-01 16:31:22,932][INFO] auto_connect: AutoConnect System initialized
+[2026-02-01 16:31:22,932][INFO] auto_connect:   Agents Folder: npc_applications
+[2026-02-01 16:31:22,932][INFO] auto_connect:   Server: 127.0.0.1:25565
+[2026-02-01 16:31:22,934][INFO] auto_connect: ✅ Auto-connect system integrated with backend
+[2026-02-01 16:31:22,945][INFO] agent_manager: ======================================================================
+[2026-02-01 16:31:22,945][INFO] agent_manager:   🎮 Divine World Management Server
+[2026-02-01 16:31:22,945][INFO] agent_manager: ======================================================================
+[2026-02-01 16:31:22,945][INFO] agent_manager:   Version: 3.0.0 (Endpoints Corrected + Server Integration)
+[2026-02-01 16:31:22,945][INFO] agent_manager:   Role: Agent Management for Minecraft Mod
+[2026-02-01 16:31:22,945][INFO] agent_manager:   Mod: Divine World 1.20.1
+[2026-02-01 16:31:22,945][INFO] agent_manager:   Agent Runtime: Separate processes (agent.py)
+[2026-02-01 16:31:22,946][INFO] agent_manager: ======================================================================
+[2026-02-01 16:31:22,946][INFO] agent_manager:   CORRECTED ENDPOINTS:
+[2026-02-01 16:31:22,946][INFO] agent_manager:     ✅ /api/player_event (DWEventHandler)
+[2026-02-01 16:31:22,946][INFO] agent_manager:     ✅ /api/breeding/event (BreedingEventHandler)
+[2026-02-01 16:31:22,946][INFO] agent_manager:     ✅ /api/genesis/spawn (DivineCommands)
+[2026-02-01 16:31:22,946][INFO] agent_manager:     ✅ /api/divine_reset (DivineCommands)
+[2026-02-01 16:31:22,946][INFO] agent_manager:     ✅ /api/agents/clear_memories (DivineCommands)
+[2026-02-01 16:31:22,946][INFO] agent_manager:     ✅ /api/gods/spawn (DivineCommands)
+[2026-02-01 16:31:22,946][INFO] agent_manager:     ✅ /api/gods/ability (DivineCommands)
+[2026-02-01 16:31:22,946][INFO] agent_manager:     ✅ /api/gods/transform (DivineCommands)
+[2026-02-01 16:31:22,947][INFO] agent_manager: ======================================================================
+[2026-02-01 16:31:22,947][INFO] agent_manager:   SERVER INTEGRATION:
+[2026-02-01 16:31:22,947][INFO] agent_manager:     📝 Auto-registers agents in usercache.json
+[2026-02-01 16:31:22,947][INFO] agent_manager:     📝 Auto-registers agents in usernamecache.json
+[2026-02-01 16:31:22,947][INFO] agent_manager:     🔄 UUID generation (Minecraft offline mode)
+[2026-02-01 16:31:22,947][INFO] agent_manager:     🏷️  Naming: AI_<n> for NPCs, GOD_<type>_<n> for gods
+[2026-02-01 16:31:22,947][INFO] agent_manager: ======================================================================
+[2026-02-01 16:31:22,949][INFO] agent_manager: 
+[2026-02-01 16:31:22,949][INFO] agent_manager: ⚠️  IMPORTANT: Configure server folder for agent registration!
+[2026-02-01 16:31:22,950][INFO] agent_manager:    Use: POST /api/server/configure
+[2026-02-01 16:31:22,950][INFO] agent_manager:    Body: {"server_folder": "/path/to/minecraft/server"}
+[2026-02-01 16:31:22,950][INFO] agent_manager: 
+[2026-02-01 16:31:22,950][INFO] agent_manager: ✅ Server started and ready for Minecraft mod connections
+[2026-02-01 16:37:41,844][INFO] agent_manager: 🌟 GENESIS: Spawning 2 agents by Devlord
+[2026-02-01 16:37:41,880][INFO] agent_manager:    Server: 127.0.0.1:25565
+[2026-02-01 16:37:41,881][INFO] agent_manager:   Spawn position 1: (17, 67, -313) (Gender: male)
+[2026-02-01 16:37:41,884][INFO] agent_manager: ✓ Brain directory created/verified: /home/devlord/divine-world-core/npc_applications/data/brains/adam
+[2026-02-01 16:37:41,905][INFO] agent_manager: 🔗 Agent Registration: agent_id=adam, username=DW_adam, uuid=b404e21c-7468-325b-a6fe-70e85dbcdcb2
+[2026-02-01 16:37:41,909][INFO] agent_manager: ✅ Registered DW_adam in usernamecache.json
+[2026-02-01 16:37:41,911][INFO] agent_manager: 🚀 Setting up UltimMC for adam...
+[2026-02-01 16:37:41,955][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:37:41,955][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:37:41,956][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:37:41,956][INFO] minecraft_launcher: Copying UltimMC from /home/devlord/divine-world-core/UltimMC to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam
+[2026-02-01 16:37:41,957][INFO] minecraft_launcher: Destination already exists, skipping copy: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam
+[2026-02-01 16:37:41,982][INFO] minecraft_launcher: Found UltimMC executable: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam/bin/UltimMC
+[2026-02-01 16:37:41,982][INFO] minecraft_launcher: Created launcher for adam at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam
+[2026-02-01 16:37:41,982][INFO] minecraft_launcher: Creating local account: DW_adam
+[2026-02-01 16:37:41,995][INFO] minecraft_launcher: Using custom UUID: b404e21c-7468-325b-a6fe-70e85dbcdcb2
+[2026-02-01 16:37:41,995][INFO] minecraft_launcher: Account DW_adam already exists, updating it
+[2026-02-01 16:37:42,010][INFO] minecraft_launcher: ✅ Account created/updated: DW_adam
+[2026-02-01 16:37:42,011][INFO] minecraft_launcher:    UUID: b404e21c-7468-325b-a6fe-70e85dbcdcb2
+[2026-02-01 16:37:42,011][INFO] minecraft_launcher:    Active: True
+[2026-02-01 16:37:42,024][INFO] minecraft_launcher: Creating Minecraft instance: agent_adam
+[2026-02-01 16:37:42,053][INFO] minecraft_launcher: ✅ Instance created: agent_adam
+[2026-02-01 16:37:42,152][INFO] minecraft_launcher: ✅ Installed DivineWorld mod: divineworld-1.0.0-all.jar
+[2026-02-01 16:37:42,176][INFO] minecraft_launcher: ✅ Installed DWClientBot mod: dwclient-1.0.0.jar
+[2026-02-01 16:37:42,177][INFO] minecraft_launcher: ✅ Agent adam configured with username: DW_adam
+[2026-02-01 16:37:42,177][INFO] agent_manager: ✅ UltimMC setup complete for adam
+[2026-02-01 16:37:42,177][INFO] agent_manager: Starting agent backend: /home/devlord/divine-world-core/py_backend/dw_env/bin/python /home/devlord/divine-world-core/ai_core/agent.py --agent-id adam --mode minecraft --log-level INFO --brain-save-path /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap --gender male --personality {"boldness": 0.8, "curiosity": 0.9, "agreeableness": 0.5, "conscientiousness": 0.6, "neuroticism": 0.3, "openness": 0.7, "sociability": 0.6} --spawn-x 17 --spawn-y 67 --spawn-z -313 --genesis-ancestor true
+[2026-02-01 16:37:42,180][INFO] agent_manager: ✅ Agent adam started (PID: 7243)
+[2026-02-01 16:37:42,180][INFO] agent_manager:    Brain will be saved to: /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap
+[2026-02-01 16:37:42,180][INFO] agent_manager: ⏳ Waiting for agent backend to initialize...
+[2026-02-01 16:37:45,180][INFO] agent_manager: 🎮 Launching UltimMC client for adam...
+[2026-02-01 16:37:45,180][INFO] agent_manager:    Agent Type: npc
+[2026-02-01 16:37:45,180][INFO] agent_manager:    Custom Name: Adam
+[2026-02-01 16:37:45,181][INFO] minecraft_launcher: Launching UltimMC instance: agent_adam
+[2026-02-01 16:37:45,181][INFO] minecraft_launcher:   Working directory: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam
+[2026-02-01 16:37:45,181][INFO] minecraft_launcher:   Server: 127.0.0.1:25565
+[2026-02-01 16:37:45,181][INFO] minecraft_launcher:   Profile: None
+[2026-02-01 16:37:45,181][INFO] minecraft_launcher:   Offline: True (name: DW_adam)
+[2026-02-01 16:37:45,182][INFO] minecraft_launcher:   Agent ID: adam
+[2026-02-01 16:37:45,182][INFO] minecraft_launcher:   Backend: http://127.0.0.1:16848
+[2026-02-01 16:37:45,182][INFO] minecraft_launcher:   Memory: 2048MB
+[2026-02-01 16:37:45,182][INFO] minecraft_launcher:   Headless: False
+[2026-02-01 16:37:45,182][INFO] minecraft_launcher:   Command: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/adam/bin/UltimMC -d . -l agent_adam -s 127.0.0.1:25565 -o -n DW_adam
+[2026-02-01 16:37:45,192][INFO] minecraft_launcher: ✅ UltimMC launched with PID: 7250
+[2026-02-01 16:37:45,192][INFO] agent_manager: ✅ UltimMC launched for adam (PID: 7250)
+[2026-02-01 16:37:45,192][INFO] agent_manager:    Server: 127.0.0.1:25565
+[2026-02-01 16:37:45,192][INFO] agent_manager:    Backend: http://127.0.0.1:16848
+[2026-02-01 16:37:45,192][INFO] agent_manager: ✅ Genesis agent spawned: Adam (ID: adam, male) at (17, 67, -313)
+[2026-02-01 16:37:45,192][INFO] agent_manager:    Personality: {'boldness': 0.8, 'curiosity': 0.9, 'agreeableness': 0.5, 'conscientiousness': 0.6, 'neuroticism': 0.3, 'openness': 0.7, 'sociability': 0.6}
+[2026-02-01 16:37:45,193][INFO] agent_manager:    Brain path: /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap
+[2026-02-01 16:37:45,193][INFO] agent_manager:   Spawn position 2: (13, 67, -313) (Gender: female)
+[2026-02-01 16:37:45,193][INFO] agent_manager: ✓ Brain directory created/verified: /home/devlord/divine-world-core/npc_applications/data/brains/eve
+[2026-02-01 16:37:45,253][INFO] agent_manager: 🔗 Agent Registration: agent_id=eve, username=DW_eve, uuid=e2465495-d929-3531-a4a0-2bc79ca47c9f
+[2026-02-01 16:37:45,254][INFO] agent_manager: ✅ Registered DW_eve in usernamecache.json
+[2026-02-01 16:37:45,254][INFO] agent_manager: 🚀 Setting up UltimMC for eve...
+[2026-02-01 16:37:45,255][INFO] minecraft_launcher: ✅ Source UltimMC found at: /home/devlord/divine-world-core/UltimMC/bin/UltimMC
+[2026-02-01 16:37:45,255][INFO] minecraft_launcher: ✅ dwclient-1.0.0.jar found at: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-02-01 16:37:45,255][INFO] minecraft_launcher: ✅ divineworld-1.0.0-all.jar found at: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-02-01 16:37:45,255][INFO] minecraft_launcher: Copying UltimMC from /home/devlord/divine-world-core/UltimMC to /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve
+[2026-02-01 16:37:45,255][INFO] minecraft_launcher: Destination already exists, skipping copy: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve
+[2026-02-01 16:37:45,256][INFO] minecraft_launcher: Found UltimMC executable: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve/bin/UltimMC
+[2026-02-01 16:37:45,256][INFO] minecraft_launcher: Created launcher for eve at: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve
+[2026-02-01 16:37:45,256][INFO] minecraft_launcher: Creating local account: DW_eve
+[2026-02-01 16:37:45,305][INFO] minecraft_launcher: Using custom UUID: e2465495-d929-3531-a4a0-2bc79ca47c9f
+[2026-02-01 16:37:45,305][INFO] minecraft_launcher: Account DW_eve already exists, updating it
+[2026-02-01 16:37:45,305][INFO] minecraft_launcher: ✅ Account created/updated: DW_eve
+[2026-02-01 16:37:45,305][INFO] minecraft_launcher:    UUID: e2465495-d929-3531-a4a0-2bc79ca47c9f
+[2026-02-01 16:37:45,306][INFO] minecraft_launcher:    Active: True
+[2026-02-01 16:37:45,306][INFO] minecraft_launcher: Creating Minecraft instance: agent_eve
+[2026-02-01 16:37:45,351][INFO] minecraft_launcher: ✅ Instance created: agent_eve
+[2026-02-01 16:37:45,389][INFO] minecraft_launcher: ✅ Installed DivineWorld mod: divineworld-1.0.0-all.jar
+[2026-02-01 16:37:45,399][INFO] minecraft_launcher: ✅ Installed DWClientBot mod: dwclient-1.0.0.jar
+[2026-02-01 16:37:45,403][INFO] minecraft_launcher: ✅ Agent eve configured with username: DW_eve
+[2026-02-01 16:37:45,404][INFO] agent_manager: ✅ UltimMC setup complete for eve
+[2026-02-01 16:37:45,404][INFO] agent_manager: Starting agent backend: /home/devlord/divine-world-core/py_backend/dw_env/bin/python /home/devlord/divine-world-core/ai_core/agent.py --agent-id eve --mode minecraft --log-level INFO --brain-save-path /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap --gender female --personality {"boldness": 0.6, "curiosity": 0.7, "agreeableness": 0.9, "conscientiousness": 0.8, "neuroticism": 0.4, "openness": 0.7, "sociability": 0.8} --spawn-x 13 --spawn-y 67 --spawn-z -313 --genesis-ancestor true
+[2026-02-01 16:37:45,405][INFO] agent_manager: ✅ Agent eve started (PID: 7251)
+[2026-02-01 16:37:45,405][INFO] agent_manager:    Brain will be saved to: /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap
+[2026-02-01 16:37:45,405][INFO] agent_manager: ⏳ Waiting for agent backend to initialize...
+[2026-02-01 16:37:48,406][INFO] agent_manager: 🎮 Launching UltimMC client for eve...
+[2026-02-01 16:37:48,406][INFO] agent_manager:    Agent Type: npc
+[2026-02-01 16:37:48,406][INFO] agent_manager:    Custom Name: Eve
+[2026-02-01 16:37:48,406][INFO] minecraft_launcher: Launching UltimMC instance: agent_eve
+[2026-02-01 16:37:48,406][INFO] minecraft_launcher:   Working directory: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve
+[2026-02-01 16:37:48,406][INFO] minecraft_launcher:   Server: 127.0.0.1:25565
+[2026-02-01 16:37:48,407][INFO] minecraft_launcher:   Profile: None
+[2026-02-01 16:37:48,407][INFO] minecraft_launcher:   Offline: True (name: DW_eve)
+[2026-02-01 16:37:48,407][INFO] minecraft_launcher:   Agent ID: eve
+[2026-02-01 16:37:48,407][INFO] minecraft_launcher:   Backend: http://127.0.0.1:13136
+[2026-02-01 16:37:48,407][INFO] minecraft_launcher:   Memory: 2048MB
+[2026-02-01 16:37:48,407][INFO] minecraft_launcher:   Headless: False
+[2026-02-01 16:37:48,407][INFO] minecraft_launcher:   Command: /home/devlord/divine-world-core/npc_applications/.divine-world/ultimmc_agents/eve/bin/UltimMC -d . -l agent_eve -s 127.0.0.1:25565 -o -n DW_eve
+[2026-02-01 16:37:48,617][INFO] minecraft_launcher: ✅ UltimMC launched with PID: 7290
+[2026-02-01 16:37:48,617][INFO] agent_manager: ✅ UltimMC launched for eve (PID: 7290)
+[2026-02-01 16:37:48,617][INFO] agent_manager:    Server: 127.0.0.1:25565
+[2026-02-01 16:37:48,617][INFO] agent_manager:    Backend: http://127.0.0.1:13136
+[2026-02-01 16:37:48,617][INFO] agent_manager: ✅ Genesis agent spawned: Eve (ID: eve, female) at (13, 67, -313)
+[2026-02-01 16:37:48,618][INFO] agent_manager:    Personality: {'boldness': 0.6, 'curiosity': 0.7, 'agreeableness': 0.9, 'conscientiousness': 0.8, 'neuroticism': 0.4, 'openness': 0.7, 'sociability': 0.8}
+[2026-02-01 16:37:48,618][INFO] agent_manager:    Brain path: /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap
+[2026-02-01 16:37:48,623][WARNING] agent_manager: Agent adam exited with code: 2
+[2026-02-01 16:37:48,638][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap
+[2026-02-01 16:37:48,639][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/adam
+[2026-02-01 16:37:48,639][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:37:48,691][INFO] agent_manager: ✅ [Auto-Package] Brain file found after 0s
+[2026-02-01 16:37:48,691][INFO] agent_manager:    File size: 99881181 bytes
+[2026-02-01 16:37:48,691][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/adam/brain.pcap
+[2026-02-01 16:37:48,692][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/adam
+[2026-02-01 16:37:48,692][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:37:48,692][INFO] agent_manager: ✅ [Auto-Package] Brain file found after 0s
+[2026-02-01 16:37:48,692][INFO] agent_manager:    File size: 99881181 bytes
+[2026-02-01 16:37:48,692][WARNING] agent_manager: Agent eve exited with code: 2
+[2026-02-01 16:37:48,692][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap
+[2026-02-01 16:37:48,692][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/eve
+[2026-02-01 16:37:48,692][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:37:48,816][INFO] agent_manager: ✅ [Auto-Package] Brain file found after 0s
+[2026-02-01 16:37:48,817][INFO] agent_manager:    File size: 99881182 bytes
+[2026-02-01 16:37:48,817][INFO] agent_manager: [Auto-Package] Waiting for brain file: /home/devlord/divine-world-core/npc_applications/data/brains/eve/brain.pcap
+[2026-02-01 16:37:48,817][INFO] agent_manager: [Auto-Package] Brain directory: /home/devlord/divine-world-core/npc_applications/data/brains/eve
+[2026-02-01 16:37:48,817][INFO] agent_manager: [Auto-Package] Directory exists: True
+[2026-02-01 16:37:48,817][INFO] agent_manager: ✅ [Auto-Package] Brain file found after 0s
+[2026-02-01 16:37:48,817][INFO] agent_manager:    File size: 99881182 bytes
+[2026-02-01 16:37:50,692][INFO] agent_manager: [Auto-Package] Starting package for adam (type: npc)
+[2026-02-01 16:37:50,692][ERROR] agent_manager: [Auto-Package] Error packaging adam: 'EnhancedAgentSpawner' object has no attribute 'package_agent'
+[2026-02-01 16:37:50,693][INFO] agent_manager: [Auto-Package] Starting package for adam (type: npc)
+[2026-02-01 16:37:50,693][ERROR] agent_manager: [Auto-Package] Error packaging adam: 'EnhancedAgentSpawner' object has no attribute 'package_agent'
+[2026-02-01 16:37:50,818][INFO] agent_manager: [Auto-Package] Starting package for eve (type: npc)
+[2026-02-01 16:37:50,818][ERROR] agent_manager: [Auto-Package] Error packaging eve: 'EnhancedAgentSpawner' object has no attribute 'package_agent'
+[2026-02-01 16:37:50,818][INFO] agent_manager: [Auto-Package] Starting package for eve (type: npc)
+[2026-02-01 16:37:50,818][ERROR] agent_manager: [Auto-Package] Error packaging eve: 'EnhancedAgentSpawner' object has no attribute 'package_agent'
+[2026-02-02 02:08:08,104][INFO] agent_manager: 🛑 Shutting down management server...
+[2026-02-02 02:08:08,141][INFO] agent_manager: Cleaning up agent processes...
+[2026-02-02 02:08:08,143][INFO] minecraft_launcher: ✅ Stopped adam
+[2026-02-02 02:08:08,144][INFO] minecraft_launcher: ✅ Stopped eve
+[2026-02-02 02:08:08,145][INFO] agent_spawner: Cleaning up all agents...
+[2026-02-02 02:08:08,145][INFO] agent_spawner: Cleanup complete
+[2026-02-02 02:08:08,145][INFO] auto_packager: Shutting down auto-packaging system...
+[2026-02-02 02:08:08,452][INFO] auto_packager: Packaging worker stopped
+[2026-02-02 02:08:08,453][INFO] auto_packager: Auto-packaging system stopped
+[2026-02-02 02:08:08,453][INFO] agent_manager: Agent cleanup complete
+[2026-02-02 02:08:08,453][INFO] agent_manager: ✅ Shutdown complete

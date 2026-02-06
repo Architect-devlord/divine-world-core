@@ -32,8 +32,8 @@ public class GodEntityRenderer extends LivingEntityRenderer<Player, PlayerModel<
 
         // Add standard player layers
         this.addLayer(new HumanoidArmorLayer<>(this,
-                new PlayerModel<>(context.bakeLayer(ModelLayers.PLAYER_INNER_ARMOR), true),
-                new PlayerModel<>(context.bakeLayer(ModelLayers.PLAYER_OUTER_ARMOR), false),
+                new net.minecraft.client.model.HumanoidModel<>(context.bakeLayer(ModelLayers.PLAYER_INNER_ARMOR)),
+                new net.minecraft.client.model.HumanoidModel<>(context.bakeLayer(ModelLayers.PLAYER_OUTER_ARMOR)),
                 context.getModelManager()));
 
         this.addLayer(new ItemInHandLayer<>(this, context.getItemInHandRenderer()));

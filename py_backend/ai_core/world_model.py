@@ -28,11 +28,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal, Categorical
 import numpy as np
-from typing import Dict, Any, Optional, List, Tuple
-from dataclasses import dataclass
+from typing import Dict, Any, Optional, List, Tuple, Set, Callable
+from dataclasses import dataclass, asdict, field
 from collections import deque
 import logging
 from pathlib import Path
+from datetime import datetime
+import asyncio
+import json
 from ai_core.config_loader import get_section, get_device
 
 cfg = get_section("world_model", {})
@@ -84,6 +87,719 @@ class WorldModelConfig:
     # Optimization
     use_mixed_precision: bool = True
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+
+# ============================================================================
+# Mental Matrix Simulation (Integrated)
+# ============================================================================
+# The Mental Matrix is the agent's internal simulation space powered by the world model.
+# Agents use it to imagine scenarios, test physics, and visualize thought processes.
+
+@dataclass
+class Vector3:
+    """3D Vector representation for simulation"""
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+    def to_dict(self):
+        return {"x": self.x, "y": self.y, "z": self.z}
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(**data)
+
+
+@dataclass
+class PhysicsBody:
+    """Physics object for Mental Matrix simulation"""
+    velocity: Vector3 = field(default_factory=lambda: Vector3())
+    acceleration: Vector3 = field(default_factory=lambda: Vector3())
+    mass: float = 1.0
+    use_gravity: bool = True
+    elasticity: float = 0.6
+    show_velocity_vector: bool = False
+    friction: float = 0.1
+
+    def to_dict(self):
+        return {
+            "velocity": self.velocity.to_dict(),
+            "acceleration": self.acceleration.to_dict(),
+            "mass": self.mass,
+            "use_gravity": self.use_gravity,
+            "elasticity": self.elasticity,
+            "show_velocity_vector": self.show_velocity_vector,
+            "friction": self.friction,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            velocity=Vector3.from_dict(data.get("velocity", {})),
+            acceleration=Vector3.from_dict(data.get("acceleration", {})),
+            mass=data.get("mass", 1.0),
+            use_gravity=data.get("use_gravity", True),
+            elasticity=data.get("elasticity", 0.6),
+            show_velocity_vector=data.get("show_velocity_vector", False),
+            friction=data.get("friction", 0.1),
+        )
+
+
+@dataclass
+class SimulatedObject:
+    """Object in the Mental Matrix simulation"""
+    id: str
+    object_type: str
+    position: Vector3 = field(default_factory=Vector3)
+    rotation: Vector3 = field(default_factory=Vector3)
+    scale: Vector3 = field(default_factory=lambda: Vector3(1, 1, 1))
+    color: int = 0x4CAF50
+    physics: PhysicsBody = field(default_factory=PhysicsBody)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "type": self.object_type,
+            "position": self.position.to_dict(),
+            "rotation": self.rotation.to_dict(),
+            "scale": self.scale.to_dict(),
+            "color": self.color,
+            "physics": self.physics.to_dict(),
+            "metadata": self.metadata,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            id=data["id"],
+            object_type=data.get("type", "cube"),
+            position=Vector3.from_dict(data.get("position", {})),
+            rotation=Vector3.from_dict(data.get("rotation", {})),
+            scale=Vector3.from_dict(data.get("scale", {"x": 1, "y": 1, "z": 1})),
+            color=data.get("color", 0x4CAF50),
+            physics=PhysicsBody.from_dict(data.get("physics", {})),
+            metadata=data.get("metadata", {}),
+            created_at=data.get("created_at", datetime.utcnow().isoformat()),
+        )
+
+
+class MentalMatrixSimulation:
+    """Agent's internal Mental Matrix simulation powered by world model predictions"""
+
+    GRAVITY = 9.81
+    GROUND_LEVEL = 0.0
+
+    def __init__(self, agent_id: str):
+        self.agent_id = agent_id
+        self.objects: Dict[str, SimulatedObject] = {}
+        self.is_running = False
+        self.time_scale = 1.0
+        self.elapsed_time = 0.0
+        self.frame_count = 0
+        self.observers: List[Callable] = []
+        self.state_history: List[Dict] = []
+        self.max_history = 1000
+
+    def add_object(
+        self,
+        object_type: str = "cube",
+        position: Optional[Vector3] = None,
+        color: Optional[int] = None,
+        physics: Optional[PhysicsBody] = None,
+        metadata: Optional[Dict] = None,
+    ) -> SimulatedObject:
+        """Add object to simulation"""
+        obj_id = f"{object_type}_{len(self.objects)}_{self.frame_count}"
+
+        obj = SimulatedObject(
+            id=obj_id,
+            object_type=object_type,
+            position=position or Vector3(0, 5, 0),
+            color=color or 0x4CAF50,
+            physics=physics or PhysicsBody(),
+            metadata=metadata or {},
+        )
+
+        self.objects[obj_id] = obj
+        log.info(f"[Mental Matrix] Added object: {obj_id}")
+        self._notify_observers("object_added", obj.to_dict())
+        return obj
+
+    def remove_object(self, obj_id: str) -> bool:
+        """Remove object from simulation"""
+        if obj_id in self.objects:
+            self.objects.pop(obj_id)
+            log.info(f"[Mental Matrix] Removed object: {obj_id}")
+            self._notify_observers("object_removed", {"id": obj_id})
+            return True
+        return False
+
+    def apply_impulse(self, obj_id: str, force: Vector3) -> bool:
+        """Apply impulse to object"""
+        if obj_id not in self.objects:
+            return False
+
+        obj = self.objects[obj_id]
+        obj.physics.velocity.x += force.x
+        obj.physics.velocity.y += force.y
+        obj.physics.velocity.z += force.z
+        return True
+
+    def update(self, dt: float = 1.0 / 60.0) -> None:
+        """Update simulation by one frame"""
+        if not self.is_running:
+            return
+
+        dt *= self.time_scale
+        self.elapsed_time += dt
+        self.frame_count += 1
+
+        for obj in self.objects.values():
+            if obj.physics.use_gravity:
+                obj.physics.velocity.y -= self.GRAVITY * dt
+
+            obj.position.x += obj.physics.velocity.x * dt
+            obj.position.y += obj.physics.velocity.y * dt
+            obj.position.z += obj.physics.velocity.z * dt
+
+            friction_factor = 1.0 - (obj.physics.friction * dt)
+            obj.physics.velocity.x *= friction_factor
+            obj.physics.velocity.z *= friction_factor
+
+            if obj.position.y <= self.GROUND_LEVEL + 1:
+                obj.position.y = self.GROUND_LEVEL + 1
+                obj.physics.velocity.y *= -obj.physics.elasticity
+
+                if abs(obj.physics.velocity.y) < 0.1:
+                    obj.physics.velocity.y = 0
+
+        self._record_state()
+
+    def _record_state(self) -> None:
+        """Record current simulation state"""
+        state = {
+            "frame": self.frame_count,
+            "elapsed_time": self.elapsed_time,
+            "objects": [obj.to_dict() for obj in self.objects.values()],
+        }
+        self.state_history.append(state)
+        if len(self.state_history) > self.max_history:
+            self.state_history.pop(0)
+        self._notify_observers("frame_update", state)
+
+    def set_running(self, running: bool) -> None:
+        """Start/stop simulation"""
+        self.is_running = running
+        self._notify_observers("state_changed", {"is_running": running})
+
+    def reset(self) -> None:
+        """Reset simulation"""
+        self.objects.clear()
+        self.elapsed_time = 0.0
+        self.frame_count = 0
+        self.state_history.clear()
+        self._notify_observers("simulation_reset", {})
+
+    def to_dict(self) -> Dict:
+        """Export simulation state"""
+        return {
+            "agent_id": self.agent_id,
+            "is_running": self.is_running,
+            "frame": self.frame_count,
+            "elapsed_time": self.elapsed_time,
+            "time_scale": self.time_scale,
+            "objects": [obj.to_dict() for obj in self.objects.values()],
+            "object_count": len(self.objects),
+        }
+
+    def from_dict(self, data: Dict) -> None:
+        """Import simulation state"""
+        self.objects.clear()
+        for obj_data in data.get("objects", []):
+            self.objects[obj_data["id"]] = SimulatedObject.from_dict(obj_data)
+
+    def subscribe(self, callback: Callable) -> None:
+        """Subscribe to simulation events"""
+        self.observers.append(callback)
+
+    def unsubscribe(self, callback: Callable) -> None:
+        """Unsubscribe from events"""
+        if callback in self.observers:
+            self.observers.remove(callback)
+
+    def _notify_observers(self, event_type: str, data: Any) -> None:
+        """Notify observers of event"""
+        for callback in self.observers:
+            try:
+                callback({
+                    "type": event_type,
+                    "agent_id": self.agent_id,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "data": data,
+                })
+            except Exception as e:
+                log.error(f"Observer notification error: {e}")
+
+
+class MentalMatrixService:
+    """Service managing agent mental matrix simulations"""
+
+    def __init__(self):
+        self.simulations: Dict[str, MentalMatrixSimulation] = {}
+        self.update_interval = 1.0 / 60.0
+        self.update_task = None
+
+    def get_or_create_simulation(self, agent_id: str) -> MentalMatrixSimulation:
+        """Get or create simulation for agent"""
+        if agent_id not in self.simulations:
+            sim = MentalMatrixSimulation(agent_id)
+            self.simulations[agent_id] = sim
+        return self.simulations[agent_id]
+
+    def get_simulation(self, agent_id: str) -> Optional[MentalMatrixSimulation]:
+        """Get existing simulation"""
+        return self.simulations.get(agent_id)
+
+    def remove_simulation(self, agent_id: str) -> bool:
+        """Remove simulation"""
+        if agent_id in self.simulations:
+            self.simulations.pop(agent_id)
+            return True
+        return False
+
+    async def start_update_loop(self) -> None:
+        """Start update loop for all simulations"""
+        while True:
+            try:
+                for sim in self.simulations.values():
+                    sim.update(self.update_interval)
+                await asyncio.sleep(self.update_interval)
+            except Exception as e:
+                log.error(f"Update loop error: {e}")
+                await asyncio.sleep(0.1)
+
+    def export_simulation(self, agent_id: str, output_path: Path) -> bool:
+        """Export simulation to file"""
+        sim = self.get_simulation(agent_id)
+        if not sim:
+            return False
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "w") as f:
+                json.dump(sim.to_dict(), f, indent=2)
+            return True
+        except Exception as e:
+            log.error(f"Export error: {e}")
+            return False
+
+    def import_simulation(self, agent_id: str, input_path: Path) -> bool:
+        """Import simulation from file"""
+        if not input_path.exists():
+            return False
+        try:
+            with open(input_path, "r") as f:
+                data = json.load(f)
+            sim = self.get_or_create_simulation(agent_id)
+            sim.from_dict(data)
+            return True
+        except Exception as e:
+            log.error(f"Import error: {e}")
+            return False
+
+
+# Global Mental Matrix service
+_mental_matrix_service = None
+
+def get_mental_matrix_service() -> MentalMatrixService:
+    """Get or create global Mental Matrix service"""
+    global _mental_matrix_service
+    if _mental_matrix_service is None:
+        _mental_matrix_service = MentalMatrixService()
+    return _mental_matrix_service
+
+
+# ============================================================================
+# Mental Matrix WebSocket Manager
+# ============================================================================
+
+class MentalMatrixWebSocketManager:
+    """Manages WebSocket connections for real-time mental matrix updates"""
+
+    def __init__(self):
+        self.active_connections: Dict[str, Dict[str, Any]] = {}
+        self.subscriptions: Dict[str, Set[str]] = {}
+        self.service = get_mental_matrix_service()
+
+    async def connect(self, websocket, agent_id: str, client_id: str):
+        """Register new WebSocket connection"""
+        await websocket.accept()
+
+        if agent_id not in self.active_connections:
+            self.active_connections[agent_id] = {}
+            self.subscriptions[agent_id] = set()
+
+        self.active_connections[agent_id][client_id] = websocket
+
+        sim = self.service.get_or_create_simulation(agent_id)
+        if agent_id not in self.subscriptions:
+            self.subscriptions[agent_id] = set()
+
+        self.subscriptions[agent_id].add(client_id)
+
+        def on_simulation_event(event):
+            asyncio.create_task(self.broadcast(agent_id, event))
+
+        sim.subscribe(on_simulation_event)
+        log.info(f"[Mental Matrix] Connected: {agent_id}/{client_id}")
+
+        await websocket.send_json({
+            "type": "connected",
+            "agent_id": agent_id,
+            "message": "Connected to Mental Matrix",
+            "simulation": sim.to_dict(),
+        })
+
+    async def disconnect(self, agent_id: str, client_id: str):
+        """Unregister WebSocket connection"""
+        if agent_id in self.active_connections:
+            self.active_connections[agent_id].pop(client_id, None)
+            self.subscriptions[agent_id].discard(client_id)
+
+            if not self.active_connections[agent_id]:
+                self.active_connections.pop(agent_id)
+                self.subscriptions.pop(agent_id, None)
+
+        log.info(f"[Mental Matrix] Disconnected: {agent_id}/{client_id}")
+
+    async def broadcast(self, agent_id: str, message: Dict[str, Any]):
+        """Broadcast message to all clients"""
+        if agent_id not in self.active_connections:
+            return
+
+        disconnected = []
+        for client_id, websocket in self.active_connections[agent_id].items():
+            try:
+                await websocket.send_json(message)
+            except Exception as e:
+                log.warning(f"Error broadcasting to {client_id}: {e}")
+                disconnected.append(client_id)
+
+        for client_id in disconnected:
+            await self.disconnect(agent_id, client_id)
+
+    async def handle_message(self, agent_id: str, client_id: str, message: Dict[str, Any]):
+        """Handle incoming command"""
+        try:
+            msg_type = message.get("type")
+            data = message.get("data", {})
+
+            sim = self.service.get_simulation(agent_id)
+            if not sim:
+                await self.send_error(agent_id, client_id, "Simulation not found")
+                return
+
+            if msg_type == "add_object":
+                await self._handle_add_object(sim, agent_id, data)
+            elif msg_type == "remove_object":
+                await self._handle_remove_object(sim, agent_id, data)
+            elif msg_type == "apply_impulse":
+                await self._handle_apply_impulse(sim, agent_id, data)
+            elif msg_type == "set_running":
+                sim.set_running(data.get("running", False))
+            elif msg_type == "reset":
+                sim.reset()
+            elif msg_type == "set_time_scale":
+                sim.time_scale = data.get("time_scale", 1.0)
+            elif msg_type == "update_object":
+                await self._handle_update_object(sim, agent_id, data)
+            elif msg_type == "export":
+                await self._handle_export(sim, agent_id, data)
+            elif msg_type == "import":
+                await self._handle_import(sim, agent_id, data)
+            else:
+                await self.send_error(agent_id, client_id, f"Unknown command: {msg_type}")
+        except Exception as e:
+            log.error(f"Error handling message: {e}")
+            await self.send_error(agent_id, client_id, str(e))
+
+    async def _handle_add_object(self, sim, agent_id: str, data: Dict):
+        """Handle add object command"""
+        obj_type = data.get("type", "cube")
+        position = Vector3.from_dict(data.get("position", {}))
+        color = data.get("color", 0x4CAF50)
+        physics_data = data.get("physics", {})
+        physics = PhysicsBody.from_dict(physics_data) if physics_data else PhysicsBody()
+
+        obj = sim.add_object(
+            object_type=obj_type,
+            position=position,
+            color=color,
+            physics=physics,
+            metadata=data.get("metadata", {}),
+        )
+
+        await self.broadcast(agent_id, {
+            "type": "object_added",
+            "agent_id": agent_id,
+            "object": obj.to_dict(),
+        })
+
+    async def _handle_remove_object(self, sim, agent_id: str, data: Dict):
+        """Handle remove object command"""
+        obj_id = data.get("id")
+        if sim.remove_object(obj_id):
+            await self.broadcast(agent_id, {
+                "type": "object_removed",
+                "agent_id": agent_id,
+                "id": obj_id,
+            })
+
+    async def _handle_apply_impulse(self, sim, agent_id: str, data: Dict):
+        """Handle apply impulse command"""
+        obj_id = data.get("id")
+        force = Vector3.from_dict(data.get("force", {}))
+        sim.apply_impulse(obj_id, force)
+
+    async def _handle_update_object(self, sim, agent_id: str, data: Dict):
+        """Handle update object properties"""
+        obj_id = data.get("id")
+        if obj_id in sim.objects:
+            obj = sim.objects[obj_id]
+            if "position" in data:
+                obj.position = Vector3.from_dict(data["position"])
+            if "velocity" in data:
+                obj.physics.velocity = Vector3.from_dict(data["velocity"])
+            if "color" in data:
+                obj.color = data["color"]
+
+            await self.broadcast(agent_id, {
+                "type": "object_updated",
+                "agent_id": agent_id,
+                "object": obj.to_dict(),
+            })
+
+    async def _handle_export(self, sim, agent_id: str, data: Dict):
+        """Handle export command"""
+        await self.broadcast(agent_id, {
+            "type": "export_data",
+            "agent_id": agent_id,
+            "data": sim.to_dict(),
+        })
+
+    async def _handle_import(self, sim, agent_id: str, data: Dict):
+        """Handle import command"""
+        sim.from_dict(data.get("data", {}))
+        await self.broadcast(agent_id, {
+            "type": "import_complete",
+            "agent_id": agent_id,
+            "simulation": sim.to_dict(),
+        })
+
+    async def send_error(self, agent_id: str, client_id: str, error: str):
+        """Send error message"""
+        if (agent_id in self.active_connections and 
+            client_id in self.active_connections[agent_id]):
+            try:
+                await self.active_connections[agent_id][client_id].send_json({
+                    "type": "error",
+                    "agent_id": agent_id,
+                    "error": error,
+                })
+            except Exception as e:
+                log.error(f"Error sending error message: {e}")
+
+
+_mental_matrix_websocket_manager = None
+
+
+def get_mental_matrix_manager() -> MentalMatrixWebSocketManager:
+    """Get or create global WebSocket manager instance"""
+    global _mental_matrix_websocket_manager
+    if _mental_matrix_websocket_manager is None:
+        _mental_matrix_websocket_manager = MentalMatrixWebSocketManager()
+    return _mental_matrix_websocket_manager
+
+
+# ============================================================================
+# Mental Matrix Agent Client
+# ============================================================================
+
+class MentalMatrixAgentClient:
+    """Client for agents to interact with Mental Matrix simulation"""
+
+    def __init__(self, agent_id: str, backend_url: str = "http://127.0.0.1:8000"):
+        self.agent_id = agent_id
+        self.backend_url = backend_url
+        self.ws_url = backend_url.replace("http", "ws")
+        self.websocket = None
+        self.session = None
+
+    async def connect(self) -> bool:
+        """Connect to Mental Matrix WebSocket"""
+        try:
+            import aiohttp
+            self.session = aiohttp.ClientSession()
+            ws_endpoint = f"{self.ws_url}/mental-matrix/ws"
+            self.websocket = await self.session.ws_connect(ws_endpoint)
+            
+            await self.websocket.send_json({
+                "type": "connect",
+                "agent_id": self.agent_id,
+            })
+            
+            msg = await self.websocket.receive_json()
+            log.info(f"[Mental Matrix] Connected: {msg}")
+            return True
+        except Exception as e:
+            log.error(f"Failed to connect to Mental Matrix: {e}")
+            return False
+
+    async def disconnect(self):
+        """Disconnect from Mental Matrix"""
+        if self.websocket:
+            await self.websocket.close()
+        if self.session:
+            await self.session.close()
+
+    async def add_object(
+        self,
+        object_type: str = "cube",
+        position: Optional[Dict[str, float]] = None,
+        color: Optional[int] = None,
+        physics: Optional[Dict] = None,
+        metadata: Optional[Dict] = None,
+    ) -> bool:
+        """Add object to mental simulation"""
+        try:
+            command = {
+                "type": "add_object",
+                "data": {
+                    "type": object_type,
+                    "position": position or {"x": 0, "y": 5, "z": 0},
+                    "color": color or 0x4CAF50,
+                    "physics": physics or {},
+                    "metadata": metadata or {},
+                },
+            }
+            await self.send_command(command)
+            return True
+        except Exception as e:
+            log.error(f"Error adding object: {e}")
+            return False
+
+    async def simulate_scenario(
+        self,
+        scenario_name: str,
+        duration_seconds: float = 5.0,
+        objects: Optional[List[Dict]] = None,
+    ) -> Dict[str, Any]:
+        """Run a simulation scenario"""
+        try:
+            await self.send_command({"type": "reset"})
+
+            if objects:
+                for obj in objects:
+                    await self.add_object(**obj)
+
+            await self.send_command({"type": "set_running", "data": {"running": True}})
+
+            await asyncio.sleep(duration_seconds)
+
+            await self.send_command({"type": "set_running", "data": {"running": False}})
+
+            results = await self.send_command({"type": "export"})
+            return results
+        except Exception as e:
+            log.error(f"Error running scenario: {e}")
+            return {}
+
+    async def test_physics_interaction(
+        self,
+        object1_type: str = "cube",
+        object2_type: str = "sphere",
+    ) -> Dict[str, Any]:
+        """Test how two objects interact physically"""
+        try:
+            await self.send_command({"type": "reset"})
+
+            await self.add_object(
+                object_type=object1_type,
+                position={"x": -5, "y": 2, "z": 0},
+                color=0xFF6B6B,
+            )
+
+            await self.add_object(
+                object_type=object2_type,
+                position={"x": 5, "y": 2, "z": 0},
+                color=0x4ECDC4,
+            )
+
+            await self.send_command({"type": "set_running", "data": {"running": True}})
+            await asyncio.sleep(3.0)
+
+            results = await self.send_command({"type": "export"})
+            return results
+        except Exception as e:
+            log.error(f"Error testing physics: {e}")
+            return {}
+
+    async def send_command(self, command: Dict[str, Any]) -> Optional[Dict]:
+        """Send command to Mental Matrix"""
+        try:
+            if not self.websocket:
+                log.error("WebSocket not connected")
+                return None
+
+            await self.websocket.send_json(command)
+            response = await self.websocket.receive_json()
+            return response
+        except Exception as e:
+            log.error(f"Error sending command: {e}")
+            return None
+
+    async def listen_for_updates(self, callback):
+        """Listen for simulation updates"""
+        try:
+            while self.websocket and not self.websocket.closed:
+                msg = await self.websocket.receive_json()
+                callback(msg)
+        except Exception as e:
+            log.error(f"Error listening for updates: {e}")
+
+    async def export_simulation(self, output_path: Path) -> bool:
+        """Export simulation to file"""
+        try:
+            result = await self.send_command({"type": "export"})
+            if result and "data" in result:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, "w") as f:
+                    json.dump(result["data"], f, indent=2)
+                log.info(f"Exported simulation to {output_path}")
+                return True
+        except Exception as e:
+            log.error(f"Error exporting simulation: {e}")
+        return False
+
+    async def import_simulation(self, input_path: Path) -> bool:
+        """Import simulation from file"""
+        try:
+            if not input_path.exists():
+                log.error(f"File not found: {input_path}")
+                return False
+
+            with open(input_path, "r") as f:
+                data = json.load(f)
+
+            command = {"type": "import", "data": data}
+            result = await self.send_command(command)
+            log.info(f"Imported simulation from {input_path}")
+            return result is not None
+        except Exception as e:
+            log.error(f"Error importing simulation: {e}")
+        return False
 
 
 # ============================================================================
@@ -1338,15 +2054,232 @@ def _build_observation_from_context(agent, context: Optional[Dict] = None) -> Di
 
 
 # ============================================================================
+# Mental Matrix API Routes (FastAPI Integration)
+# ============================================================================
+
+def get_mental_matrix_router():
+    """Get FastAPI router for Mental Matrix endpoints"""
+    from fastapi import APIRouter, WebSocket, HTTPException, WebSocketDisconnect
+    import uuid
+    
+    router = APIRouter(prefix="/mental-matrix", tags=["mental-matrix"])
+    service = get_mental_matrix_service()
+    ws_manager = get_mental_matrix_manager()
+    
+    @router.post("/simulate/{agent_id}")
+    async def simulate(agent_id: str, scenario: dict):
+        """Run a simulation scenario"""
+        try:
+            sim = service.get_or_create_simulation(agent_id)
+            
+            objects = scenario.get("objects", [])
+            duration = scenario.get("duration", 5.0)
+            time_scale = scenario.get("time_scale", 1.0)
+            
+            sim.time_scale = time_scale
+            sim.reset()
+            
+            for obj_data in objects:
+                sim.add_object(
+                    object_type=obj_data.get("type", "cube"),
+                    position=Vector3.from_dict(obj_data.get("position", {})),
+                    color=obj_data.get("color", 0x4CAF50),
+                    physics=PhysicsBody.from_dict(obj_data.get("physics", {})),
+                    metadata=obj_data.get("metadata", {}),
+                )
+            
+            sim.set_running(True)
+            frames = int(duration / (1.0 / 60.0))
+            for _ in range(frames):
+                sim.update(1.0 / 60.0)
+                await asyncio.sleep(0.001)
+            
+            sim.set_running(False)
+            return {"success": True, "agent_id": agent_id, "simulation": sim.to_dict()}
+        except Exception as e:
+            log.error(f"Simulation error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @router.get("/status/{agent_id}")
+    async def get_status(agent_id: str):
+        """Get simulation status"""
+        try:
+            sim = service.get_simulation(agent_id)
+            if not sim:
+                raise HTTPException(status_code=404, detail="Simulation not found")
+            
+            return {
+                "agent_id": agent_id,
+                "status": "running" if sim.is_running else "stopped",
+                "simulation": sim.to_dict(),
+            }
+        except Exception as e:
+            log.error(f"Status error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @router.post("/add-object/{agent_id}")
+    async def add_object(agent_id: str, obj_data: dict):
+        """Add object to simulation"""
+        try:
+            sim = service.get_or_create_simulation(agent_id)
+            
+            obj = sim.add_object(
+                object_type=obj_data.get("type", "cube"),
+                position=Vector3.from_dict(obj_data.get("position", {})),
+                color=obj_data.get("color", 0x4CAF50),
+                physics=PhysicsBody.from_dict(obj_data.get("physics", {})),
+                metadata=obj_data.get("metadata", {}),
+            )
+            
+            return {
+                "success": True,
+                "agent_id": agent_id,
+                "object": obj.to_dict(),
+            }
+        except Exception as e:
+            log.error(f"Add object error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @router.delete("/remove-object/{agent_id}/{obj_id}")
+    async def remove_object(agent_id: str, obj_id: str):
+        """Remove object from simulation"""
+        try:
+            sim = service.get_simulation(agent_id)
+            if not sim:
+                raise HTTPException(status_code=404, detail="Simulation not found")
+            
+            success = sim.remove_object(obj_id)
+            return {
+                "success": success,
+                "agent_id": agent_id,
+                "object_id": obj_id,
+            }
+        except Exception as e:
+            log.error(f"Remove object error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @router.post("/impulse/{agent_id}/{obj_id}")
+    async def apply_impulse(agent_id: str, obj_id: str, force: dict):
+        """Apply impulse to object"""
+        try:
+            sim = service.get_simulation(agent_id)
+            if not sim:
+                raise HTTPException(status_code=404, detail="Simulation not found")
+            
+            success = sim.apply_impulse(obj_id, Vector3.from_dict(force))
+            return {
+                "success": success,
+                "agent_id": agent_id,
+                "object_id": obj_id,
+            }
+        except Exception as e:
+            log.error(f"Impulse error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @router.post("/control/{agent_id}")
+    async def control_simulation(agent_id: str, command: dict):
+        """Control simulation"""
+        try:
+            sim = service.get_or_create_simulation(agent_id)
+            
+            cmd = command.get("command", "")
+            
+            if cmd == "start":
+                sim.set_running(True)
+            elif cmd == "stop":
+                sim.set_running(False)
+            elif cmd == "reset":
+                sim.reset()
+            elif cmd == "set_time_scale":
+                sim.time_scale = command.get("value", 1.0)
+            else:
+                raise HTTPException(status_code=400, detail=f"Unknown command: {cmd}")
+            
+            return {"success": True, "agent_id": agent_id, "command": cmd}
+        except Exception as e:
+            log.error(f"Control error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @router.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        """WebSocket for real-time updates"""
+        agent_id = None
+        client_id = str(uuid.uuid4())
+        
+        try:
+            initial_msg = await websocket.receive_json()
+            agent_id = initial_msg.get("agent_id")
+            
+            if not agent_id:
+                await websocket.send_json({"type": "error", "error": "agent_id required"})
+                await websocket.close(code=1008)
+                return
+            
+            await ws_manager.connect(websocket, agent_id, client_id)
+            
+            while True:
+                msg = await websocket.receive_json()
+                await ws_manager.handle_message(agent_id, client_id, msg)
+        
+        except WebSocketDisconnect:
+            if agent_id:
+                await ws_manager.disconnect(agent_id, client_id)
+                log.info(f"[WebSocket] Disconnected: {agent_id}/{client_id}")
+        except Exception as e:
+            log.error(f"WebSocket error: {e}")
+            if agent_id:
+                await ws_manager.disconnect(agent_id, client_id)
+    
+    @router.get("/health")
+    async def health_check():
+        """Health check"""
+        return {
+            "status": "healthy",
+            "active_simulations": len(service.simulations),
+        }
+    
+    return router
+
+
+def register_mental_matrix_api(app):
+    """Register Mental Matrix routes with FastAPI app"""
+    router = get_mental_matrix_router()
+    app.include_router(router)
+    
+    @app.on_event("startup")
+    async def startup():
+        log.info("[Mental Matrix] Starting service update loop...")
+        asyncio.create_task(service.start_update_loop())
+    
+    log.info("[Mental Matrix] API registered")
+
+
+# ============================================================================
 # Export
 # ============================================================================
 
 __all__ = [
+    # World Model
     'WorldModel',
     'WorldModelConfig',
     'EnsembleWorldModel',
     'WorldModelReplayBuffer',
     'WorldModelTrainer',
+    
+    # Mental Matrix (integrated)
+    'MentalMatrixSimulation',
+    'MentalMatrixService',
+    'MentalMatrixWebSocketManager',
+    'MentalMatrixAgentClient',
+    'SimulatedObject',
+    'PhysicsBody',
+    'Vector3',
+    'get_mental_matrix_service',
+    'get_mental_matrix_manager',
+    'get_mental_matrix_router',
+    'register_mental_matrix_api',
+    
+    # Integration
     'integrate_world_model_with_agent',
     'create_default_world_model',
     'test_world_model',

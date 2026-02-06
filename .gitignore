@@ -12,7 +12,6 @@ build/
 npc_applications/
 .next/
 out/
-UltimMC/
 data/
 logs/
 
@@ -34,6 +33,7 @@ logs/
 coverage/
 .nyc_output/
 tests/
+UltimMC/
 # ============================================================================
 # Python
 # ============================================================================
@@ -72,13 +72,12 @@ env/
 # Java / Gradle / Forge
 # ============================================================================
 # eclipse
-bin/
 *.launch
 .settings/
 .metadata
 .classpath
 .project
-
+bin/
 # idea
 out/
 *.ipr

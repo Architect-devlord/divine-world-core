@@ -352,6 +352,7 @@ class AgentProcessManager:
                     str(agent_script),
                     '--agent-id', agent_id,
                     '--mode', mode,
+                    '--port', str(backend_port),
                     '--log-level', 'INFO',
                     '--brain-save-path', brain_save_path
                 ]

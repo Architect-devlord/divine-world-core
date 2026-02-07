@@ -389,6 +389,10 @@ class NPCAgent:
         """Check if agent is running autonomously"""
         return self.cognitive_loop and self.cognitive_loop.running
 
+    async def broadcast(self, message: dict):
+        """Broadcast message to all connected WebSocket clients"""
+        await broadcast_to_clients(message)
+
     # ==================== PERCEPTION & ACTION ====================
 
     def perceive(self, raw_observation: Dict[str, Any]) -> np.ndarray:
@@ -939,10 +943,10 @@ class NPCAgent:
 # STANDALONE RUNTIME
 # =============================================================================
 
-async def run_server():
+async def run_server(port: int = 8000):
     """Run the FastAPI web server for frontend connections"""
     global global_server
-    config = uvicorn.Config(app, host="127.0.0.1", port=8000, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     global_server = uvicorn.Server(config)
     await global_server.serve()
 
@@ -955,7 +959,8 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
                                gender: Optional[Any] = None,
                                personality_traits: Optional[Dict[str, float]] = None,
                                spawn_pos: Optional[tuple] = None,
-                               genesis_ancestor: bool = False):
+                               genesis_ancestor: bool = False,
+                               port: int = 8000):
     """
     Run agent in standalone mode without backend server.
     
@@ -1007,7 +1012,7 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         agent.metadata['genesis_ancestor'] = genesis_ancestor
     
     # Start web server for frontend connection
-    server_task = asyncio.create_task(run_server())
+    server_task = asyncio.create_task(run_server(port=port))
     
     # Load brain if specified
     if load_brain and Path(load_brain).exists():
@@ -1313,6 +1318,13 @@ def main():
         default='demo',
         help='Agent identifier (default: demo)'
     )
+
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=8000,
+        help='FastAPI server port (default: 8000)'
+    )
     
     parser.add_argument(
         '--mode',
@@ -1441,7 +1453,8 @@ def main():
             gender=gender,
             personality_traits=personality_traits,
             spawn_pos=(args.spawn_x, args.spawn_y, args.spawn_z) if args.spawn_x is not None else None,
-            genesis_ancestor=args.genesis_ancestor == 'true' if args.genesis_ancestor else False
+            genesis_ancestor=args.genesis_ancestor == 'true' if args.genesis_ancestor else False,
+            port=args.port
         ))
     except KeyboardInterrupt:
         print("\n✅ Agent stopped")

@@ -76,7 +76,7 @@ active_websockets = []
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_websockets.append(websocket)
-    
+
     try:
         # Send connection confirmation
         await websocket.send_json({
@@ -85,22 +85,22 @@ async def websocket_endpoint(websocket: WebSocket):
             "protocol": "json",
             "version": "1.0.0"
         })
-        
+
         log.info(f"[WS] Client connected. Active connections: {len(active_websockets)}")
-        
+
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
-            
+
             log.info(f"[WS] Received: {message.get('type', 'unknown')}")
-            
+
             if message.get("type") == "chat":
                 user_message = message.get("message", "")
-                
+
                 if global_agent and user_message:
                     # Process with agent
                     response = await global_agent.process_chat(user_message)
-                    
+
                     # Send agent response back
                     await websocket.send_json({
                         "type": "chat",
@@ -108,9 +108,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         "text": response,
                         "timestamp": time.time()
                     })
-                    
+
                     log.info(f"[WS] Sent response: {response[:50]}...")
-    
+
     except WebSocketDisconnect:
         log.info("[WS] Client disconnected")
     except Exception as e:
@@ -128,15 +128,15 @@ async def agent_perception_ws(websocket: WebSocket):
         await websocket.accept()
         data = await websocket.receive_json()
         agent_id = data.get("agent_id")
-        
+
         if not agent_id:
             log.warning("WebSocket connection attempt without agent_id")
             await websocket.close(code=4000, reason="Missing agent_id")
             return
-        
+
         log.info(f"WebSocket connection accepted for agent: {agent_id}")
         await handle_agent_websocket(websocket, agent_id, global_agent)
-    
+
     except Exception as e:
         log.error(f"WebSocket error: {e}")
         try:
@@ -153,7 +153,7 @@ async def broadcast_to_clients(message: dict):
             await ws.send_json(message)
         except:
             dead_sockets.append(ws)
-    
+
     for ws in dead_sockets:
         active_websockets.remove(ws)
 
@@ -173,7 +173,7 @@ async def get_thoughts():
 async def chat(message: str = Form(...)):
     if global_agent:
         response = await global_agent.process_chat(message)
-        
+
         # Broadcast to WebSocket clients
         await broadcast_to_clients({
             "type": "chat",
@@ -181,7 +181,7 @@ async def chat(message: str = Form(...)):
             "text": response,
             "timestamp": time.time()
         })
-        
+
         return {"response": response}
     return {"error": "Agent not running"}
 
@@ -189,11 +189,11 @@ async def chat(message: str = Form(...)):
 async def upload_file(file: UploadFile = File(...), agent_id: str = Form(...), filetype: str = Form(...), sync: bool = Form(False)):
     if not global_agent:
         return {"error": "Agent not running"}
-    
+
     try:
         content = await file.read()
         text_content = content.decode('utf-8')
-        
+
         # Add file content to memory
         global_agent.memory.remember({
             'type': 'file_upload',
@@ -202,14 +202,14 @@ async def upload_file(file: UploadFile = File(...), agent_id: str = Form(...), f
             'content': text_content,
             'size': len(content)
         }, tags=['file', 'upload', 'learning'])
-        
+
         # If sync, process immediately
         if sync:
             thought = f"I received and processed file: {file.filename} ({filetype})"
             global_agent.thoughts.append({"timestamp": time.time(), "thought": thought})
             if len(global_agent.thoughts) > 100:
                 global_agent.thoughts = global_agent.thoughts[-100:]
-        
+
         return {"success": True, "filename": file.filename, "size": len(content)}
     except Exception as e:
         return {"error": str(e)}
@@ -230,12 +230,12 @@ class NPCAgent:
                 use_scylla: bool = True,
                 mode: str = 'autonomous',
                 god_type: Optional[str] = None):
-        
+
         self.agent_id = agent_id
         self.autonomous_mode = autonomous
         self.mode = mode
         self.god_type = god_type
-        
+
         # Core components
         if gender is None:
             from ai_core.personality import assign_npc_gender
@@ -243,7 +243,7 @@ class NPCAgent:
 
         self.personality = Personality(gender=gender, traits=persona_traits)
         self.emotion = EmotionSystem()
-        
+
         # UNIFIED MEMORY with ScyllaDB
         self.memory = UnifiedMemoryStore(
             agent_id=agent_id,
@@ -251,14 +251,14 @@ class NPCAgent:
             use_scylla=use_scylla,
             scylla_hosts=['127.0.0.1']
         )
-        
+
         # Brain
         self.brain = BrainCore(agent_ref=self)
         self.planner = CognitivePlanner(brain=self.brain)
-        
+
         # Initialize language intelligence
         self._init_language()
-        
+
         # Attach continual learning (Avalanche) if available
         try:
             from ai_core.continual_learner import add_continual_learning
@@ -278,37 +278,37 @@ class NPCAgent:
         # Client process info (optional - only for Minecraft mode)
         self.client_process = client_process
         self.agent_type = 'npc'
-        
+
         # AI components (lazy loading)
         self.policy = None
         self.reward_system = None
-        
+
         # Neural stack placeholders
         self.world_model = None
         self.world_model_trainer = None
         self.world_model_buffer = None
         self._neural_integrated = False
-        
+
         # Metadata
         self.metadata = {}
-        
+
         # Thoughts for frontend sync
         self.thoughts = [
             {"timestamp": time.time(), "thought": "Initializing agent systems..."},
             {"timestamp": time.time(), "thought": "Memory system online"},
             {"timestamp": time.time(), "thought": "Ready to interact and learn"}
         ]
-        
+
         # COGNITIVE LOOP
         self.cognitive_loop = None
         self._init_world_model()
         self._init_audio_processor()
-        
+
         if self.autonomous_mode:
             self._init_cognitive_loop()
-        
+
         log.info(f"NPCAgent initialized: {agent_id} (mode: {mode}, autonomous: {autonomous})")
-        
+
         # Initialize web browsing if available
         try:
             from ai_core.web_browser import add_web_browsing_to_agent
@@ -316,7 +316,7 @@ class NPCAgent:
             log.info(f"[{self.agent_id}] Web browsing initialized")
         except Exception as e:
             log.warning(f"Web browsing not available: {e}")
-        
+
         # Initialize Minecraft client
         from ai_core.actuators import MinecraftClient
         self.minecraft_client = MinecraftClient(
@@ -359,7 +359,7 @@ class NPCAgent:
             log.info(f"[{self.agent_id}] World model integrated")
         except Exception as e:
             log.warning(f"World model not available: {e}")
-    
+
     def _init_audio_processor(self):
         """Initialize audio processing for listening"""
         try:
@@ -375,7 +375,7 @@ class NPCAgent:
         """Start fully autonomous operation"""
         if not self.cognitive_loop:
             self._init_cognitive_loop()
-        
+
         await self.cognitive_loop.start()
         log.info(f"✅ {self.agent_id} is now FULLY AUTONOMOUS")
 
@@ -388,6 +388,10 @@ class NPCAgent:
     def is_autonomous(self) -> bool:
         """Check if agent is running autonomously"""
         return self.cognitive_loop and self.cognitive_loop.running
+
+    async def broadcast(self, message: dict):
+        """Broadcast message to all connected WebSocket clients"""
+        await broadcast_to_clients(message)
 
     # ==================== PERCEPTION & ACTION ====================
 
@@ -441,7 +445,7 @@ class NPCAgent:
 
         obs_array = np.array(obs_parts[:50], dtype=np.float32)
         self.last_obs = obs_array
-        
+
         # Feed to cognitive loop
         if self.cognitive_loop and self.cognitive_loop.running:
             self.cognitive_loop.receive_state_update({
@@ -449,21 +453,21 @@ class NPCAgent:
                 'hunger': self.hunger,
                 'raw_observation': raw_observation
             })
-        
+
         return obs_array
-    
+
     def observe(self, image: np.ndarray, info: Dict[str, Any] = None) -> np.ndarray:
         """Process visual observation and store in memory"""
         try:
             from ai_core.vision import VisionAdapter
-            
+
             # Initialize vision adapter if needed
             if not hasattr(self, 'vision_adapter'):
                 self.vision_adapter = VisionAdapter()
-            
+
             # Preprocess image
             processed_image = self.vision_adapter.preprocess(image)
-            
+
             # Store visual observation in memory
             memory_data = {
                 'type': 'visual_observation',
@@ -474,27 +478,27 @@ class NPCAgent:
                 'filename': info.get('filename', ''),
                 'timestamp': time.time()
             }
-            
+
             # Add emotional context if available
             if hasattr(self, 'emotion'):
                 memory_data['emotional_context'] = self.emotion.snapshot()
-            
+
             self.memory.remember(memory_data, tags=['vision', 'observation', 'visual'])
-            
+
             # Generate a thought about the observation
             thought = f"I observed a visual scene: {memory_data['description']}"
             self.thoughts.append({"timestamp": time.time(), "thought": thought})
             if len(self.thoughts) > 100:
                 self.thoughts = self.thoughts[-100:]
-            
+
             # Return processed observation for potential use by other systems
             return processed_image
-            
+
         except Exception as e:
             log.error(f"Error processing visual observation: {e}")
             # Return a dummy observation
             return np.zeros((3, 84, 84), dtype=np.float32)
-    
+
     def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         """Make decision based on observation"""
         if self.policy is None:
@@ -627,10 +631,10 @@ class NPCAgent:
             'sender': 'user',
             'message': message
         }, tags=['chat', 'user', 'learning'])
-        
+
         # Try to generate a response using brain/language
         response = f"I am {self.agent_id}. You said: {message}"
-        
+
         try:
             if hasattr(self.brain, 'language') and self.brain.language.language_stage >= 1:
                 # Use language system to generate response
@@ -645,27 +649,27 @@ class NPCAgent:
                     response = f"I am {self.agent_id}. I received your message: {message}"
         except Exception as e:
             log.warning(f"Brain response generation failed: {e}")
-        
+
         # Add agent response to memory
         self.memory.remember({
             'type': 'chat_message',
             'sender': 'agent',
             'message': response
         }, tags=['chat', 'agent', 'response'])
-        
+
         # Generate a thought about the conversation
         thought = f"I just chatted with a user. They said: {message[:50]}..."
         self.thoughts.append({"timestamp": time.time(), "thought": thought})
         if len(self.thoughts) > 100:
             self.thoughts = self.thoughts[-100:]
-        
+
         # Broadcast thought to WebSocket clients
         await broadcast_to_clients({
             "type": "agent_thought",
             "internal_thought": thought,
             "timestamp": time.time()
         })
-        
+
         return response
 
     # ==================== SAVE/LOAD ====================
@@ -679,46 +683,52 @@ class NPCAgent:
         if hasattr(self.brain, 'language'):
             language_state = self.brain.language.state_dict()
 
+        # Prepare metadata (merging current metadata)
+        metadata = {
+            'agent_id': self.agent_id,
+            'agent_type': self.agent_type,
+            'mode': self.mode,
+            'gender': self.personality.gender,
+            'step_count': self.step_count,
+            'saved_at': time.time(),
+            'autonomous': self.autonomous_mode
+        }
+        metadata.update(self.metadata)
+
         capsule = BrainCapsule(
-            metadata={
-                'agent_id': self.agent_id,
-                'agent_type': self.agent_type,
-                'mode': self.mode,
-                'gender': self.personality.gender,
-                'step_count': self.step_count,
-                'saved_at': time.time(),
-                'autonomous': self.autonomous_mode
-            },
+            metadata=metadata,
             personality=self.personality.to_dict(),
             emotion_snapshot=self.emotion.snapshot(),
             memory_snapshot=self.memory.recall(1000),
             language_state=language_state
         )
 
-        # Save policy state
-        if self.policy:
-            capsule.model_state = self.policy.state_dict()
-
         # Neural stack persistence
-        extra_model_state = {}
+        model_state = {}
 
+        # 1. Save policy state (with portability fix)
+        if self.policy:
+            # Move to CPU for portability
+            try:
+                model_state['policy'] = {
+                    k: v.cpu() if isinstance(v, torch.Tensor) else v
+                    for k, v in self.policy.state_dict().items()
+                }
+            except Exception as e:
+                log.error(f"[{self.agent_id}] Failed to serialize policy: {e}")
+
+        # 2. Save world model state
         try:
             if getattr(self, "world_model", None) is not None:
                 if hasattr(self.world_model, "state_dict"):
-                    extra_model_state['world_model'] = {
-                        k: v.cpu() for k, v in self.world_model.state_dict().items()
+                    model_state['world_model'] = {
+                        k: v.cpu() if isinstance(v, torch.Tensor) else v
+                        for k, v in self.world_model.state_dict().items()
                     }
         except Exception as e:
-            log.exception(f"[{self.agent_id}] Error serializing neural stack: {e}")
+            log.exception(f"[{self.agent_id}] Error serializing world model: {e}")
 
-        # Merge into capsule
-        try:
-            capsule_model_state = getattr(capsule, "model_state", {}) or {}
-            capsule_model_state.update(extra_model_state)
-            capsule.model_state = capsule_model_state
-        except Exception as e:
-            log.exception(f"[{self.agent_id}] Failed to attach extra model_state: {e}")
-
+        capsule.model_state = model_state
         capsule.save(path)
         log.info(f"[{self.agent_id}] Saved to {path}")
 
@@ -744,27 +754,47 @@ class NPCAgent:
         # Restore language
         if capsule.language_state:
             if hasattr(self.brain, 'language'):
-                self.brain.language.load_state_dict(capsule.language_state)
-                log.info(f"[{self.agent_id}] Language restored.")
+                try:
+                    self.brain.language.load_state_dict(capsule.language_state)
+                    log.info(f"[{self.agent_id}] Language restored.")
+                except Exception as e:
+                    log.warning(f"[{self.agent_id}] Language restore failed: {e}")
 
         # Restore model weights
-        if capsule.model_state and self.policy:
-            self.policy.load_state_dict(capsule.model_state)
+        saved_model_state = capsule.model_state or {}
 
-        # Restore neural stack
+        if self.policy:
+            if 'policy' in saved_model_state:
+                try:
+                    self.policy.load_state_dict(saved_model_state['policy'])
+                    log.info(f"[{self.agent_id}] Policy restored from capsule.")
+                except Exception as e:
+                    log.warning(f"[{self.agent_id}] Policy load failed: {e}")
+            elif saved_model_state:
+                # Fallback for old format
+                try:
+                    self.policy.load_state_dict(saved_model_state, strict=False)
+                    log.info(f"[{self.agent_id}] Policy restored from legacy state (non-strict).")
+                except Exception as e:
+                    log.warning(f"[{self.agent_id}] Legacy policy restore failed: {e}")
+
+        # Restore neural stack (world model)
         try:
-            saved_state = getattr(capsule, "model_state", {}) or {}
-            if 'world_model' in saved_state:
+            if 'world_model' in saved_model_state:
                 try:
                     from ai_core import world_model as wm_module
                 except Exception:
                     wm_module = None
-                
-                wm_state = saved_state['world_model']
+
+                wm_state = saved_model_state['world_model']
                 if wm_module and hasattr(wm_module, "WorldModel"):
                     self.world_model = wm_module.WorldModel(agent_id=self.agent_id)
                     if hasattr(self.world_model, "load_state_dict"):
-                        self.world_model.load_state_dict(wm_state)
+                        try:
+                            self.world_model.load_state_dict(wm_state)
+                            log.info(f"[{self.agent_id}] World model restored.")
+                        except Exception as e:
+                            log.warning(f"[{self.agent_id}] World model load failed: {e}")
         except Exception as e:
             log.exception(f"[{self.agent_id}] Failed to restore neural stack: {e}")
 
@@ -914,24 +944,24 @@ class NPCAgent:
         # Stop cognitive loop
         if self.cognitive_loop:
             await self.stop_autonomous_mode()
-        
+
         # Save state - use provided path if available, otherwise use relative path
         brain_save_path = self.metadata.get('brain_save_path')
-        
+
         if brain_save_path:
             # Use absolute path provided from backend
             brain_path = Path(brain_save_path)
         else:
             # Fallback to relative path (for standalone execution)
             brain_path = Path(f"data/brains/{self.agent_id}/brain.pcap")
-        
+
         brain_path.parent.mkdir(parents=True, exist_ok=True)
         self.save(str(brain_path))
-        
+
         # Close memory backend
         if hasattr(self.memory, 'close'):
             self.memory.close()
-        
+
         log.info(f"[{self.agent_id}] Shutdown complete")
 
 
@@ -939,10 +969,10 @@ class NPCAgent:
 # STANDALONE RUNTIME
 # =============================================================================
 
-async def run_server():
+async def run_server(port: int = 8000):
     """Run the FastAPI web server for frontend connections"""
     global global_server
-    config = uvicorn.Config(app, host="127.0.0.1", port=8000, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     global_server = uvicorn.Server(config)
     await global_server.serve()
 
@@ -955,10 +985,11 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
                                gender: Optional[Any] = None,
                                personality_traits: Optional[Dict[str, float]] = None,
                                spawn_pos: Optional[tuple] = None,
-                               genesis_ancestor: bool = False):
+                               genesis_ancestor: bool = False,
+                               port: int = 8000):
     """
     Run agent in standalone mode without backend server.
-    
+
     Args:
         agent_id: Unique identifier
         mode: 'autonomous', 'chat', or 'minecraft'
@@ -973,7 +1004,7 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         genesis_ancestor: Whether this is a genesis ancestor
     """
     global global_agent
-    
+
     print(f"\n{'='*70}")
     print(f"  🤖 STARTING STANDALONE AGENT: {agent_id}")
     print(f"{'='*70}")
@@ -982,7 +1013,7 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
     if load_brain:
         print(f"  Loading Brain: {load_brain}")
     print(f"{'='*70}\n")
-    
+
     # Create agent
     agent = NPCAgent(
         agent_id=agent_id,
@@ -992,23 +1023,31 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         gender=gender,
         persona_traits=personality_traits
     )
-    
+
     # Store brain save path if provided (from backend)
     if brain_save_path:
         agent.metadata['brain_save_path'] = brain_save_path
-    
+
     global_agent = agent
-    
+
     # Store spawn position and genesis info
     if spawn_pos:
         agent.metadata['spawn_pos'] = spawn_pos
         agent.metadata['spawn_x'], agent.metadata['spawn_y'], agent.metadata['spawn_z'] = spawn_pos
     if genesis_ancestor:
         agent.metadata['genesis_ancestor'] = genesis_ancestor
-    
+
     # Start web server for frontend connection
-    server_task = asyncio.create_task(run_server())
-    
+    server_task = asyncio.create_task(run_server(port=port))
+
+    # Save initial brain state to ensure file exists for packager
+    initial_save_path = brain_save_path or agent.metadata.get('brain_save_path')
+    if initial_save_path:
+        initial_brain_path = Path(initial_save_path)
+        initial_brain_path.parent.mkdir(parents=True, exist_ok=True)
+        agent.save(str(initial_brain_path))
+        log.info(f"💾 Initial brain saved for {agent.agent_id}")
+
     # Load brain if specified
     if load_brain and Path(load_brain).exists():
         try:
@@ -1016,7 +1055,7 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
             print(f"✅ Brain loaded from {load_brain}")
         except Exception as e:
             print(f"⚠️  Failed to load brain: {e}")
-    
+
     # Print agent info
     print(f"\n📊 Agent Info:")
     print(f"  Personality: {agent.personality.to_dict()}")
@@ -1026,13 +1065,13 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         print(f"  Vocabulary: {agent.brain.language.vocab.next_id} words")
     print(f"  Memory: {len(agent.memory.events)} events")
     print()
-    
+
     print(f"  🌐 API Server: http://127.0.0.1:8000")
     print(f"  🔌 WebSocket: ws://127.0.0.1:8000/ws")
     print(f"  📡 Endpoints: /status, /thoughts, /chat")
     print()
-    
-    
+
+
     # Start modes
     if mode == 'autonomous':
         await agent.start_autonomous_mode()
@@ -1043,42 +1082,42 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         print(f"   Waiting for Minecraft to connect...")
         await agent.minecraft_client.wait_for_connection()
         print(f"✅ Minecraft connected!")
-        
+
     start_time = time.time()
-    
+
     # Chat interface task
     chat_task = None
     if chat_interface:
         chat_task = asyncio.create_task(chat_loop(agent))
-    
+
     try:
         while True:
             # Check duration
             if duration and (time.time() - start_time) >= duration:
                 break
-            
+
             # Auto-save every 5 minutes
             if (time.time() - start_time) % 300 < 1:
                 brain_save_path = agent.metadata.get('brain_save_path')
-                
+
                 if brain_save_path:
                     brain_path = Path(brain_save_path)
                 else:
                     brain_path = Path(f"data/brains/{agent.agent_id}/brain.pcap")
-                
+
                 brain_path.parent.mkdir(parents=True, exist_ok=True)
                 agent.save(str(brain_path))
                 log.info(f"💾 Auto-saved {agent.agent_id}")
-            
+
             await asyncio.sleep(1)
-            
+
     except KeyboardInterrupt:
         print("\n\n🛑 Stopping agent...")
-    
+
     finally:
         if chat_task:
             chat_task.cancel()
-        
+
         # Shutdown web server
         if global_server:
             global_server.should_exit = True
@@ -1086,9 +1125,9 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
                 await asyncio.wait_for(global_server.shutdown(), timeout=5.0)
             except:
                 pass
-        
+
         await agent.shutdown()
-        
+
         print(f"\n{'='*70}")
         print(f"  ✅ AGENT STOPPED: {agent.agent_id}")
         print(f"  Total runtime: {time.time() - start_time:.1f}s")
@@ -1102,15 +1141,15 @@ async def chat_loop(agent):
     """Interactive chat loop for terminal interface"""
     print("\n💬 Chat Mode: Type messages (Ctrl+C to exit)")
     print("=" * 70)
-    
+
     while True:
         try:
             # Get user input (non-blocking)
             user_input = await asyncio.to_thread(input, "You: ")
-            
+
             if not user_input.strip():
                 continue
-            
+
             # Build context
             context = {
                 'health': agent.health,
@@ -1118,15 +1157,15 @@ async def chat_loop(agent):
                 'emotions': agent.emotion.snapshot(),
                 'dominant_emotion': agent.emotion.dominant_emotion()
             }
-            
+
             # Process input
             response = agent.brain.process_language_input(user_input, context)
-            
+
             if response:
                 print(f"{agent.agent_id}: {response}")
             else:
                 print(f"{agent.agent_id}: [Learning...]")
-            
+
         except EOFError:
             break
         except Exception as e:
@@ -1139,44 +1178,44 @@ async def chat_loop(agent):
 
 class AgentExecutableGenerator:
     """Generate standalone PyInstaller executables for dynamically spawned agents"""
-    
+
     def __init__(self, output_dir: str = "build/agents/dist"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.build_temp = Path("build/agents/build_temp")
         self.build_temp.mkdir(parents=True, exist_ok=True)
-    
+
     def generate_executable(self, agent_id: str, agent_type: Literal['npc', 'god'] = 'npc',
                            god_type: Optional[str] = None, gender: Optional[GenderType] = None,
                            personality_traits: Optional[Dict[str, float]] = None) -> Optional[Path]:
         """
         Generate a PyInstaller executable for a spawned agent.
-        
+
         Args:
             agent_id: Unique agent identifier
             agent_type: 'npc' or 'god'
             god_type: Type of god agent (if agent_type='god')
             gender: gender assignment (auto-assigned if None)
             personality_traits: custom personality traits
-        
+
         Returns:
             Path to generated executable or None on error
         """
-        
+
         # Auto-assign gender if not provided
         if gender is None:
             if agent_type == 'god':
                 gender = assign_god_gender()
             else:
                 gender = assign_npc_gender()
-        
+
         # Create wrapper script for this specific agent
         wrapper_script = self.build_temp / f"{agent_id}_wrapper.py"
-        
+
         # Personality as JSON string
         personality_json = json.dumps(personality_traits or {})
         god_arg = f" --god-type {god_type}" if god_type else ""
-        
+
         wrapper_content = f'''
 #!/usr/bin/env python3
 """
@@ -1201,20 +1240,20 @@ sys.argv = [
 if __name__ == '__main__':
     main()
 '''
-        
+
         wrapper_script.write_text(wrapper_content)
         log.info(f"📝 Generated wrapper: {wrapper_script}")
-        
+
         # Build PyInstaller command
         exe_name = f"DW_Agent_{agent_id.replace(' ', '_')}" if agent_type == 'npc' else f"DW_God_{agent_id.replace(' ', '_')}"
-        
+
         try:
             import PyInstaller.__main__
         except ImportError:
             log.error("PyInstaller not installed. Cannot generate executable.")
             log.info("Install with: pip install PyInstaller")
             return None
-        
+
         # PyInstaller arguments
         pyinstaller_args = [
             '--onefile',
@@ -1233,16 +1272,16 @@ if __name__ == '__main__':
             '--console',
             str(wrapper_script)
         ]
-        
+
         log.info(f"🔨 Building executable: {exe_name}")
         log.info(f"   Agent ID: {agent_id}")
         log.info(f"   Type: {agent_type}")
         log.info(f"   Gender: {gender}")
-        
+
         try:
             # Run PyInstaller
             PyInstaller.__main__.run(pyinstaller_args)
-            
+
             exe_path = self.output_dir / exe_name
             if exe_path.exists():
                 log.info(f"✅ Executable created: {exe_path}")
@@ -1250,40 +1289,40 @@ if __name__ == '__main__':
             else:
                 log.error(f"❌ Executable not found: {exe_path}")
                 return None
-                
+
         except Exception as e:
             log.error(f"❌ Failed to generate executable: {e}")
             return None
-    
+
     def launch_executable(self, exe_path: Path, port: int = 8001,
                          minecraft: bool = False, ultimmc_path: Optional[str] = None) -> Optional[subprocess.Popen]:
         """
         Launch a generated executable.
-        
+
         Args:
             exe_path: Path to the executable
             port: WebSocket port
             minecraft: Enable Minecraft launching
             ultimmc_path: Path to UltimMC
-        
+
         Returns:
             subprocess.Popen object or None on error
         """
-        
+
         if not exe_path.exists():
             log.error(f"Executable not found: {exe_path}")
             return None
-        
+
         cmd = [str(exe_path), '--port', str(port)]
-        
+
         if minecraft:
             cmd.append('--minecraft')
             if ultimmc_path:
                 cmd.extend(['--ultimmc-path', ultimmc_path])
-        
+
         log.info(f"🚀 Launching: {exe_path.name}")
         log.info(f"   Command: {' '.join(cmd)}")
-        
+
         try:
             process = subprocess.Popen(
                 cmd,
@@ -1306,14 +1345,21 @@ def main():
     parser = argparse.ArgumentParser(
         description="Divine World Standalone Agent Runtime"
     )
-    
+
     parser.add_argument(
         '--agent-id',
         type=str,
         default='demo',
         help='Agent identifier (default: demo)'
     )
-    
+
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=8000,
+        help='FastAPI server port (default: 8000)'
+    )
+
     parser.add_argument(
         '--mode',
         type=str,
@@ -1328,31 +1374,31 @@ def main():
         choices=['ender_dragon', 'wither', 'warden', 'oracle', 'elder_guardian', 'creaking'],
         help='God type (if this is a god agent)'
     )
-    
+
     parser.add_argument(
         '--load-brain',
         type=str,
         help='Path to brain.pcap to load'
     )
-    
+
     parser.add_argument(
         '--brain-save-path',
         type=str,
         help='Path where brain should be saved (absolute path)'
     )
-    
+
     parser.add_argument(
         '--duration',
         type=float,
         help='Run duration in seconds (default: indefinite)'
     )
-    
+
     parser.add_argument(
         '--chat',
         action='store_true',
         help='Enable terminal chat interface'
     )
-    
+
     parser.add_argument(
         '--log-level',
         type=str,
@@ -1360,7 +1406,7 @@ def main():
         default='INFO',
         help='Logging level (default: INFO)'
     )
-    
+
     # Genesis spawn arguments
     parser.add_argument(
         '--gender',
@@ -1368,52 +1414,52 @@ def main():
         choices=['male', 'female', 'dual'],
         help='Agent gender for personality'
     )
-    
+
     parser.add_argument(
         '--personality',
         type=str,
         help='JSON string of personality traits'
     )
-    
+
     parser.add_argument(
         '--spawn-x',
         type=float,
         help='Spawn position X coordinate'
     )
-    
+
     parser.add_argument(
         '--spawn-y',
         type=float,
         help='Spawn position Y coordinate'
     )
-    
+
     parser.add_argument(
         '--spawn-z',
         type=float,
         help='Spawn position Z coordinate'
     )
-    
+
     parser.add_argument(
         '--genesis-ancestor',
         type=str,
         help='Whether this is a genesis ancestor agent'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Setup logging
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format='[%(asctime)s] %(levelname)s - %(name)s - %(message)s'
     )
-    
+
     # Handle Ctrl+C gracefully
     def signal_handler(sig, frame):
         print("\n\n🛑 Received interrupt signal, shutting down...")
         sys.exit(0)
-    
+
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     # Run agent
     try:
         # Parse personality if provided
@@ -1424,12 +1470,12 @@ def main():
             except json.JSONDecodeError:
                 print(f"⚠️  Invalid personality JSON: {args.personality}")
                 personality_traits = None
-        
+
         # Parse gender (GenderType is a Literal['male', 'female', 'dual'])
         gender = None
         if args.gender:
             gender = args.gender  # Just pass the string directly
-        
+
         asyncio.run(run_standalone_agent(
             agent_id=args.agent_id,
             mode=args.mode,
@@ -1441,7 +1487,8 @@ def main():
             gender=gender,
             personality_traits=personality_traits,
             spawn_pos=(args.spawn_x, args.spawn_y, args.spawn_z) if args.spawn_x is not None else None,
-            genesis_ancestor=args.genesis_ancestor == 'true' if args.genesis_ancestor else False
+            genesis_ancestor=args.genesis_ancestor == 'true' if args.genesis_ancestor else False,
+            port=args.port
         ))
     except KeyboardInterrupt:
         print("\n✅ Agent stopped")

@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Globe, Plus, Trash2, Check, X, Box, Upload, Brain, Send, Monitor, Terminal, LayoutGrid } from "lucide-react";
+import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
+import { Globe, Plus, Trash2, Check, X, Box, Upload, Brain, Send, Monitor, Terminal, LayoutGrid, Activity, ChevronDown, ChevronUp, HardDrive, Cpu, Network } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import MessageBubble from "./components/MessageBubble.jsx";
 import AgentStatus from "./components/AgentStatus.jsx";
@@ -461,12 +461,70 @@ function WebAccessManager({ onWebsitesChange }) {
   );
 }
 
+// Activity Bar Component
+function ActivityBar({ activities }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="mt-4">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center justify-between w-full px-4 py-2 bg-slate-900/40 hover:bg-slate-800/60 transition-colors border border-white/5 rounded-xl group"
+      >
+        <div className="flex items-center gap-3">
+          <Activity className={`w-4 h-4 ${activities.length > 0 ? 'text-indigo-400 animate-pulse' : 'text-slate-500'}`} />
+          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">System Activity Log</span>
+          {activities.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-md bg-indigo-500/20 border border-indigo-500/30 text-[9px] font-bold text-indigo-400">
+              {activities.length}
+            </span>
+          )}
+        </div>
+        {isOpen ? <ChevronDown className="w-3 h-3 text-slate-500" /> : <ChevronUp className="w-3 h-3 text-slate-500" />}
+      </button>
+
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden mt-2 space-y-2"
+          >
+            {activities.length === 0 ? (
+              <div className="p-4 text-center glass-card rounded-xl">
+                <p className="text-[9px] text-slate-600 uppercase font-bold tracking-widest">No Recent Telemetry</p>
+              </div>
+            ) : (
+              <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                {activities.map((activity, i) => (
+                  <div key={i} className="flex items-center gap-3 p-2 bg-slate-900/40 border border-white/5 rounded-lg">
+                    {activity.type === 'web' ? <Globe className="w-3 h-3 text-cyan-400" /> :
+                     activity.type === 'file' ? <HardDrive className="w-3 h-3 text-indigo-400" /> :
+                     activity.type === 'controller' ? <Cpu className="w-3 h-3 text-rose-400" /> :
+                     <Network className="w-3 h-3 text-slate-400" />}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[9px] font-bold text-slate-300 truncate uppercase">{activity.title}</p>
+                      <p className="text-[8px] text-slate-500 font-mono truncate">{activity.time}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 // Main App
 function App() {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState(null);
   const [messages, setMessages] = useState([]);
   const [thoughts, setThoughts] = useState([]);
+  const [activities, setActivities] = useState([]);
   const [text, setText] = useState("");
   const [mode, setMode] = useState("chat");
   const [theme, setTheme] = useState("dark");
@@ -482,12 +540,18 @@ function App() {
   const messagesEndRef = useRef(null);
   const thoughtsEndRef = useRef(null);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = (ref) => {
+    if (ref.current) {
+      ref.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  };
+
+  useLayoutEffect(() => {
+    scrollToBottom(messagesEndRef);
   }, [messages]);
 
-  useEffect(() => {
-    thoughtsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  useLayoutEffect(() => {
+    scrollToBottom(thoughtsEndRef);
   }, [thoughts]);
 
 // WebSocket connection
@@ -513,6 +577,8 @@ useEffect(() => {
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
+        const now = new Date().toLocaleTimeString();
+
         switch (data.type) {
           case "chat":
             setMessages((m) => [...m, { sender: data.from || "agent", text: data.text }]);
@@ -533,6 +599,13 @@ useEffect(() => {
           case "world_model_update":
             setWorldModelData(data.data);
             break;
+          case "activity_update":
+            setActivities(prev => [{
+              type: data.activity_type || 'default',
+              title: data.title || 'System Event',
+              time: now
+            }, ...prev].slice(0, 20));
+            break;
         }
       } catch (e) {
         console.error("[WS] Parse error:", e);
@@ -547,15 +620,16 @@ useEffect(() => {
   };
 }, []);
 
-  const sendMessage = async () => {
-    if (!text.trim()) return;
+  const sendMessage = async (customText = null) => {
+    const messageToSend = customText !== null ? customText : text;
+    if (!messageToSend.trim()) return;
+
     try {
-      setMessages((m) => [...m, { sender: "user", text }]);
-      const currentText = text;
-      setText("");
+      setMessages((m) => [...m, { sender: "user", text: messageToSend }]);
+      if (customText === null) setText("");
 
       const form = new FormData();
-      form.append("message", currentText);
+      form.append("message", messageToSend);
       form.append("agent_id", AGENT_ID);
       if (allowedWebsites.filter(w => w.enabled).length > 0) {
         form.append("allowed_websites", JSON.stringify(
@@ -583,6 +657,13 @@ useEffect(() => {
       const response = await fetch(url, { method: "POST", body: formData });
       if (!response.ok) throw new Error(`Upload failed`);
       setMessages(m => [...m, { sender: "system", text: `DATAFRAME RECEIVED: ${file.name}` }]);
+
+      setActivities(prev => [{
+        type: 'file',
+        title: `Uploaded: ${file.name}`,
+        time: new Date().toLocaleTimeString()
+      }, ...prev].slice(0, 20));
+
     } catch (err) {
       setError(`Data ingestion failed`);
     }
@@ -609,7 +690,13 @@ useEffect(() => {
       </AnimatePresence>
 
       {mode === "controller" ? (
-        <ControllerSafety onModeChange={() => setMode("chat")} />
+        <ControllerSafety
+          onModeChange={() => setMode("chat")}
+          messages={messages}
+          sendMessage={sendMessage}
+          inputText={text}
+          setInputText={setText}
+        />
       ) : (
         <div className="flex h-full w-full p-3 gap-3">
           {/* Main Interface (Left Side) */}
@@ -642,14 +729,14 @@ useEffect(() => {
             </div>
 
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2 scrollbar-hide">
-              <div className="flex flex-col gap-2">
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2 custom-scrollbar">
+              <div className="flex flex-col gap-2 min-h-full">
                 <AnimatePresence initial={false}>
                   {messages.map((msg, i) => (
                     <MessageBubble key={i} sender={msg.sender} text={msg.text} />
                   ))}
                 </AnimatePresence>
-                <div ref={messagesEndRef} />
+                <div ref={messagesEndRef} className="h-4 w-full" />
               </div>
             </div>
 
@@ -667,7 +754,7 @@ useEffect(() => {
                     onKeyPress={(e) => e.key === "Enter" && sendMessage()}
                   />
                   <button
-                    onClick={sendMessage}
+                    onClick={() => sendMessage()}
                     className="absolute right-2 top-2 bottom-2 aspect-square flex items-center justify-center bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-90"
                   >
                     <Send className="w-4 h-4" />
@@ -729,7 +816,7 @@ useEffect(() => {
               )}
             </div>
 
-            {/* Thoughts Panel */}
+            {/* Thoughts & Activity Panel */}
             <div className="flex flex-col flex-1 glass-card rounded-3xl overflow-hidden relative">
               <div className="flex items-center gap-3 px-5 py-4 border-b border-white/5 relative z-10 bg-slate-900/40 backdrop-blur-md">
                 <div className="p-1.5 bg-indigo-500/10 rounded-lg border border-indigo-500/20">
@@ -738,36 +825,42 @@ useEffect(() => {
                 <h2 className="text-[11px] font-black uppercase tracking-[0.2em] text-white">Cognitive Stream</h2>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 space-y-2 font-mono scrollbar-hide">
-                <AnimatePresence initial={false}>
-                  {thoughts.map((t, i) => (
-                    <motion.div
-                      key={i}
-                      initial={{ opacity: 0, x: 10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className="p-3 rounded-xl bg-slate-800/30 border border-slate-700/30 text-[11px] leading-relaxed text-slate-300 relative overflow-hidden group hover:bg-slate-800/50 transition-all"
-                    >
-                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500/50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                      <span className="text-indigo-400/50 mr-2 opacity-50">[{i.toString().padStart(3, '0')}]</span>
-                      {t}
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-                <div ref={thoughtsEndRef} />
+              <div className="flex-1 overflow-y-auto p-4 space-y-2 font-mono custom-scrollbar">
+                <div className="min-h-full">
+                  <AnimatePresence initial={false}>
+                    {thoughts.map((t, i) => (
+                      <motion.div
+                        key={i}
+                        initial={{ opacity: 0, x: 10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="p-3 rounded-xl bg-slate-800/30 border border-slate-700/30 text-[11px] leading-relaxed text-slate-300 relative overflow-hidden group hover:bg-slate-800/50 transition-all"
+                      >
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500/50 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                        <span className="text-indigo-400/50 mr-2 opacity-50">[{i.toString().padStart(3, '0')}]</span>
+                        {t}
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                  <div ref={thoughtsEndRef} className="h-4 w-full" />
+                </div>
               </div>
 
-              <AnimatePresence>
-                {showWebManager && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="p-3 border-t border-white/5 bg-slate-900/60 overflow-hidden"
-                  >
-                    <WebAccessManager onWebsitesChange={setAllowedWebsites} />
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              <div className="p-4 border-t border-white/5 bg-slate-900/60">
+                <ActivityBar activities={activities} />
+
+                <AnimatePresence>
+                  {showWebManager && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="mt-4 pt-4 border-t border-white/5"
+                    >
+                      <WebAccessManager onWebsitesChange={setAllowedWebsites} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
           </motion.div>
         </div>

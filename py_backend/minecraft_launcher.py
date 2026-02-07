@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 import uuid
 import platform
+from py_backend.utils.mc_uuid import get_minecraft_uuid
 
 log = logging.getLogger("minecraft_launcher")
 log.setLevel(logging.INFO)
@@ -572,6 +573,7 @@ class MultiAgentLauncher:
     def setup_agent(self, agent_id: str, server_addr: str = "127.0.0.1:25565",
                    custom_uuid: Optional[str] = None,
                    agent_type: str = 'npc',
+                   custom_name: Optional[str] = None,
                    source_launcher: Optional[UltimMCLauncher] = None) -> bool:
         """
         Setup an agent with its own UltimMC copy.
@@ -592,14 +594,19 @@ class MultiAgentLauncher:
         
         instance_name = f"agent_{agent_id}"
         
-        # Generate username in DW_ or DWGOD_ format (matches DWEventHandler.java)
-        # This must match what DWEventHandler expects for player detection
-        if agent_type and agent_type.startswith('god_'):
+        # Generate username in clean or DW_ format (matches DWEventHandler.java Pattern 1)
+        if custom_name and custom_name != "Unnamed":
+            username = custom_name
+        elif agent_type and agent_type.startswith('god_'):
             god_type = agent_type.replace('god_', '').upper()
             username = f"DWGOD_{god_type}_{agent_id}"
         else:
             username = f"DW_{agent_id}"
         
+        # Use proper Minecraft offline UUID if not provided
+        if not custom_uuid:
+            custom_uuid = get_minecraft_uuid(username)
+
         # Create account with proper username format
         if not launcher.create_account(username, make_active=True, custom_uuid=custom_uuid):
             log.error(f"Failed to create account {username} for {agent_id}")
@@ -620,7 +627,8 @@ class MultiAgentLauncher:
                     backend_url: str, memory_mb: int = 2048,
                     extra_jvm_args: Optional[List[str]] = None,
                     headless: bool = False,
-                    agent_type: str = 'npc') -> Optional[subprocess.Popen]:
+                    agent_type: str = 'npc',
+                    custom_name: Optional[str] = None) -> Optional[subprocess.Popen]:
         """
         Launch an agent.
         
@@ -643,8 +651,10 @@ class MultiAgentLauncher:
         launcher = self.launchers[agent_id]
         instance_name = f"agent_{agent_id}"
         
-        # Generate offline username in DW_ or DWGOD_ format
-        if agent_type and agent_type.startswith('god_'):
+        # Generate offline username (matches setup_agent)
+        if custom_name and custom_name != "Unnamed":
+            offline_username = custom_name
+        elif agent_type and agent_type.startswith('god_'):
             god_type = agent_type.replace('god_', '').upper()
             offline_username = f"DWGOD_{god_type}_{agent_id}"
         else:

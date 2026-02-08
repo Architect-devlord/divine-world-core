@@ -20,10 +20,10 @@ function MessageBubble({ sender, text }) {
       <div
         className={`chat-bubble shadow-lg border backdrop-blur-md transition-all duration-300 hover:shadow-indigo-500/10 ${
           isUser
-            ? "bg-indigo-600/40 border-indigo-500/30 text-indigo-50"
+            ? "bg-indigo-600 border-indigo-500 text-white"
             : isAgent
-            ? "bg-cyan-600/30 border-cyan-500/20 text-cyan-50"
-            : "bg-slate-800/40 border-slate-700/30 text-slate-100 italic"
+            ? "bg-cyan-700/80 border-cyan-500 text-white"
+            : "bg-slate-800/80 border-slate-700 text-slate-100 italic"
         }`}
       >
         <div className="text-sm leading-relaxed whitespace-pre-wrap">

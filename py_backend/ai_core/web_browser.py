@@ -156,6 +156,9 @@ class WebBrowser:
         # Allowed domains (set by frontend)
         self.allowed_domains: Set[str] = set()
         
+        # Allowed specific URLs (set by frontend)
+        self.allowed_urls: Set[str] = set()
+
         # Browsing history
         self.visited_urls: Set[str] = set()
         self.page_cache: Dict[str, WebPage] = {}
@@ -194,16 +197,23 @@ class WebBrowser:
     def update_allowed_websites(self, websites: List[Dict[str, Any]]):
         """Update allowed websites from frontend"""
         self.allowed_domains.clear()
+        self.allowed_urls.clear()
         
         for site in websites:
             if site.get('enabled', True):
                 url = site.get('url', '')
-                domain = self._extract_domain(url)
-                if domain:
-                    self.allowed_domains.add(domain)
-                    log.info(f"Allowed domain: {domain}")
-        
-        log.info(f"Updated allowed domains: {len(self.allowed_domains)} domains")
+                site_type = site.get('type', 'domain')
+
+                if site_type == 'domain':
+                    domain = self._extract_domain(url)
+                    if domain:
+                        self.allowed_domains.add(domain)
+                        log.info(f"Allowed domain: {domain}")
+                else:
+                    self.allowed_urls.add(url)
+                    log.info(f"Allowed URL: {url}")
+
+        log.info(f"Updated permissions: {len(self.allowed_domains)} domains, {len(self.allowed_urls)} URLs")
     
     def _extract_domain(self, url: str) -> str:
         """Extract domain from URL"""
@@ -217,10 +227,18 @@ class WebBrowser:
             return ""
     
     def _is_url_allowed(self, url: str) -> bool:
-        """Check if URL is from allowed domain"""
+        """Check if URL is from allowed domain or exact URL"""
+        # 1. Check exact URL matches
+        if url in self.allowed_urls:
+            return True
+
+        # 2. Check prefix matches for URLs (allow sub-paths of allowed URLs)
+        for allowed_url in self.allowed_urls:
+            if url.startswith(allowed_url):
+                return True
+
+        # 3. Check domain matches
         domain = self._extract_domain(url)
-        
-        # Check if domain matches any allowed domain
         for allowed in self.allowed_domains:
             if domain == allowed or domain.endswith('.' + allowed):
                 return True

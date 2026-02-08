@@ -170,8 +170,24 @@ async def get_thoughts():
     return {"thoughts": []}
 
 @app.post("/chat")
-async def chat(message: str = Form(...)):
+async def chat(message: str = Form(...), agent_id: str = Form(None), allowed_websites: str = Form(None)):
     if global_agent:
+        # Update allowed websites if provided in chat request
+        if allowed_websites:
+            try:
+                websites_data = json.loads(allowed_websites)
+                formatted_websites = []
+                for item in websites_data:
+                    if isinstance(item, str):
+                        formatted_websites.append({'url': item, 'enabled': True, 'type': 'url'})
+                    else:
+                        formatted_websites.append(item)
+
+                if hasattr(global_agent, 'web_browser'):
+                    global_agent.web_browser.update_allowed_websites(formatted_websites)
+            except Exception as e:
+                log.error(f"Error updating allowed websites from chat: {e}")
+
         response = await global_agent.process_chat(message)
 
         # Broadcast to WebSocket clients
@@ -183,6 +199,15 @@ async def chat(message: str = Form(...)):
         })
 
         return {"response": response}
+    return {"error": "Agent not running"}
+
+@app.post("/api/agents/{agent_id}/web/allow")
+async def allow_websites(agent_id: str, data: Dict[str, Any]):
+    if global_agent:
+        websites = data.get('websites', [])
+        if hasattr(global_agent, 'web_browser'):
+            global_agent.web_browser.update_allowed_websites(websites)
+            return {"status": "success", "message": f"Updated allowed websites for {agent_id}"}
     return {"error": "Agent not running"}
 
 @app.post("/api/upload")
@@ -631,6 +656,20 @@ class NPCAgent:
             'sender': 'user',
             'message': message
         }, tags=['chat', 'user', 'learning'])
+
+        # Check for URLs in message and queue for browsing if allowed
+        if hasattr(self, 'web_browser'):
+            import re
+            urls = re.findall(r'(https?://[^\s]+)', message)
+            # Also detect domain-like strings
+            domains = re.findall(r'(?<![/\w])(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?![/\w])', message)
+
+            for url in urls:
+                self.web_browser.add_url_to_queue(url)
+
+            for domain in domains:
+                # Try both http and https if no protocol specified
+                self.web_browser.add_url_to_queue(f"https://{domain}")
 
         # Try to generate a response using brain/language
         response = f"I am {self.agent_id}. You said: {message}"

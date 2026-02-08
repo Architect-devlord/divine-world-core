@@ -133,12 +133,12 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
   };
 
   return (
-    <div className="flex h-screen bg-slate-950 text-gray-100 overflow-hidden">
+    <div className="flex h-screen overflow-hidden transition-colors duration-300" style={{ backgroundColor: 'var(--app-bg)', color: 'var(--app-text)' }}>
       {/* Collapsible Chat Sidebar */}
       <motion.div
         animate={{ width: isChatOpen ? 350 : 0 }}
         transition={{ type: "spring", damping: 20, stiffness: 100 }}
-        className="relative bg-slate-900/50 border-r border-white/5 flex flex-col overflow-hidden"
+        className="relative border-r border-white/5 flex flex-col overflow-hidden glass-card"
       >
         <div className="p-4 border-b border-white/5 flex items-center justify-between min-w-[350px]">
           <h2 className="text-xs font-black uppercase tracking-widest text-indigo-400">System Comms</h2>
@@ -156,13 +156,14 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="p-4 bg-slate-950/50 border-t border-white/5 min-w-[350px]">
+        <div className="p-4 border-t border-white/5 min-w-[350px]" style={{ backgroundColor: 'var(--input-bg)' }}>
           <div className="relative">
             <input
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder="Send command..."
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2 pl-4 pr-10 text-xs focus:outline-none focus:border-indigo-500/50"
+              className="w-full border rounded-xl py-2 pl-4 pr-10 text-xs focus:outline-none focus:border-indigo-500/50 transition-colors"
+              style={{ backgroundColor: 'var(--app-bg)', borderColor: 'var(--card-border)', color: 'var(--app-text)' }}
               onKeyPress={(e) => e.key === "Enter" && sendMessage()}
             />
             <button
@@ -194,7 +195,7 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
           <div className="flex items-center gap-4">
             <button
               onClick={() => onModeChange && onModeChange()}
-              className="btn btn-sm btn-ghost bg-slate-900/40 hover:bg-slate-800 border-white/5 text-[10px] font-bold uppercase tracking-widest h-8 px-4 rounded-xl"
+              className="btn btn-sm btn-ghost hover:bg-slate-800 border-white/5 text-[10px] font-bold uppercase tracking-widest h-8 px-4 rounded-xl glass-card"
             >
               ← Back to Chat
             </button>
@@ -202,7 +203,7 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
               <Shield className={`w-5 h-5 ${controllerActive ? 'text-red-500' : 'text-gray-500'}`} />
             </div>
             <div>
-              <h1 className="text-sm font-black uppercase tracking-[0.2em]">Controller Mode <span className="text-rose-500">v1.2</span></h1>
+              <h1 className={`text-sm font-black uppercase tracking-[0.2em] transition-colors`}>Controller Mode <span className="text-rose-500">v1.2</span></h1>
               <p className="text-[10px] text-gray-500 font-mono tracking-tighter">
                 {controllerActive ? (
                   <span className="text-emerald-500">🟢 STATUS: ACTIVE // {Object.values(permissions).filter(v => v).length} PERMS ENGAGED</span>

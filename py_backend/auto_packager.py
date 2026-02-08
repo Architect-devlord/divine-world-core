@@ -184,6 +184,7 @@ class AutoPackagingSystem:
                     result = self.packager.package_agent(
                         agent_id=agent.agent_id,
                         brain_capsule_path=brain_path,
+                        agent_name=agent.custom_name if hasattr(agent, 'custom_name') else None,
                         gender=agent.personality.gender if hasattr(agent, 'personality') else "neutral",
                         agent_type=agent.agent_type if hasattr(agent, 'agent_type') else "npc",
                         icon_path=None,
@@ -432,12 +433,10 @@ class EnhancedAgentSpawner(AgentSpawner):
             port = self.packager._allocate_port(agent_id)
 
             # Use the low-level packager
-            # Note: custom_name is not directly supported by AgentPackager.package_agent
-            # but we pass it as agent_id for the purpose of the EXE name if desired,
-            # or just use agent_id and keep custom_name in metadata.
             result = self.packager.packager.package_agent(
                 agent_id=agent_id,
                 brain_capsule_path=brain_path,
+                agent_name=custom_name,
                 agent_type=agent_type,
                 backend_port=port
             )

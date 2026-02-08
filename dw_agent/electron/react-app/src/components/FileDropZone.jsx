@@ -37,7 +37,7 @@ function FileDropZone({ onFileSend }) {
       className={`relative transition-all duration-500 border-2 border-dashed rounded-2xl overflow-hidden ${
         isDragging
           ? "border-indigo-500 bg-indigo-500/10 scale-[1.01] shadow-lg shadow-indigo-500/10"
-          : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
+          : "border-slate-300 dark:border-slate-800 bg-slate-200/50 dark:bg-slate-900/40 hover:border-indigo-400 dark:hover:border-slate-700"
       }`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -67,16 +67,16 @@ function FileDropZone({ onFileSend }) {
               className="flex flex-col items-center"
             >
               <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-3 transition-colors ${
-                isDragging ? "bg-indigo-500 text-white" : "bg-slate-800 text-slate-500"
+                isDragging ? "bg-indigo-500 text-white" : "bg-slate-300 dark:bg-slate-800 text-slate-500 dark:text-slate-500"
               }`}>
                 <Upload className="w-6 h-6" />
               </div>
               <p className={`text-[11px] font-bold uppercase tracking-widest transition-colors ${
-                isDragging ? "text-indigo-400" : "text-slate-400"
+                isDragging ? "text-indigo-400" : "text-slate-600 dark:text-slate-400"
               }`}>
                 {isDragging ? "Release to Ingest" : "Drop Data Modules Here"}
               </p>
-              <p className="text-[9px] font-medium text-slate-600 mt-1 uppercase tracking-tighter">
+              <p className="text-[9px] font-black text-slate-500 dark:text-slate-600 mt-1 uppercase tracking-tighter">
                 Img • Vid • Doc • Code
               </p>
             </motion.div>

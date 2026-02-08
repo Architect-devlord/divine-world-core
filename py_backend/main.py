@@ -30,6 +30,7 @@ import uuid
 import psutil
 import json
 import time
+from py_backend.utils.mc_uuid import get_minecraft_uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Dict, Optional, Any, List
@@ -46,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_core import memory
 from ai_core.config import Config
-from ai_core.agent_spawner import AgentSpawner, EnhancedAgentSpawner
+from ai_core.agent_spawner import AgentSpawner
 from ai_core.personality import assign_npc_gender, assign_god_gender
 from auto_packager import EnhancedAgentSpawner
 from auto_connect_system import integrate_with_backend
@@ -262,23 +263,20 @@ class AgentProcessManager:
 
         log.info("AgentProcessManager initialized")
 
-    def _generate_agent_uuid(self, agent_id: str, agent_type: str = 'npc') -> str:
+    def _generate_agent_uuid(self, agent_id: str, agent_type: str = 'npc', custom_name: Optional[str] = None) -> str:
         """Generate unique UUID for agent (Minecraft offline mode compatible).
         Must match DWEventHandler.java UUID detection.
         """
-        # Generate offline UUID from Minecraft standard namespace
-        namespace = uuid.UUID("00000000-0000-0000-0000-000000000000")
-
-        # Generate username based on agent type
-        if agent_type.startswith('god_'):
+        # Generate username based on agent type or custom name
+        if custom_name and custom_name != "Unnamed":
+            username = custom_name
+        elif agent_type.startswith('god_'):
             god_type = agent_type.replace('god_', '').upper()
             username = f"DWGOD_{god_type}_{agent_id}"
         else:
             username = f"DW_{agent_id}"
 
-        # Create UUID from Minecraft offline standard
-        name = f"OfflinePlayer:{username}"
-        return str(uuid.uuid3(namespace, name))
+        return get_minecraft_uuid(username)
 
     def start_agent_process(self, agent_id: str, mode: str = 'minecraft',
                            server_addr: str = "127.0.0.1:25565",
@@ -305,15 +303,17 @@ class AgentProcessManager:
                 log.info(f"Running packaged agent: {exe_path}")
             else:
 
-                # Generate username in DW_ or DWGOD_ format based on type
-                if agent_type.startswith('god_'):
+                # Generate username in clean or DW_ format
+                if custom_name and custom_name != "Unnamed":
+                    username = custom_name
+                elif agent_type.startswith('god_'):
                     god_type = agent_type.replace('god_', '').upper()
                     username = f"DWGOD_{god_type}_{agent_id}"
                 else:
                     username = f"DW_{agent_id}"
 
                 # Generate unique UUID from username
-                agent_uuid = self._generate_agent_uuid(agent_id, agent_type)
+                agent_uuid = self._generate_agent_uuid(agent_id, agent_type, custom_name)
 
                 # Log the mapping for debugging
                 log.info(f"🔗 Agent Registration: agent_id={agent_id}, username={username}, uuid={agent_uuid}")
@@ -330,6 +330,8 @@ class AgentProcessManager:
                         agent_id=agent_id,
                         server_addr=server_addr,
                         custom_uuid=agent_uuid,
+                        custom_name=custom_name,
+                        agent_type=agent_type,
                         source_launcher=self.source_launcher
                     )
 
@@ -413,7 +415,8 @@ class AgentProcessManager:
                         backend_url=f"http://127.0.0.1:{backend_port}",
                         memory_mb=memory_mb,
                         headless=False,  # Set to True for headless mode
-                        agent_type=agent_type  # Pass agent type for proper username
+                        agent_type=agent_type,  # Pass agent type for proper username
+                        custom_name=custom_name
                     )
 
                     if minecraft_process:

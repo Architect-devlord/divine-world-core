@@ -365,11 +365,20 @@ function WebAccessManager({ onWebsitesChange }) {
   const addWebsite = () => {
     if (!newUrl.trim()) return;
     try {
-      const url = new URL(newUrl.startsWith('http') ? newUrl : `https://${newUrl}`);
+      let urlString = newUrl.trim();
+      if (!urlString.startsWith('http')) {
+        urlString = 'https://' + urlString;
+      }
+      const url = new URL(urlString);
+
+      // If the path is just '/', it's likely a domain authorization
+      const isDomainOnly = url.pathname === '/' && !url.search && !url.hash;
+
       const website = {
         id: Date.now(),
         url: url.href,
-        domain: url.hostname,
+        display: isDomainOnly ? url.hostname : url.href,
+        type: isDomainOnly ? 'domain' : 'url',
         enabled: true,
         addedAt: new Date().toISOString()
       };
@@ -409,18 +418,37 @@ function WebAccessManager({ onWebsitesChange }) {
       </div>
 
       {isAdding && (
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex gap-2 p-2 bg-slate-950/50 rounded-xl border border-slate-800">
-          <input
-            type="text"
-            value={newUrl}
-            onChange={(e) => setNewUrl(e.target.value)}
-            placeholder="domain.com"
-            className="input input-sm flex-1 bg-transparent border-none focus:ring-0 text-xs"
-            onKeyPress={(e) => e.key === 'Enter' && addWebsite()}
-          />
-          <button onClick={addWebsite} className="btn btn-sm btn-success h-8 w-8 p-0 min-h-0 rounded-lg">
-            <Check className="w-4 h-4" />
-          </button>
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="p-4 bg-indigo-600/10 rounded-2xl border-2 border-dashed border-indigo-500/50 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Add New Domain</span>
+            <button onClick={() => setIsAdding(false)} className="text-slate-500 hover:text-white transition-colors">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="flex gap-2 p-1 bg-slate-950/80 rounded-xl border border-white/10 ring-4 ring-indigo-500/5">
+            <input
+              autoFocus
+              type="text"
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
+              placeholder="e.g. google.com"
+              className="input input-sm flex-1 bg-transparent border-none focus:ring-0 text-xs text-white placeholder:text-slate-600 px-3"
+              onKeyPress={(e) => e.key === 'Enter' && addWebsite()}
+            />
+            <button
+              onClick={addWebsite}
+              className="btn btn-sm bg-indigo-500 hover:bg-indigo-400 border-none h-8 w-8 p-0 min-h-0 rounded-lg shadow-lg shadow-indigo-500/20 transition-all active:scale-95"
+            >
+              <Check className="w-4 h-4 text-white" />
+            </button>
+          </div>
+          <p className="text-[9px] text-slate-500 leading-tight">
+            The AI will only be able to browse sites within these authorized domains.
+          </p>
         </motion.div>
       )}
 
@@ -447,7 +475,8 @@ function WebAccessManager({ onWebsitesChange }) {
                   className="checkbox checkbox-xs checkbox-primary"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[11px] font-bold truncate text-slate-200">{website.domain}</p>
+                  <p className="text-[11px] font-bold truncate text-slate-200">{website.display}</p>
+                  <p className="text-[8px] uppercase tracking-widest text-slate-500 font-black">{website.type}</p>
                 </div>
               </div>
               <button onClick={() => removeWebsite(website.id)} className="btn btn-xs btn-ghost h-6 w-6 p-0 min-h-0 text-slate-600 hover:text-rose-500">
@@ -462,18 +491,22 @@ function WebAccessManager({ onWebsitesChange }) {
 }
 
 // Activity Bar Component
-function ActivityBar({ activities }) {
+function ActivityBar({ activities, theme }) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
     <div className="mt-4">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between w-full px-4 py-2 bg-slate-900/40 hover:bg-slate-800/60 transition-colors border border-white/5 rounded-xl group"
+        className={`flex items-center justify-between w-full px-4 py-2 transition-colors border rounded-xl group ${
+          theme === 'dark'
+          ? 'bg-slate-900/40 hover:bg-slate-800/60 border-white/5'
+          : 'bg-slate-200/50 hover:bg-slate-300/50 border-slate-300/50'
+        }`}
       >
         <div className="flex items-center gap-3">
           <Activity className={`w-4 h-4 ${activities.length > 0 ? 'text-indigo-400 animate-pulse' : 'text-slate-500'}`} />
-          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">System Activity Log</span>
+          <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>System Activity Log</span>
           {activities.length > 0 && (
             <span className="px-1.5 py-0.5 rounded-md bg-indigo-500/20 border border-indigo-500/30 text-[9px] font-bold text-indigo-400">
               {activities.length}
@@ -498,13 +531,15 @@ function ActivityBar({ activities }) {
             ) : (
               <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
                 {activities.map((activity, i) => (
-                  <div key={i} className="flex items-center gap-3 p-2 bg-slate-900/40 border border-white/5 rounded-lg">
+                  <div key={i} className={`flex items-center gap-3 p-2 border rounded-lg ${
+                    theme === 'dark' ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-200'
+                  }`}>
                     {activity.type === 'web' ? <Globe className="w-3 h-3 text-cyan-400" /> :
                      activity.type === 'file' ? <HardDrive className="w-3 h-3 text-indigo-400" /> :
                      activity.type === 'controller' ? <Cpu className="w-3 h-3 text-rose-400" /> :
                      <Network className="w-3 h-3 text-slate-400" />}
                     <div className="flex-1 min-w-0">
-                      <p className="text-[9px] font-bold text-slate-300 truncate uppercase">{activity.title}</p>
+                      <p className={`text-[9px] font-bold truncate uppercase ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>{activity.title}</p>
                       <p className="text-[8px] text-slate-500 font-mono truncate">{activity.time}</p>
                     </div>
                   </div>
@@ -528,6 +563,10 @@ function App() {
   const [text, setText] = useState("");
   const [mode, setMode] = useState("chat");
   const [theme, setTheme] = useState("dark");
+
+  useEffect(() => {
+    document.body.className = theme === "light" ? "light-theme" : "";
+  }, [theme]);
   const [visualizationData, setVisualizationData] = useState({ type: 'matrix', label: 'Mental Matrix' });
   const [allowedWebsites, setAllowedWebsites] = useState([]);
   const [showWebManager, setShowWebManager] = useState(false);
@@ -673,18 +712,29 @@ useEffect(() => {
   const dismissError = () => setError(null);
 
   return (
-    <div className={`h-screen w-screen overflow-hidden font-sans selection:bg-indigo-500/30 ${theme === "dark" ? "bg-slate-950 text-slate-100" : "bg-slate-50 text-slate-900"}`}>
+    <div className={`h-screen w-screen overflow-hidden font-sans selection:bg-indigo-500/30`}>
       <AnimatePresence>
         {error && (
           <motion.div
-            initial={{ y: -50, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -50, opacity: 0 }}
-            className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[100] alert alert-error shadow-2xl shadow-rose-500/20 max-w-md glass border-rose-500/50"
+            initial={{ x: 100, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 100, opacity: 0 }}
+            className="fixed top-4 right-4 z-[9999] flex items-center gap-4 px-6 py-4 rounded-2xl bg-rose-600 shadow-2xl shadow-rose-900/40 text-white border border-rose-400/50 backdrop-blur-xl"
           >
-            <Terminal className="w-5 h-5" />
-            <span className="text-xs font-bold uppercase tracking-wider">{error}</span>
-            <button onClick={dismissError} className="btn btn-ghost btn-xs btn-circle">✕</button>
+            <div className="p-2 bg-white/20 rounded-xl">
+              <Terminal className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black uppercase tracking-widest opacity-70">System Alert</span>
+              <span className="text-sm font-bold">{error}</span>
+            </div>
+            <button
+              onClick={dismissError}
+              className="ml-4 p-2 hover:bg-white/10 rounded-full transition-colors"
+              aria-label="Close alert"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -714,7 +764,7 @@ useEffect(() => {
                   <Monitor className="w-5 h-5 text-indigo-400" />
                 </div>
                 <div>
-                  <h1 className="text-sm font-black uppercase tracking-[0.2em] text-white">
+                  <h1 className={`text-sm font-black uppercase tracking-[0.2em] ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
                     DIVINE WORLD <span className="text-indigo-500">v2.1</span>
                   </h1>
                   <p className="text-[10px] text-slate-500 font-mono tracking-tighter">CORE_INTERFACE_ADDR: {AGENT_ID}.local</p>
@@ -741,7 +791,7 @@ useEffect(() => {
             </div>
 
             {/* Input Area */}
-            <div className="p-4 bg-slate-900/50 backdrop-blur-xl border-t border-white/5 relative z-10">
+            <div className={`p-4 backdrop-blur-xl border-t border-white/5 relative z-10 ${theme === 'dark' ? 'bg-slate-900/50' : 'bg-slate-100/50'}`}>
               <FileDropZone onFileSend={onFileSend} />
 
               <div className="mt-4 flex flex-col gap-3">
@@ -750,7 +800,7 @@ useEffect(() => {
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     placeholder="Input command or query..."
-                    className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl py-4 pl-6 pr-14 text-sm focus:outline-none focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder:text-slate-600 font-medium"
+                    className={`w-full border rounded-2xl py-4 pl-6 pr-14 text-sm focus:outline-none focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10 transition-all placeholder:text-slate-500 font-medium ${theme === 'dark' ? 'bg-slate-950/50 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}
                     onKeyPress={(e) => e.key === "Enter" && sendMessage()}
                   />
                   <button
@@ -789,12 +839,12 @@ useEffect(() => {
           >
             {/* Visualizer Panel */}
             <div className="flex flex-col flex-[1.2] glass-card rounded-3xl overflow-hidden relative">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/5 relative z-10 bg-slate-900/40 backdrop-blur-md">
+              <div className={`flex items-center justify-between px-5 py-4 border-b border-white/5 relative z-10 backdrop-blur-md ${theme === 'dark' ? 'bg-slate-900/40' : 'bg-white/40'}`}>
                 <div className="flex items-center gap-3">
                   <div className="p-1.5 bg-indigo-500/10 rounded-lg border border-indigo-500/20">
                     <Box className="w-4 h-4 text-indigo-400" />
                   </div>
-                  <h2 className="text-[11px] font-black uppercase tracking-[0.2em] text-white">Mental Workspace</h2>
+                  <h2 className={`text-[11px] font-black uppercase tracking-[0.2em] ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Mental Workspace</h2>
                 </div>
                 <button
                   onClick={() => setShowMentalMatrix(true)}
@@ -818,11 +868,11 @@ useEffect(() => {
 
             {/* Thoughts & Activity Panel */}
             <div className="flex flex-col flex-1 glass-card rounded-3xl overflow-hidden relative">
-              <div className="flex items-center gap-3 px-5 py-4 border-b border-white/5 relative z-10 bg-slate-900/40 backdrop-blur-md">
+              <div className={`flex items-center gap-3 px-5 py-4 border-b border-white/5 relative z-10 backdrop-blur-md ${theme === 'dark' ? 'bg-slate-900/40' : 'bg-white/40'}`}>
                 <div className="p-1.5 bg-indigo-500/10 rounded-lg border border-indigo-500/20">
                   <Terminal className="w-4 h-4 text-indigo-400" />
                 </div>
-                <h2 className="text-[11px] font-black uppercase tracking-[0.2em] text-white">Cognitive Stream</h2>
+                <h2 className={`text-[11px] font-black uppercase tracking-[0.2em] ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Cognitive Stream</h2>
               </div>
 
               <div className="flex-1 overflow-y-auto p-4 space-y-2 font-mono custom-scrollbar">
@@ -845,8 +895,8 @@ useEffect(() => {
                 </div>
               </div>
 
-              <div className="p-4 border-t border-white/5 bg-slate-900/60">
-                <ActivityBar activities={activities} />
+              <div className={`p-4 border-t border-white/5 ${theme === 'dark' ? 'bg-slate-900/60' : 'bg-slate-100/60'}`}>
+                <ActivityBar activities={activities} theme={theme} />
 
                 <AnimatePresence>
                   {showWebManager && (

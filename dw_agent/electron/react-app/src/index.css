@@ -5,27 +5,53 @@
 @layer base {
   :root {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    --app-bg: #020617; /* slate-950 */
+    --app-text: #f1f5f9; /* slate-100 */
+    --card-bg: rgba(15, 23, 42, 0.6); /* slate-900/60 */
+    --card-border: rgba(30, 41, 59, 0.5); /* slate-800/50 */
+    --input-bg: rgba(2, 6, 23, 0.5); /* slate-950/50 */
+  }
+
+  .light-theme {
+    --app-bg: #f1f5f9; /* slate-100 */
+    --app-text: #0f172a; /* slate-900 */
+    --card-bg: #ffffff;
+    --card-border: #cbd5e1; /* slate-300 */
+    --input-bg: #f8fafc; /* slate-50 */
   }
   
   body {
     margin: 0;
     padding: 0;
     min-height: 100vh;
-    @apply bg-slate-950 text-slate-100;
+    background-color: var(--app-bg);
+    color: var(--app-text);
+    transition: background-color 0.3s, color 0.3s;
   }
 }
 
 @layer components {
   .glass {
-    @apply bg-white/5 backdrop-blur-md border border-white/10;
+    @apply backdrop-blur-md border;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .light-theme .glass {
+    background-color: rgba(255, 255, 255, 0.4);
+    border-color: rgba(0, 0, 0, 0.1);
   }
 
   .glass-dark {
-    @apply bg-slate-900/40 backdrop-blur-md border border-slate-800/50;
+    @apply backdrop-blur-md border;
+    background-color: var(--card-bg);
+    border-color: var(--card-border);
   }
 
   .glass-card {
-    @apply bg-slate-900/60 backdrop-blur-lg border border-slate-800/50 shadow-xl;
+    @apply backdrop-blur-lg border shadow-xl transition-colors duration-300;
+    background-color: var(--card-bg);
+    border-color: var(--card-border);
   }
 }
 

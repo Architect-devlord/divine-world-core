@@ -30,7 +30,7 @@ import uuid
 import psutil
 import json
 import time
-from py_backend.utils.mc_uuid import get_minecraft_uuid
+
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Dict, Optional, Any, List
@@ -51,7 +51,7 @@ from ai_core.agent_spawner import AgentSpawner
 from ai_core.personality import assign_npc_gender, assign_god_gender
 from auto_packager import EnhancedAgentSpawner
 from auto_connect_system import integrate_with_backend
-
+from utils.mc_uuid import get_minecraft_uuid
 # Import UltimMC launcher
 from minecraft_launcher import UltimMCLauncher, MultiAgentLauncher
 

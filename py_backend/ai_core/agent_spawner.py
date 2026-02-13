@@ -18,7 +18,7 @@ import numpy as np
 from ai_core.agent import NPCAgent
 from py_backend.config import Config
 from ai_core.personality import GenderType, assign_npc_gender
-from py_backend.utils.agent_name_manager import AgentNameManager
+from py_backend.utils.mc_uuid import AgentNameManager
 from minecraft_launcher import UltimMCLauncher
 
 log = logging.getLogger("agent_spawner")

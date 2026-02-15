@@ -18,6 +18,7 @@ import numpy as np
 from ai_core.agent import NPCAgent
 from py_backend.config import Config
 from ai_core.personality import GenderType, assign_npc_gender
+from py_backend.utils.mc_uuid import AgentNameManager
 from minecraft_launcher import UltimMCLauncher
 
 log = logging.getLogger("agent_spawner")
@@ -74,6 +75,7 @@ class AgentClientManager:
         self.base_port = base_backend_port
         self.clients: dict[str, MinecraftClientProcess] = {}
         self.lock = threading.Lock()
+        self.name_manager = AgentNameManager()
         
     def allocate_port(self, agent_id: str) -> int:
         """Allocate unique port for agent backend"""
@@ -96,7 +98,7 @@ class AgentClientManager:
                 return False
     
     def spawn_client(self, agent_id: str, server_addr: str = "127.0.0.1:25565",
-                     memory_mb: int = 2048) -> Optional[MinecraftClientProcess]:
+                     memory_mb: int = 2048, custom_name: Optional[str] = None) -> Optional[MinecraftClientProcess]:
         """
         Spawn dedicated Minecraft client for an agent.
         Returns MinecraftClientProcess object or None if not in Minecraft mode.
@@ -119,6 +121,7 @@ class AgentClientManager:
                 f"-Xmx{memory_mb}M",
                 f"-Xms{memory_mb}M",
                 f"-Ddw.agentId={agent_id}",
+                f"-Ddw.displayName={custom_name or agent_id}",
                 f"-Ddw.server={server_addr}",
                 f"-Ddw.backend={backend_url}",
                 "-jar",
@@ -257,6 +260,7 @@ class AgentSpawner:
         self.client_manager = AgentClientManager(client_jar_path)
         self.agents: dict[str, NPCAgent] = {}
         self.lock = threading.Lock()
+        self.name_manager = AgentNameManager()
         
         # Initialize executable generator for dynamic spawning
         from ai_core.agent import AgentExecutableGenerator
@@ -306,11 +310,16 @@ class AgentSpawner:
             if gender is None:
                 gender = assign_npc_gender()
             
+            # Get a clean name for the NPC
+            clean_name = self.name_manager.get_random_name("NPCs", gender) or agent_id
+            self.name_manager.add_name("NPCs", gender, clean_name)
+
             # Spawn client process (will be None in chat-only mode)
             client_process = self.client_manager.spawn_client(
                 agent_id=agent_id,
                 server_addr=server_addr,
-                memory_mb=memory_mb
+                memory_mb=memory_mb,
+                custom_name=clean_name
             )
             
             # Create NPCAgent
@@ -376,6 +385,10 @@ class AgentSpawner:
             from ai_core.personality import assign_god_gender
             gender = assign_god_gender()
             
+            # Get a clean name for the God
+            clean_name = self.name_manager.get_random_name("GODs", "dual") or agent_id
+            self.name_manager.add_name("GODs", "dual", clean_name)
+
             # Spawn client process (will be None in chat-only mode)
             client_process = self.client_manager.spawn_client(
                 agent_id=agent_id,
@@ -584,6 +597,10 @@ class EnhancedAgentSpawner(AgentSpawner):
             if gender is None:
                 gender = assign_npc_gender()
             
+            # Get a clean name for the NPC
+            clean_name = self.name_manager.get_random_name("NPCs", gender) or agent_id
+            self.name_manager.add_name("NPCs", gender, clean_name)
+
             # Step 3: Launch via UltimMC if available
             client_process = None
             if self.use_ultimmc and self.ultimmc_launcher:
@@ -594,7 +611,8 @@ class EnhancedAgentSpawner(AgentSpawner):
                     agent_id=agent_id,
                     server_addr=server_addr,
                     backend_url=backend_url,
-                    memory_mb=memory_mb
+                    memory_mb=memory_mb,
+                    custom_name=clean_name
                 )
                 
                 if process:
@@ -618,14 +636,16 @@ class EnhancedAgentSpawner(AgentSpawner):
                     client_process = self.client_manager.spawn_client(
                         agent_id=agent_id,
                         server_addr=server_addr,
-                        memory_mb=memory_mb
+                        memory_mb=memory_mb,
+                        custom_name=clean_name
                     )
             else:
                 # Fallback: use regular spawn_client
                 client_process = self.client_manager.spawn_client(
                     agent_id=agent_id,
                     server_addr=server_addr,
-                    memory_mb=memory_mb
+                    memory_mb=memory_mb,
+                    custom_name=clean_name
                 )
             
             # Step 4: Create agent

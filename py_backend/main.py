@@ -51,10 +51,13 @@ from ai_core.agent_spawner import AgentSpawner
 from ai_core.personality import assign_npc_gender, assign_god_gender
 from auto_packager import EnhancedAgentSpawner
 from auto_connect_system import integrate_with_backend
-from utils.mc_uuid import get_minecraft_uuid
+from utils.mc_uuid import get_minecraft_uuid, AgentNameManager
 from utils.agents_json_manager import get_manager as get_agents_manager
 # Import UltimMC launcher
 from minecraft_launcher import UltimMCLauncher, MultiAgentLauncher
+
+# Initialize name manager
+name_manager = AgentNameManager()
 
 
 # Initialize logging
@@ -690,6 +693,15 @@ async def spawn_single_agent(request: Request):
         if not agent_name:
             raise HTTPException(status_code=400, detail="Missing agent_name")
 
+        # Random gender if not specified
+        if gender == 'random':
+            import random
+            gender = random.choice(['male', 'female'])
+
+        # If no name provided, pick from JSON
+        if not agent_name or agent_name == "Unnamed":
+            agent_name = name_manager.get_random_name("NPCs", gender) or "Unnamed"
+
         # Generate simple NPC agent ID (npc1, npc2, etc.)
         # Format ensures easy extraction by DWEventHandler
         import glob
@@ -698,10 +710,8 @@ async def spawn_single_agent(request: Request):
 
         log.info(f"🧑 Spawning single NPC: {agent_name} (ID: {agent_id})")
 
-        # Random gender if not specified
-        if gender == 'random':
-            import random
-            gender = random.choice(['male', 'female'])
+        # Record name in JSON
+        name_manager.add_name("NPCs", gender, agent_name)
 
         # Default personality if not provided
         if not personality:
@@ -1012,7 +1022,11 @@ async def handle_breeding_event(request: Request):
         log.info(f"  Parent B: {parent_b_id} ({parent_b_type})")
         log.info(f"  Inherited personality: {offspring_personality}")
 
-        # Spawn offspring agent with "Unnamed" as display name
+        # Get a clean name for the offspring
+        offspring_name = name_manager.get_random_name("NPCs", offspring_gender) or "Unnamed"
+        name_manager.add_name("NPCs", offspring_gender, offspring_name)
+
+        # Spawn offspring agent
         success = agent_manager.start_agent_process(
             agent_id=offspring_id,
             mode='minecraft',
@@ -1023,7 +1037,7 @@ async def handle_breeding_event(request: Request):
                 '--personality', json.dumps(offspring_personality)
             ],
             agent_type='npc',  # Offspring are NPCs
-            custom_name="Unnamed"  # Offspring start unnamed
+            custom_name=offspring_name
         )
 
         if success:
@@ -1104,6 +1118,7 @@ async def genesis_spawn(request: Request):
             if gender == 'male':
                 agent_id = "adam"
                 display_name = "Adam"
+                name_manager.add_name("NPCs", "male", "Adam")
                 # Male personality: higher boldness, curiosity
                 personality = {
                     'boldness': 0.8,
@@ -1117,6 +1132,7 @@ async def genesis_spawn(request: Request):
             elif gender == 'female':
                 agent_id = "eve"
                 display_name = "Eve"
+                name_manager.add_name("NPCs", "female", "Eve")
                 # Female personality: higher agreeableness, conscientiousness
                 personality = {
                     'boldness': 0.6,
@@ -1450,8 +1466,9 @@ async def spawn_god(request: Request):
         existing_gods = len(glob.glob(str(Config.NPC_APPLICATIONS_DIR / "god*")))
         agent_id = f"god{existing_gods + 1}"
 
-        # Display name is "Unnamed" for gods
-        display_name = "Unnamed"
+        # Get a clean name for the god
+        display_name = name_manager.get_random_name("GODs", "dual") or "Unnamed"
+        name_manager.add_name("GODs", "dual", display_name)
 
         # Extract spawn coordinates
         spawn_x = spawn_pos.get('x', 0)

@@ -4,6 +4,7 @@ package com.divineworld.commands;
 import com.divineworld.DWMod;
 import com.divineworld.entity.DWNPCManager;
 import com.divineworld.integration.PythonBackendClient;
+import com.divineworld.utils.AgentConfigLoader;
 import com.divineworld.utils.GenesisManager;
 import com.divineworld.utils.TaggedEntitySystem;
 import com.mojang.brigadier.CommandDispatcher;
@@ -23,6 +24,7 @@ import java.util.List;
 
 /**
  * Complete Divine World command system
+ * Synced with AgentConfigLoader.java for agent registry (agents.json)
  *
  * Commands:
  * - /genesis - Spawn 2 AI agents
@@ -61,6 +63,12 @@ public class DivineCommands {
         dispatcher.register(Commands.literal("spawn_god")
                 .then(Commands.argument("type", StringArgumentType.string())
                         .suggests((ctx, builder) -> {
+                            // Suggest god types from agents.json config
+                            AgentConfigLoader.AgentConfig config = AgentConfigLoader.loadConfig();
+                            for (String godType : config.getGodTypes()) {
+                                builder.suggest(godType.toLowerCase());
+                            }
+                            // Also suggest common god types
                             builder.suggest("ender_dragon");
                             builder.suggest("wither");
                             builder.suggest("warden");
@@ -119,6 +127,12 @@ public class DivineCommands {
                 ));
                 return 0;
             }
+
+            // Load and display available agents from agents.json
+            AgentConfigLoader.AgentConfig config = AgentConfigLoader.loadConfig();
+            player.sendSystemMessage(Component.literal("§5[Genesis] §eAvailable agents in registry:"));
+            player.sendSystemMessage(Component.literal("  §7Male: " + String.join(", ", config.getMaleNPCNames())));
+            player.sendSystemMessage(Component.literal("  §7Female: " + String.join(", ", config.getFemaleNPCNames())));
 
             // Trigger genesis (spawns 2 agents via Python)
             BlockPos playerPos = player.blockPosition();
@@ -243,6 +257,20 @@ public class DivineCommands {
             ServerLevel level = ctx.getSource().getLevel();
             String godType = StringArgumentType.getString(ctx, "type");
 
+            // Validate god type against config
+            AgentConfigLoader.AgentConfig config = AgentConfigLoader.loadConfig();
+            boolean isValidType = AgentConfigLoader.isValidGodType(godType);
+            
+            if (!isValidType) {
+                player.sendSystemMessage(Component.literal(
+                        "§c[Spawn God] Unknown god type: " + godType
+                ));
+                player.sendSystemMessage(Component.literal(
+                        "§7Available: " + String.join(", ", config.getGodTypes())
+                ));
+                return 0;
+            }
+
             BlockPos spawnPos = player.blockPosition().relative(player.getDirection(), 3);
 
             player.sendSystemMessage(Component.literal(
@@ -352,6 +380,13 @@ public class DivineCommands {
 
                 player.sendSystemMessage(Component.literal("  " + display));
             }
+
+            // Show registry info
+            AgentConfigLoader.AgentConfig config = AgentConfigLoader.loadConfig();
+            player.sendSystemMessage(Component.literal("§d[Agent Registry] (agents.json)"));
+            player.sendSystemMessage(Component.literal("  §7Male NPCs: " + config.getMaleNPCNames().size()));
+            player.sendSystemMessage(Component.literal("  §7Female NPCs: " + config.getFemaleNPCNames().size()));
+            player.sendSystemMessage(Component.literal("  §7Gods: " + config.getGodTypes().size()));
 
             return aiAgents.size();
 

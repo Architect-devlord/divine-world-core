@@ -52,6 +52,7 @@ from ai_core.personality import assign_npc_gender, assign_god_gender
 from auto_packager import EnhancedAgentSpawner
 from auto_connect_system import integrate_with_backend
 from utils.mc_uuid import get_minecraft_uuid
+from utils.agents_json_manager import get_manager as get_agents_manager
 # Import UltimMC launcher
 from minecraft_launcher import UltimMCLauncher, MultiAgentLauncher
 
@@ -112,11 +113,17 @@ class MinecraftServerIntegration:
 
         return agents
 
-    def register_agent(self, agent_id: str, agent_uuid: str):
-        """Register agent in server cache files"""
+    def register_agent(self, agent_id: str, agent_uuid: str, agent_type: str = 'npc', custom_name: Optional[str] = None):
+        """Register agent in server cache files AND agents.json"""
         if not self.server_folder:
             log.warning("Server folder not configured, skipping registration")
             return
+
+        # Determine display name
+        if custom_name and custom_name != "Unnamed":
+            display_name = custom_name
+        else:
+            display_name = agent_id
 
         # Update usercache.json
         if self.usercache_path.exists():
@@ -153,6 +160,25 @@ class MinecraftServerIntegration:
                 json.dump(usernamecache_data, f, indent=2)
 
             log.info(f"✅ Registered {agent_id} in usernamecache.json")
+
+        # Register in agents.json (synced with AgentConfigLoader.java)
+        agents_manager = get_agents_manager()
+        if agent_type.startswith('god_'):
+            # It's a god
+            god_type = agent_type.replace('god_', '').upper()
+            agents_manager.register_god(display_name, 'dual')
+            log.info(f"✅ Registered GOD: {display_name} in agents.json")
+        else:
+            # It's an NPC - we'll guess gender from the name or use 'male' as default
+            # For Genesis agents, we have specific names (Adam/Eve)
+            gender = 'male'  # default
+            if display_name.lower() in ['eve', 'alice', 'diana', 'emily', 'fiona', 'grace', 'hannah', 'iris', 'julia', 'kate']:
+                gender = 'female'
+            elif agent_id == 'eve':
+                gender = 'female'
+            
+            agents_manager.register_npc(display_name, gender)
+            log.info(f"✅ Registered NPC: {display_name} ({gender}) in agents.json")
 
 server_integration = MinecraftServerIntegration()
 
@@ -318,8 +344,8 @@ class AgentProcessManager:
                 # Log the mapping for debugging
                 log.info(f"🔗 Agent Registration: agent_id={agent_id}, username={username}, uuid={agent_uuid}")
 
-                # Register in server files with proper username
-                server_integration.register_agent(username, agent_uuid)
+                # Register in server files AND agents.json with proper username
+                server_integration.register_agent(username, agent_uuid, agent_type, custom_name)
 
                 # For minecraft mode, setup UltimMC
                 if mode == 'minecraft':

@@ -117,8 +117,8 @@ AgentConfigLoader caches configuration
 
 ### Created Files
 - `py_backend/utils/agents_json_manager.py` (250 lines)
-- `AGENTS_JSON_SYNC_README.md` (comprehensive documentation)
-- `AGENTS_JSON_DEPLOYMENT.md` (deployment guide)
+- `SYNC_SYSTEM.md` (comprehensive documentation)
+- `DEPLOYMENT.md` (deployment guide)
 
 ### Modified Files
 - `py_backend/main.py` (2 imports + 2 methods updated)
@@ -356,6 +356,6 @@ grep -r "AgentConfigLoader" DivineWorld/src/main/java/
 
 ## Support Files
 
-- **AGENTS_JSON_SYNC_README.md** - Complete technical documentation
-- **AGENTS_JSON_DEPLOYMENT.md** - Step-by-step deployment guide
+- **SYNC_SYSTEM.md** - Complete technical documentation
+- **DEPLOYMENT.md** - Step-by-step deployment guide
 - **This file** - Implementation summary

@@ -51,6 +51,18 @@ These permissions are enforced at the runtime level and can be monitored via the
 
 ---
 
+## Agent Registry
+
+The **Agent Registry** (`agents.json`) is a cross-platform synchronization system that ensures the Python backend and Java mods share a consistent view of all active agents (NPCs and Gods).
+
+- **Backend Role**: Automatically registers every spawned agent with its name, gender, and type.
+- **Java Mod Role**: Loads the registry to validate commands, provide autocomplete suggestions, and display agent statistics in-game.
+- **Persistence**: Stored in the user's `Documents` or `Desktop` folder for easy access across different system components.
+
+For technical details, see the **[Agent Sync System](./agents/SYNC_SYSTEM.md)**.
+
+---
+
 ## UltimMC Automation
 
 The automation system simplifies agent deployment by:

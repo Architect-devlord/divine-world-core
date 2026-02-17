@@ -97,4 +97,4 @@ Open your browser to `http://localhost:8001` (default port for the first agent) 
   pkill -f "DW_Agent_"
   ```
 
-For more detailed information, see the [Architecture](./ARCHITECTURE.md) and [API Reference](./API_REFERENCE.md).
+For more detailed information, see the [Architecture](./ARCHITECTURE.md), [API Reference](./API_REFERENCE.md), and [Agent Deployment](./agents/DEPLOYMENT.md).

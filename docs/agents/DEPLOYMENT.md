@@ -285,7 +285,7 @@ git checkout src/main/java/com/divineworld/commands/
 ## Support
 
 For issues or questions:
-1. Check AGENTS_JSON_SYNC_README.md (detailed documentation)
+1. Check SYNC_SYSTEM.md (detailed documentation)
 2. Review backend logs in `data/logs/`
 3. Review Minecraft server logs
 4. Check Java mod compilation errors with `--stacktrace`

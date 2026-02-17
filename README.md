@@ -69,8 +69,8 @@ Learn more about the agent synchronization and management:
 
 This project is under the full ownership and copyright of **Devlord the Architect (2025)**. It is **NOT** open source and is **NOT** for redistribution.
 
-- **License**: See `License.txt`
-- **Authorship**: See `Authorization.txt`
+- **License**: See **[License.txt](License.txt)**
+- **Authorship**: See **[Authorship.txt](Authorship.txt)**
 
 Do not distribute or modify without explicit permission from the author.
 

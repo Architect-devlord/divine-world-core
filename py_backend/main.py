@@ -30,6 +30,7 @@ import uuid
 import psutil
 import json
 import time
+import re
 
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -58,6 +59,10 @@ from minecraft_launcher import UltimMCLauncher, MultiAgentLauncher
 
 # Initialize name manager
 name_manager = AgentNameManager()
+
+def sanitize_agent_id(name: str) -> str:
+    """Sanitize name for use as agent_id and directory name"""
+    return re.sub(r'[^a-z0-9_]', '', name.lower().replace(' ', '_'))
 
 
 # Initialize logging
@@ -370,7 +375,7 @@ class AgentProcessManager:
 
                     log.info(f"✅ UltimMC setup complete for {agent_id}")
                 # Start agent backend process
-                agent_script = Path(__file__).parent.parent / "ai_core" / "agent.py"
+                agent_script = Path(__file__).parent / "ai_core" / "agent.py"
 
                 # Allocate unique backend port
                 backend_port = Config.BASE_BACKEND_PORT + (abs(hash(agent_id)) % 9000)
@@ -387,6 +392,9 @@ class AgentProcessManager:
                     '--log-level', 'INFO',
                     '--brain-save-path', brain_save_path
                 ]
+
+                if custom_name:
+                    cmd.extend(['--custom-name', custom_name])
 
                 if load_brain:
                     cmd.extend(['--load-brain', load_brain])
@@ -702,11 +710,13 @@ async def spawn_single_agent(request: Request):
         if not agent_name or agent_name == "Unnamed":
             agent_name = name_manager.get_random_name("NPCs", gender) or "Unnamed"
 
-        # Generate simple NPC agent ID (npc1, npc2, etc.)
-        # Format ensures easy extraction by DWEventHandler
-        import glob
-        existing_npcs = len(glob.glob(str(Config.NPC_APPLICATIONS_DIR / "npc*")))
-        agent_id = f"npc{existing_npcs + 1}"
+        # Generate meaningful agent ID
+        base_id = sanitize_agent_id(agent_name)
+        # Use more precise matching to avoid false positives (e.g. bob matching bobby)
+        existing = 0
+        if Config.NPC_APPLICATIONS_DIR.exists():
+            existing = len([d for d in Config.NPC_APPLICATIONS_DIR.iterdir() if d.is_dir() and d.name.startswith(base_id)])
+        agent_id = f"{base_id}_{existing + 1}"
 
         log.info(f"🧑 Spawning single NPC: {agent_name} (ID: {agent_id})")
 
@@ -1460,14 +1470,16 @@ async def spawn_god(request: Request):
         else:
             config = GOD_CONFIGS[god_type]
 
-        # Generate simple god agent ID
-        # Format: god1, god2, god3, etc. for easy extraction by DWEventHandler
-        import glob
-        existing_gods = len(glob.glob(str(Config.NPC_APPLICATIONS_DIR / "god*")))
-        agent_id = f"god{existing_gods + 1}"
-
         # Get a clean name for the god
         display_name = name_manager.get_random_name("GODs", "dual") or "Unnamed"
+
+        # Generate meaningful god agent ID
+        base_id = sanitize_agent_id(display_name)
+        # Use more precise matching to avoid false positives
+        existing = 0
+        if Config.NPC_APPLICATIONS_DIR.exists():
+            existing = len([d for d in Config.NPC_APPLICATIONS_DIR.iterdir() if d.is_dir() and d.name.startswith(base_id)])
+        agent_id = f"{base_id}_{existing + 1}"
         name_manager.add_name("GODs", "dual", display_name)
 
         # Extract spawn coordinates

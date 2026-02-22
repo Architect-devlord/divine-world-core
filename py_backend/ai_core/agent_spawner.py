@@ -327,7 +327,8 @@ class AgentSpawner:
                 agent_id=agent_id,
                 gender=gender,
                 persona_traits=persona_traits,
-                client_process=client_process
+                client_process=client_process,
+                custom_name=clean_name
             )
             
             # Set agent type
@@ -401,7 +402,8 @@ class AgentSpawner:
                 agent_id=agent_id,
                 gender=gender,
                 persona_traits=persona_traits,
-                client_process=client_process
+                client_process=client_process,
+                custom_name=clean_name
             )
             
             # Set god type
@@ -653,7 +655,8 @@ class EnhancedAgentSpawner(AgentSpawner):
                 agent_id=agent_id,
                 gender=gender,
                 persona_traits=persona_traits,
-                client_process=client_process
+                client_process=client_process,
+                custom_name=clean_name
             )
             
             agent.agent_type = 'npc'

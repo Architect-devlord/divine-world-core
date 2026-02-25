@@ -419,8 +419,13 @@ class AgentProcessManager:
 
             log.info(f"Starting agent backend: {' '.join(cmd)}")
 
+            # Ensure PYTHONPATH is set so agent can find ai_core
+            env = os.environ.copy()
+            env["PYTHONPATH"] = f"{env.get('PYTHONPATH', '')}{os.pathsep}{str(Path(__file__).parent)}"
+
             process = subprocess.Popen(
                 cmd,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -1122,6 +1127,7 @@ async def genesis_spawn(request: Request):
 
         spawner_name = data.get('spawner')
         world_name = data.get('world')
+        mode = data.get('mode', 'minecraft')
         spawn_positions = data.get('spawn_positions', [])
         server_addr = data.get('server_addr', Config.DEFAULT_SERVER)
 
@@ -1143,7 +1149,6 @@ async def genesis_spawn(request: Request):
             # This ensures easy extraction by DWEventHandler
 
             if gender == 'male':
-                agent_id = "adam"
                 display_name = "Adam"
                 name_manager.add_name("NPCs", "male", "Adam")
                 # Male personality: higher boldness, curiosity
@@ -1157,7 +1162,6 @@ async def genesis_spawn(request: Request):
                     'sociability': 0.6
                 }
             elif gender == 'female':
-                agent_id = "eve"
                 display_name = "Eve"
                 name_manager.add_name("NPCs", "female", "Eve")
                 # Female personality: higher agreeableness, conscientiousness
@@ -1174,7 +1178,6 @@ async def genesis_spawn(request: Request):
                 # Random gender
                 import random
                 gender = random.choice(['male', 'female'])
-                agent_id = f"genesis_{i+1}"
                 display_name = "Unnamed"  # Default name
                 # Balanced personality
                 personality = {
@@ -1187,10 +1190,18 @@ async def genesis_spawn(request: Request):
                     'sociability': 0.7
                 }
 
+            # Generate meaningful agent ID
+            base_id = sanitize_agent_id(display_name)
+            existing = 0
+            if Config.NPC_APPLICATIONS_DIR.exists():
+                pattern = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
+                existing = len([d for d in Config.NPC_APPLICATIONS_DIR.iterdir() if d.is_dir() and pattern.match(d.name)])
+            agent_id = f"{base_id}_{existing + 1}"
+
             # Start agent process with custom name
             success = agent_manager.start_agent_process(
                 agent_id=agent_id,
-                mode='minecraft',
+                mode=spawn_data.get('mode', mode),
                 server_addr=server_addr,
                 additional_args=[
                     '--gender', gender,

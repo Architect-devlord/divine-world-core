@@ -17,7 +17,7 @@ import time
 from typing import Optional, Dict, Any
 import logging
 from frontend_builder import FrontendBuilder
-from config import Config
+from py_backend.config import Config
 from py_backend.utils.mc_uuid import get_minecraft_uuid
 
 log = logging.getLogger("packager")

@@ -254,9 +254,11 @@ class NPCAgent:
                 autonomous: bool = True,
                 use_scylla: bool = True,
                 mode: str = 'autonomous',
-                god_type: Optional[str] = None):
+                god_type: Optional[str] = None,
+                custom_name: Optional[str] = None):
 
         self.agent_id = agent_id
+        self.custom_name = custom_name
         self.autonomous_mode = autonomous
         self.mode = mode
         self.god_type = god_type
@@ -614,6 +616,7 @@ class NPCAgent:
     def get_info(self) -> Dict[str, Any]:
         info = {
             'agent_id': self.agent_id,
+            'custom_name': self.custom_name,
             'agent_type': self.agent_type,
             'mode': self.mode,
             'gender': self.personality.gender,
@@ -725,6 +728,7 @@ class NPCAgent:
         # Prepare metadata (merging current metadata)
         metadata = {
             'agent_id': self.agent_id,
+            'custom_name': self.custom_name,
             'agent_type': self.agent_type,
             'mode': self.mode,
             'gender': self.personality.gender,
@@ -839,6 +843,7 @@ class NPCAgent:
 
         # Metadata
         self.step_count = capsule.metadata.get('step_count', 0)
+        self.custom_name = capsule.metadata.get('custom_name', self.custom_name)
         self.agent_type = capsule.metadata.get('agent_type', 'npc')
         self.mode = capsule.metadata.get('mode', 'autonomous')
         self.autonomous_mode = capsule.metadata.get('autonomous', True)
@@ -1025,7 +1030,8 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
                                personality_traits: Optional[Dict[str, float]] = None,
                                spawn_pos: Optional[tuple] = None,
                                genesis_ancestor: bool = False,
-                               port: int = 8000):
+                               port: int = 8000,
+                               custom_name: Optional[str] = None):
     """
     Run agent in standalone mode without backend server.
 
@@ -1060,7 +1066,8 @@ async def run_standalone_agent(agent_id: str, mode: str = 'autonomous',
         mode=mode,
         god_type=god_type,
         gender=gender,
-        persona_traits=personality_traits
+        persona_traits=personality_traits,
+        custom_name=custom_name
     )
 
     # Store brain save path if provided (from backend)
@@ -1484,6 +1491,12 @@ def main():
         help='Whether this is a genesis ancestor agent'
     )
 
+    parser.add_argument(
+        '--custom-name',
+        type=str,
+        help='Custom display name for the agent'
+    )
+
     args = parser.parse_args()
 
     # Setup logging
@@ -1527,7 +1540,8 @@ def main():
             personality_traits=personality_traits,
             spawn_pos=(args.spawn_x, args.spawn_y, args.spawn_z) if args.spawn_x is not None else None,
             genesis_ancestor=args.genesis_ancestor == 'true' if args.genesis_ancestor else False,
-            port=args.port
+            port=args.port,
+            custom_name=args.custom_name
         ))
     except KeyboardInterrupt:
         print("\n✅ Agent stopped")

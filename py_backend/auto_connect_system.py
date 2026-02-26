@@ -8,6 +8,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from py_backend.config import Config
 from typing import Dict, List, Optional, Set
 
 log = logging.getLogger("auto_connect")
@@ -242,7 +243,7 @@ def integrate_with_backend(app, agent_manager):
     
     # Create auto-connect system
     auto_connect = AutoConnectSystem(
-        agents_folder="npc_applications",
+        agents_folder=str(Config.NPC_APPLICATIONS_DIR),
         server_addr="127.0.0.1:25565"
     )
     

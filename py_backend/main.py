@@ -30,6 +30,7 @@ import uuid
 import psutil
 import json
 import time
+import re
 
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -58,6 +59,10 @@ from minecraft_launcher import UltimMCLauncher, MultiAgentLauncher
 
 # Initialize name manager
 name_manager = AgentNameManager()
+
+def sanitize_agent_id(name: str) -> str:
+    """Sanitize name for use as agent_id and directory name"""
+    return re.sub(r'[^a-z0-9_]', '', name.lower().replace(' ', '_'))
 
 
 # Initialize logging
@@ -96,9 +101,14 @@ class MinecraftServerIntegration:
     def set_server_folder(self, folder: Path):
         """Set the Minecraft server folder and locate cache files."""
         self.server_folder = folder
-        self.usercache_path = folder / "usercache.json"
-        self.usernamecache_path = folder / "usernamecache.json"
-        log.info(f"Server folder set to: {folder}")
+        if folder and folder.exists():
+            self.usercache_path = folder / "usercache.json"
+            self.usernamecache_path = folder / "usernamecache.json"
+            log.info(f"Server folder set to: {folder}")
+        else:
+            self.usercache_path = None
+            self.usernamecache_path = None
+            log.warning(f"Server folder does not exist: {folder}")
 
     def list_registered_agents(self) -> List[Dict[str, Any]]:
         """List all agents registered in usercache and usernamecache."""
@@ -118,8 +128,10 @@ class MinecraftServerIntegration:
 
     def register_agent(self, agent_id: str, agent_uuid: str, agent_type: str = 'npc', custom_name: Optional[str] = None):
         """Register agent in server cache files AND agents.json"""
-        if not self.server_folder:
-            log.warning("Server folder not configured, skipping registration")
+        if not self.server_folder or not self.server_folder.exists():
+            log.warning("Server folder not found, skipping cache registration")
+            # We still want to register in agents.json though
+            self._register_in_agents_json(agent_id, agent_type, custom_name)
             return
 
         # Determine display name
@@ -129,7 +141,7 @@ class MinecraftServerIntegration:
             display_name = agent_id
 
         # Update usercache.json
-        if self.usercache_path.exists():
+        if self.usercache_path and self.usercache_path.exists():
             with open(self.usercache_path, 'r', encoding='utf-8') as f:
                 usercache_data = json.load(f)
         else:
@@ -150,7 +162,7 @@ class MinecraftServerIntegration:
             log.info(f"✅ Registered {agent_id} in usercache.json")
 
         # Update usernamecache.json
-        if self.usernamecache_path.exists():
+        if self.usernamecache_path and self.usernamecache_path.exists():
             with open(self.usernamecache_path, 'r', encoding='utf-8') as f:
                 usernamecache_data = json.load(f)
         else:
@@ -165,15 +177,23 @@ class MinecraftServerIntegration:
             log.info(f"✅ Registered {agent_id} in usernamecache.json")
 
         # Register in agents.json (synced with AgentConfigLoader.java)
+        self._register_in_agents_json(agent_id, agent_type, custom_name)
+
+    def _register_in_agents_json(self, agent_id: str, agent_type: str, custom_name: Optional[str]):
+        """Register agent in agents.json"""
+        # Determine display name
+        if custom_name and custom_name != "Unnamed":
+            display_name = custom_name
+        else:
+            display_name = agent_id
+
         agents_manager = get_agents_manager()
         if agent_type.startswith('god_'):
             # It's a god
-            god_type = agent_type.replace('god_', '').upper()
             agents_manager.register_god(display_name, 'dual')
             log.info(f"✅ Registered GOD: {display_name} in agents.json")
         else:
             # It's an NPC - we'll guess gender from the name or use 'male' as default
-            # For Genesis agents, we have specific names (Adam/Eve)
             gender = 'male'  # default
             if display_name.lower() in ['eve', 'alice', 'diana', 'emily', 'fiona', 'grace', 'hannah', 'iris', 'julia', 'kate']:
                 gender = 'female'
@@ -370,7 +390,7 @@ class AgentProcessManager:
 
                     log.info(f"✅ UltimMC setup complete for {agent_id}")
                 # Start agent backend process
-                agent_script = Path(__file__).parent.parent / "ai_core" / "agent.py"
+                agent_script = Path(__file__).parent / "ai_core" / "agent.py"
 
                 # Allocate unique backend port
                 backend_port = Config.BASE_BACKEND_PORT + (abs(hash(agent_id)) % 9000)
@@ -388,6 +408,9 @@ class AgentProcessManager:
                     '--brain-save-path', brain_save_path
                 ]
 
+                if custom_name:
+                    cmd.extend(['--custom-name', custom_name])
+
                 if load_brain:
                     cmd.extend(['--load-brain', load_brain])
 
@@ -396,8 +419,13 @@ class AgentProcessManager:
 
             log.info(f"Starting agent backend: {' '.join(cmd)}")
 
+            # Ensure PYTHONPATH is set so agent can find ai_core
+            env = os.environ.copy()
+            env["PYTHONPATH"] = f"{env.get('PYTHONPATH', '')}{os.pathsep}{str(Path(__file__).parent)}"
+
             process = subprocess.Popen(
                 cmd,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -684,6 +712,7 @@ async def spawn_single_agent(request: Request):
         data = await request.json()
 
         agent_name = data.get('agent_name')
+        mode = data.get('mode', 'minecraft')
         spawner_name = data.get('spawner')
         world_name = data.get('world')
         spawn_pos = data.get('spawn_position', {})
@@ -702,11 +731,14 @@ async def spawn_single_agent(request: Request):
         if not agent_name or agent_name == "Unnamed":
             agent_name = name_manager.get_random_name("NPCs", gender) or "Unnamed"
 
-        # Generate simple NPC agent ID (npc1, npc2, etc.)
-        # Format ensures easy extraction by DWEventHandler
-        import glob
-        existing_npcs = len(glob.glob(str(Config.NPC_APPLICATIONS_DIR / "npc*")))
-        agent_id = f"npc{existing_npcs + 1}"
+        # Generate meaningful agent ID
+        base_id = sanitize_agent_id(agent_name)
+        # Use regex matching to avoid false positives (e.g. bob matching bobby)
+        existing = 0
+        if Config.NPC_APPLICATIONS_DIR.exists():
+            pattern = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
+            existing = len([d for d in Config.NPC_APPLICATIONS_DIR.iterdir() if d.is_dir() and pattern.match(d.name)])
+        agent_id = f"{base_id}_{existing + 1}"
 
         log.info(f"🧑 Spawning single NPC: {agent_name} (ID: {agent_id})")
 
@@ -738,7 +770,7 @@ async def spawn_single_agent(request: Request):
         # Start agent process
         success = agent_manager.start_agent_process(
             agent_id=agent_id,
-            mode='minecraft',
+            mode=mode,
             additional_args=[
                 '--gender', gender,
                 '--personality', json.dumps(personality),
@@ -1095,6 +1127,7 @@ async def genesis_spawn(request: Request):
 
         spawner_name = data.get('spawner')
         world_name = data.get('world')
+        mode = data.get('mode', 'minecraft')
         spawn_positions = data.get('spawn_positions', [])
         server_addr = data.get('server_addr', Config.DEFAULT_SERVER)
 
@@ -1116,7 +1149,6 @@ async def genesis_spawn(request: Request):
             # This ensures easy extraction by DWEventHandler
 
             if gender == 'male':
-                agent_id = "adam"
                 display_name = "Adam"
                 name_manager.add_name("NPCs", "male", "Adam")
                 # Male personality: higher boldness, curiosity
@@ -1130,7 +1162,6 @@ async def genesis_spawn(request: Request):
                     'sociability': 0.6
                 }
             elif gender == 'female':
-                agent_id = "eve"
                 display_name = "Eve"
                 name_manager.add_name("NPCs", "female", "Eve")
                 # Female personality: higher agreeableness, conscientiousness
@@ -1147,7 +1178,6 @@ async def genesis_spawn(request: Request):
                 # Random gender
                 import random
                 gender = random.choice(['male', 'female'])
-                agent_id = f"genesis_{i+1}"
                 display_name = "Unnamed"  # Default name
                 # Balanced personality
                 personality = {
@@ -1160,10 +1190,18 @@ async def genesis_spawn(request: Request):
                     'sociability': 0.7
                 }
 
+            # Generate meaningful agent ID
+            base_id = sanitize_agent_id(display_name)
+            existing = 0
+            if Config.NPC_APPLICATIONS_DIR.exists():
+                pattern = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
+                existing = len([d for d in Config.NPC_APPLICATIONS_DIR.iterdir() if d.is_dir() and pattern.match(d.name)])
+            agent_id = f"{base_id}_{existing + 1}"
+
             # Start agent process with custom name
             success = agent_manager.start_agent_process(
                 agent_id=agent_id,
-                mode='minecraft',
+                mode=spawn_data.get('mode', mode),
                 server_addr=server_addr,
                 additional_args=[
                     '--gender', gender,
@@ -1460,14 +1498,17 @@ async def spawn_god(request: Request):
         else:
             config = GOD_CONFIGS[god_type]
 
-        # Generate simple god agent ID
-        # Format: god1, god2, god3, etc. for easy extraction by DWEventHandler
-        import glob
-        existing_gods = len(glob.glob(str(Config.NPC_APPLICATIONS_DIR / "god*")))
-        agent_id = f"god{existing_gods + 1}"
-
         # Get a clean name for the god
         display_name = name_manager.get_random_name("GODs", "dual") or "Unnamed"
+
+        # Generate meaningful god agent ID
+        base_id = sanitize_agent_id(display_name)
+        # Use regex matching to avoid false positives
+        existing = 0
+        if Config.NPC_APPLICATIONS_DIR.exists():
+            pattern = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
+            existing = len([d for d in Config.NPC_APPLICATIONS_DIR.iterdir() if d.is_dir() and pattern.match(d.name)])
+        agent_id = f"{base_id}_{existing + 1}"
         name_manager.add_name("GODs", "dual", display_name)
 
         # Extract spawn coordinates

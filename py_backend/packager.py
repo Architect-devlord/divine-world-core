@@ -17,7 +17,7 @@ import time
 from typing import Optional, Dict, Any
 import logging
 from frontend_builder import FrontendBuilder
-from config import Config
+from py_backend.config import Config
 from py_backend.utils.mc_uuid import get_minecraft_uuid
 
 log = logging.getLogger("packager")
@@ -39,11 +39,7 @@ class AgentPackager:
     def __init__(self, output_dir: str = None):
         # Default to centralized NPC applications directory from Config
         if output_dir is None:
-            try:
-                from config import Config as _Config
-                self.output_dir = Path(_Config.NPC_APPLICATIONS_DIR)
-            except Exception:
-                self.output_dir = Path("npc_applications")
+            self.output_dir = Path(Config.NPC_APPLICATIONS_DIR)
         else:
             self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -328,7 +324,7 @@ class AgentPackager:
                         agent_type: str, backend_port: int, minecraft_name: str) -> Path:
         """Creates launcher with FIXED import paths for PyInstaller"""
 
-        launcher_template = '''"""
+        launcher_template = r'''"""
 DW Agent Launcher - __AGENT_ID__ (__MINECRAFT_NAME__)
 Type: __AGENT_TYPE__
 Production Version with Fixed Imports and Auto-Join Logic
@@ -401,7 +397,11 @@ def start_backend_server(port: int = BACKEND_PORT):
     try:
         import uvicorn
         if getattr(sys, 'frozen', False):
-            from main import app
+            try:
+                from main import app
+            except ImportError:
+                # Fallback for different build structures
+                from py_backend.main import app
         else:
             from py_backend.main import app
 
@@ -418,6 +418,19 @@ def start_backend_server(port: int = BACKEND_PORT):
         import traceback
         traceback.print_exc()
         return False
+
+def attempt_launch_minecraft_client(agent_id, agent_dir, port):
+    """Manual fallback instructions for launching Minecraft"""
+    print("\n" + "!"*60)
+    print(f"  MANUAL ACTION REQUIRED")
+    print("!"*60)
+    print(f"  To connect this agent to Minecraft:")
+    print(f"  1. Start Minecraft 1.20.1 with Forge {UltimMCLauncher.FORGE_VERSION}")
+    print(f"  2. Ensure DivineWorld and DWClientBot mods are installed")
+    print(f"  3. Add the following JVM Argument to your launcher:")
+    print(f"     -Ddw.backend=http://127.0.0.1:{port}")
+    print(f"  4. Join the server")
+    print("!"*60 + "\n")
 
 def try_launch_ultimmc(server_addr: str, agent_name: str) -> bool:
     """Try to launch embedded UltimMC if available to join the server."""

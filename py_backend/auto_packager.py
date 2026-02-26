@@ -19,6 +19,7 @@ import time
 from ai_core.agent_spawner import AgentSpawner, EnhancedAgentSpawner
 from ai_core.agent import NPCAgent
 from packager import AgentPackager
+from py_backend.config import Config
 
 log = logging.getLogger("auto_packager")
 log.setLevel(logging.INFO)
@@ -29,7 +30,9 @@ class AutoPackagingSystem:
     Enhanced auto-packaging with proper synchronization.
     """
 
-    def __init__(self, output_dir: str = "npc_applications"):
+    def __init__(self, output_dir: str = None):
+        if output_dir is None:
+            output_dir = str(Config.NPC_APPLICATIONS_DIR)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -285,7 +288,7 @@ class EnhancedAgentSpawner(AgentSpawner):
 
     def __init__(self, client_jar_path: Optional[str] = "dwclient-1.0.0.jar",
                  auto_package: bool = True,
-                 package_output_dir: str = "npc_applications",
+                 package_output_dir: Optional[str] = None,
                  use_ultimmc: bool = None):
         """
         Initialize enhanced spawner.
@@ -303,8 +306,10 @@ class EnhancedAgentSpawner(AgentSpawner):
         self.use_ultimmc = use_ultimmc
 
         if auto_package:
+            if package_output_dir is None:
+                package_output_dir = str(Config.NPC_APPLICATIONS_DIR)
             self.packager = AutoPackagingSystem(output_dir=package_output_dir)
-            log.info("Auto-packaging enabled")
+            log.info(f"Auto-packaging enabled (output: {package_output_dir})")
 
         # Setup UltimMC if requested or available
         if use_ultimmc is None:

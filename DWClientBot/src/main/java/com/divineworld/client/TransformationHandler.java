@@ -1,9 +1,7 @@
-// src/main/java/com/divineworld/client/TransformationHandler.java
 package com.divineworld.client;
 
-import com.divineworld.client.chat.ClientChatBubbleHandler;
+import com.divineworld.client.network.MorphStateCache;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.api.distmarker.Dist;
@@ -16,16 +14,23 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Transformation Handler - Client-side
- * Monitors god entities for transformation state changes
- * Spawns particles and updates visual effects
+ * Transformation Handler — DWClientBot
+ * =====================================
+ * Drains MorphStateCache (same mod) each ClientTickEvent and plays
+ * cosmetic particle bursts for transformed players.
+ *
+ * Zero imports from the server mod.  The visual model change itself is the
+ * entity swap done server-side by GodSpawnHandler.replaceGodBody() — all
+ * clients already see it because it's a real world entity.  This class
+ * only adds the particle effect on top.
  */
 @Mod.EventBusSubscriber(modid = DWClientMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
 public class TransformationHandler {
 
-    // Track transformation states
-    private static final Map<UUID, Boolean> TRANSFORMATION_STATES = new HashMap<>();
-    private static final Map<UUID, Integer> TRANSFORMATION_PARTICLES = new HashMap<>();
+    // playerUUID → current morph type ("" = original form)
+    private static final Map<UUID, String>  MORPH_STATE    = new HashMap<>();
+    // playerUUID → ticks of particles remaining
+    private static final Map<UUID, Integer> PARTICLE_TICKS = new HashMap<>();
 
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
@@ -34,67 +39,66 @@ public class TransformationHandler {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) return;
 
-        // Check all players for god transformation state changes
-        for (Player player : mc.level.players()) {
-            if (!player.getPersistentData().contains("dw_god")) continue;
-
-            UUID playerId = player.getUUID();
-            boolean currentlyDisguised = player.getPersistentData().getBoolean("dw_disguised");
-            Boolean previousState = TRANSFORMATION_STATES.get(playerId);
-
-            // State changed
-            if (previousState == null || previousState != currentlyDisguised) {
-                TRANSFORMATION_STATES.put(playerId, currentlyDisguised);
-
-                // Start particle effect
-                TRANSFORMATION_PARTICLES.put(playerId, 60); // 3 seconds of particles
-
-                DWClientMod.LOGGER.info("God transformation detected: {} -> {}",
-                        player.getName().getString(),
-                        currentlyDisguised ? "DISGUISED" : "GOD FORM");
-            }
-
-            // Spawn transformation particles
-            Integer particleTicks = TRANSFORMATION_PARTICLES.get(playerId);
-            if (particleTicks != null && particleTicks > 0) {
-                spawnTransformationParticles(player);
-                TRANSFORMATION_PARTICLES.put(playerId, particleTicks - 1);
-            }
+        // ── Drain pending morph events from cache ────────────────────────────
+        MorphStateCache.MorphEvent evt;
+        while ((evt = MorphStateCache.poll()) != null) {
+            MORPH_STATE.put(evt.playerUUID(), evt.mobType());
+            PARTICLE_TICKS.put(evt.playerUUID(), 60); // 3-second burst
+            DWClientMod.LOGGER.info("[Transform] {} → {}",
+                    evt.playerUUID(),
+                    evt.mobType().isEmpty() ? "REVERTED (" + evt.godType() + ")" : evt.mobType());
         }
 
-        // Cleanup disconnected players
-        TRANSFORMATION_STATES.keySet().removeIf(uuid ->
+        // ── Play particles for recently-transformed players ──────────────────
+        for (Player player : mc.level.players()) {
+            UUID id = player.getUUID();
+            Integer remaining = PARTICLE_TICKS.get(id);
+            if (remaining == null || remaining <= 0) continue;
+
+            String mobType = MORPH_STATE.getOrDefault(id, "");
+            if (mobType.isEmpty()) {
+                mobType = player.getPersistentData().getString("dw_god_type");
+            }
+            spawnParticles(player, mobType);
+            PARTICLE_TICKS.put(id, remaining - 1);
+        }
+
+        // ── Clean up disconnected players ────────────────────────────────────
+        MORPH_STATE.keySet().removeIf(uuid ->
                 mc.level.players().stream().noneMatch(p -> p.getUUID().equals(uuid)));
-        TRANSFORMATION_PARTICLES.keySet().removeIf(uuid ->
+        PARTICLE_TICKS.keySet().removeIf(uuid ->
                 mc.level.players().stream().noneMatch(p -> p.getUUID().equals(uuid)));
     }
 
-    private static void spawnTransformationParticles(Player player) {
-        if (player.level().random.nextFloat() > 0.3f) return;
-
-        // Spawn particles around the entity
+    private static void spawnParticles(Player player, String mobType) {
+        if (player.level().random.nextFloat() > 0.35f) return;
         double x = player.getX() + (player.level().random.nextDouble() - 0.5) * 2.0;
         double y = player.getY() + player.level().random.nextDouble() * 2.0;
         double z = player.getZ() + (player.level().random.nextDouble() - 0.5) * 2.0;
-
-        // Different particle types based on god type
-        String godType = player.getPersistentData().getString("dw_god_type");
-
-        var particleType = switch (godType) {
-            case "ender_dragon" -> ParticleTypes.DRAGON_BREATH;
-            case "wither" -> ParticleTypes.SMOKE;
-            case "warden" -> ParticleTypes.SCULK_SOUL;
-            case "elder_guardian" -> ParticleTypes.BUBBLE;
-            case "creaking" -> ParticleTypes.SPORE_BLOSSOM_AIR;
-            case "oracle" -> ParticleTypes.ENCHANT;
-            default -> ParticleTypes.PORTAL;
+        var particle = switch (mobType == null ? "" : mobType) {
+            case "ender_dragon", "dragon" -> ParticleTypes.DRAGON_BREATH;
+            case "wither"                 -> ParticleTypes.SMOKE;
+            case "warden"                 -> ParticleTypes.SCULK_SOUL;
+            case "elder_guardian"         -> ParticleTypes.BUBBLE;
+            case "creaking"               -> ParticleTypes.SPORE_BLOSSOM_AIR;
+            case "oracle"                 -> ParticleTypes.ENCHANT;
+            default                       -> ParticleTypes.PORTAL;
         };
+        player.level().addParticle(particle, x, y, z, 0, 0.25, 0);
+    }
 
-        player.level().addParticle(particleType, x, y, z, 0, 0.3, 0);
+    public static boolean isMorphed(UUID playerUUID) {
+        String s = MORPH_STATE.get(playerUUID);
+        return s != null && !s.isEmpty();
+    }
+
+    public static String getMorphType(UUID playerUUID) {
+        return MORPH_STATE.getOrDefault(playerUUID, "");
     }
 
     public static void reset() {
-        TRANSFORMATION_STATES.clear();
-        TRANSFORMATION_PARTICLES.clear();
+        MORPH_STATE.clear();
+        PARTICLE_TICKS.clear();
+        MorphStateCache.clear();
     }
 }

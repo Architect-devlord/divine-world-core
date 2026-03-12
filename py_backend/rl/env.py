@@ -139,7 +139,7 @@ class DivineWorldEnv(gym.Env):
     def _compute_reward(self, outcome: Dict[str, Any]) -> float:
         """
         Compute reward from outcome.
-        Simple version - can be replaced by ImprovedRewardSystem.
+        Simple version - can be replaced by RewardSystem.
         """
         reward = 0.0
         

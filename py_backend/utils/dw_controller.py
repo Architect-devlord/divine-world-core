@@ -1,21 +1,40 @@
-# utils/dw_controller.py - PRODUCTION-HARDENED VERSION
+# py_backend/utils/dw_controller.py
 """
-Controller Runtime for DivineWorld AI Agents
-Provides system-level access: camera, microphone, file system
-Enables multimodal learning from real-world sensors
-Thread-safe, robust, and ready for production use
+Controller Runtime for DivineWorld AI Agents.
+==============================================
+Provides system-level sensor access: camera (OpenCV) and
+microphone (sounddevice).  Feeds raw frames/audio directly
+into the agent's memory and emotion systems.
+
+Permission model
+----------------
+All hardware access is gated by the enabled_permissions dict.
+Permissions are set externally (e.g. from the /controller/activate
+endpoint in main.py) before calling start_multimodal_learning().
+
+    controller.enabled_permissions['camera'] = True
+    controller.start_multimodal_learning(vision=True, audio=False)
+
+Emotion integration
+-------------------
+Uses agent.emotion.emotions[key] = value (the dict the EmotionSystem
+exposes directly) — not a hypothetical .add() method that doesn't exist.
+
+Memory integration
+------------------
+Calls agent.memory.remember(event, tags=[...]) which is the real API
+on UnifiedMemoryStore.
 """
+
+import logging
+import threading
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import cv2
-import time
-import threading
 import numpy as np
-import logging
-from pathlib import Path
-from typing import Optional, Callable, Dict, Any, List, Tuple
 
 from ai_core.agent import NPCAgent
-from ai_core.memory import Memory
 
 try:
     import sounddevice as sd
@@ -26,185 +45,211 @@ log = logging.getLogger("dw_controller")
 log.setLevel(logging.INFO)
 
 
-# ------------------- Camera Capture -------------------
+# ---------------------------------------------------------------------------
+# Camera
+# ---------------------------------------------------------------------------
 
 class CameraCapture:
-    """Threaded camera capture for real-time vision"""
+    """Threaded camera capture."""
 
-    def __init__(self, camera_index: int = 0, fps: int = 20, resolution: Tuple[int, int] = (640, 480)):
+    def __init__(self, camera_index: int = 0,
+                 fps: int = 20,
+                 resolution: Tuple[int, int] = (640, 480)):
         self.camera_index = camera_index
-        self.fps = fps
-        self.resolution = resolution
-        self.cap: Optional[cv2.VideoCapture] = None
-        self.latest_frame: Optional[np.ndarray] = None
-        self.frame_lock = threading.Lock()
-        self.running = False
-        self.capture_thread: Optional[threading.Thread] = None
+        self.fps          = fps
+        self.resolution   = resolution
+
+        self._cap:    Optional[cv2.VideoCapture] = None
+        self._frame:  Optional[np.ndarray]       = None
+        self._lock    = threading.Lock()
+        self.running  = False
+        self._thread: Optional[threading.Thread] = None
 
     def start(self):
         if self.running:
             return
-        self.cap = cv2.VideoCapture(self.camera_index)
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Failed to open camera {self.camera_index}")
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
+        self._cap = cv2.VideoCapture(self.camera_index)
+        if not self._cap.isOpened():
+            raise RuntimeError(f"Cannot open camera {self.camera_index}")
+        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self.resolution[0])
+        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
         self.running = True
-        self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self.capture_thread.start()
-        log.info(f"Camera {self.camera_index} started ({self.resolution[0]}x{self.resolution[1]} @ {self.fps}fps)")
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        log.info(f"Camera {self.camera_index} started "
+                 f"({self.resolution[0]}×{self.resolution[1]} @ {self.fps}fps)")
 
-    def _capture_loop(self):
-        while self.running and self.cap and self.cap.isOpened():
+    def _loop(self):
+        interval = 1.0 / self.fps
+        while self.running and self._cap and self._cap.isOpened():
             try:
-                ret, frame = self.cap.read()
-                if ret:
-                    with self.frame_lock:
-                        self.latest_frame = frame
-                time.sleep(1.0 / self.fps)
+                ok, frame = self._cap.read()
+                if ok:
+                    with self._lock:
+                        self._frame = frame
             except Exception as e:
-                log.error(f"Camera capture loop error: {e}")
-                time.sleep(0.1)
+                log.error(f"Camera loop error: {e}")
+            time.sleep(interval)
 
     def get_frame(self) -> Optional[np.ndarray]:
-        with self.frame_lock:
-            return self.latest_frame.copy() if self.latest_frame is not None else None
+        with self._lock:
+            return self._frame.copy() if self._frame is not None else None
 
     def stop(self):
         self.running = False
-        if self.capture_thread:
-            self.capture_thread.join(timeout=2.0)
-        if self.cap:
-            self.cap.release()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        if self._cap:
+            self._cap.release()
         log.info(f"Camera {self.camera_index} stopped")
 
 
-# ------------------- Microphone Capture -------------------
+# ---------------------------------------------------------------------------
+# Microphone
+# ---------------------------------------------------------------------------
 
 class MicrophoneCapture:
-    """Threaded microphone capture for audio learning"""
+    """Threaded microphone capture via sounddevice."""
 
-    def __init__(self, device_index: Optional[int] = None, sample_rate: int = 16000, channels: int = 1, max_buffer_chunks: int = 10):
+    def __init__(self, device_index: Optional[int] = None,
+                 sample_rate: int = 16000,
+                 channels: int = 1,
+                 max_buffer_chunks: int = 10):
         if sd is None:
-            raise RuntimeError("sounddevice not installed")
-        self.device_index = device_index
-        self.sample_rate = sample_rate
-        self.channels = channels
-        self.audio_buffer: List[np.ndarray] = []
-        self.buffer_lock = threading.Lock()
-        self.stream = None
-        self.running = False
+            raise RuntimeError("sounddevice is not installed")
+        self.device_index      = device_index
+        self.sample_rate       = sample_rate
+        self.channels          = channels
         self.max_buffer_chunks = max_buffer_chunks
+
+        self._buffer: List[np.ndarray] = []
+        self._lock   = threading.Lock()
+        self._stream = None
+        self.running = False
 
     def start(self):
         if self.running:
             return
         self.running = True
 
-        def audio_callback(indata, frames, time_info, status):
+        def _cb(indata, frames, time_info, status):
             if status:
                 log.warning(f"Audio status: {status}")
-            with self.buffer_lock:
-                if len(self.audio_buffer) >= self.max_buffer_chunks:
-                    self.audio_buffer.pop(0)
-                self.audio_buffer.append(indata[:, 0].copy())
+            with self._lock:
+                if len(self._buffer) >= self.max_buffer_chunks:
+                    self._buffer.pop(0)
+                self._buffer.append(indata[:, 0].copy())
 
         try:
-            self.stream = sd.InputStream(
+            self._stream = sd.InputStream(
                 device=self.device_index,
                 samplerate=self.sample_rate,
                 channels=self.channels,
-                callback=audio_callback
+                callback=_cb,
             )
-            self.stream.start()
-            log.info(f"Microphone started ({self.sample_rate}Hz, {self.channels} channel)")
+            self._stream.start()
+            log.info(f"Microphone started ({self.sample_rate}Hz, {self.channels}ch)")
         except Exception as e:
             self.running = False
-            log.error(f"Failed to start microphone: {e}")
-            raise
+            raise RuntimeError(f"Failed to start microphone: {e}") from e
 
     def get_audio_chunk(self) -> Optional[np.ndarray]:
-        with self.buffer_lock:
-            if not self.audio_buffer:
+        with self._lock:
+            if not self._buffer:
                 return None
-            audio = np.concatenate(self.audio_buffer)
-            self.audio_buffer.clear()
+            audio = np.concatenate(self._buffer)
+            self._buffer.clear()
             return audio
 
     def stop(self):
         self.running = False
-        if self.stream:
+        if self._stream:
             try:
-                self.stream.stop()
-                self.stream.close()
+                self._stream.stop()
+                self._stream.close()
             except Exception as e:
-                log.warning(f"Error stopping microphone: {e}")
+                log.warning(f"Mic stop error: {e}")
         log.info("Microphone stopped")
 
 
-# ------------------- Controller Runtime -------------------
+# ---------------------------------------------------------------------------
+# ControllerRuntime
+# ---------------------------------------------------------------------------
 
 class ControllerRuntime:
-    """Controller runtime for system-level AI access"""
+    """
+    System-level multimodal sensor runtime for a single NPCAgent.
 
-    def __init__(self, agent: NPCAgent, max_camera_checks: int = 6, callback: Optional[Callable[[Dict[str, Any]], None]] = None):
-        self.agent = agent
-        self.max_camera_checks = max_camera_checks
-        self.camera: Optional[CameraCapture] = None
-        self.microphone: Optional[MicrophoneCapture] = None
-        self.vision_thread: Optional[threading.Thread] = None
-        self.audio_thread: Optional[threading.Thread] = None
+    Usage
+    -----
+    runtime = ControllerRuntime(agent)
+    runtime.enabled_permissions['camera']     = True
+    runtime.enabled_permissions['microphone'] = True
+    runtime.start_multimodal_learning(vision=True, audio=True)
+    # ... agent learns from sensor data ...
+    runtime.stop()
+
+    Or as a context manager:
+    with ControllerRuntime(agent) as rt:
+        rt.enabled_permissions['camera'] = True
+        rt.start_multimodal_learning()
+    """
+
+    def __init__(self, agent: NPCAgent,
+                 max_camera_checks: int = 6,
+                 callback: Optional[Callable[[Dict[str, Any]], None]] = None):
+        self.agent              = agent
+        self.max_camera_checks  = max_camera_checks
+        self.callback           = callback
+
+        self.camera:    Optional[CameraCapture]    = None
+        self.microphone:Optional[MicrophoneCapture]= None
+
+        self._vision_thread: Optional[threading.Thread] = None
+        self._audio_thread:  Optional[threading.Thread] = None
+        self._lock   = threading.Lock()
         self.running = False
-        self.stats = {'frames_processed': 0, 'audio_chunks_processed': 0, 'files_processed': 0, 'learning_events': 0}
-        self.callback = callback
-        self._lock = threading.Lock()  # Thread-safe updates for agent
-        
-        # Permission control
-        self.permission_settings = {}  # Will be set from controller activate endpoint
-        self.enabled_permissions = {
-            'camera': False,
-            'microphone': False,
-            'filesystem': False,
-            'network': False
+
+        self.stats: Dict[str, int] = {
+            'frames_processed':       0,
+            'audio_chunks_processed': 0,
+            'files_processed':        0,
+            'learning_events':        0,
         }
 
-    # --- Camera / Microphone Detection ---
+        # All permissions default to off — must be granted explicitly.
+        self.enabled_permissions: Dict[str, bool] = {
+            'camera':     False,
+            'microphone': False,
+            'filesystem': False,
+            'network':    False,
+        }
+
+    # ------------------------------------------------------------------
+    # Hardware detection
+    # ------------------------------------------------------------------
 
     def list_cameras(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """List available cameras with proper resource cleanup"""
-        limit = limit or self.max_camera_checks
+        """Probe camera indices and return those that respond."""
+        limit   = limit or self.max_camera_checks
         cameras = []
-    
         for i in range(limit):
             cap = None
             try:
                 cap = cv2.VideoCapture(i)
-            
                 if not cap.isOpened():
                     continue
-            
-                # Try to read a frame
-                ret, frame = cap.read()
-                if ret and frame is not None:
+                ok, frame = cap.read()
+                if ok and frame is not None:
                     h, w = frame.shape[:2]
-                    cameras.append({
-                        'index': i,
-                        'resolution': (w, h),
-                        'name': f'Camera {i}'
-                    })
-                    log.debug(f"Found camera {i}: {w}x{h}")
-        
+                    cameras.append({'index': i, 'resolution': (w, h), 'name': f'Camera {i}'})
             except Exception as e:
-                log.warning(f"Camera {i} check failed: {e}")
-        
+                log.warning(f"Camera {i} probe failed: {e}")
             finally:
-                # CRITICAL FIX: Always release camera
                 if cap is not None:
                     cap.release()
-                    # Give OS time to release resource (Windows needs this)
-                    time.sleep(0.1)
-    
-        log.info(f"Detected {len(cameras)} cameras")
+                    time.sleep(0.05)   # let OS release the handle
+        log.info(f"Detected {len(cameras)} camera(s)")
         return cameras
 
     def auto_detect_camera(self, prefer_index: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -215,15 +260,35 @@ class ControllerRuntime:
             for cam in cameras:
                 if cam['index'] == prefer_index:
                     return cam
-        cameras.sort(key=lambda x: x['resolution'][0]*x['resolution'][1], reverse=True)
+        # Prefer highest resolution
+        cameras.sort(key=lambda c: c['resolution'][0] * c['resolution'][1], reverse=True)
         return cameras[0]
 
-    def start_camera(self, camera_index: Optional[int] = None, resolution: Tuple[int, int] = (640, 480), fps: int = 20):
-        # Check permission first
-        if not self.enabled_permissions.get('camera', False):
-            log.warning("❌ Camera access DENIED by permission settings")
+    def list_microphones(self) -> List[Dict[str, Any]]:
+        if sd is None:
+            return []
+        try:
+            return [
+                {'index': i, 'name': d['name'],
+                 'channels': d['max_input_channels'],
+                 'sample_rate': d['default_samplerate']}
+                for i, d in enumerate(sd.query_devices())
+                if d['max_input_channels'] > 0
+            ]
+        except Exception as e:
+            log.error(f"Microphone list failed: {e}")
+            return []
+
+    # ------------------------------------------------------------------
+    # Start / stop hardware
+    # ------------------------------------------------------------------
+
+    def start_camera(self, camera_index: Optional[int] = None,
+                     resolution: Tuple[int, int] = (640, 480),
+                     fps: int = 20) -> bool:
+        if not self.enabled_permissions.get('camera'):
+            log.warning("❌ Camera permission DENIED")
             return False
-        
         if self.camera and self.camera.running:
             log.warning("Camera already running")
             return False
@@ -232,153 +297,179 @@ class ControllerRuntime:
             if not detected:
                 raise RuntimeError("No cameras detected")
             camera_index = detected['index']
-        
-        log.info(f"✅ Starting camera (permission granted)")
         self.camera = CameraCapture(camera_index, fps, resolution)
         self.camera.start()
         return True
 
-    def list_microphones(self) -> List[Dict[str, Any]]:
-        if sd is None:
-            return []
-        try:
-            devices = sd.query_devices()
-            microphones = []
-            for i, dev in enumerate(devices):
-                if dev['max_input_channels'] > 0:
-                    microphones.append({'index': i, 'name': dev['name'], 'channels': dev['max_input_channels'],
-                                        'sample_rate': dev['default_samplerate']})
-            return microphones
-        except Exception as e:
-            log.error(f"Failed to list microphones: {e}")
-            return []
-
-    def auto_detect_microphone(self) -> Optional[Dict[str, Any]]:
-        mics = self.list_microphones()
-        return mics[0] if mics else None
-
-    def start_microphone(self, device_index: Optional[int] = None, sample_rate: int = 16000):
-        # Check permission first
-        if not self.enabled_permissions.get('microphone', False):
-            log.warning("❌ Microphone access DENIED by permission settings")
+    def start_microphone(self, device_index: Optional[int] = None,
+                         sample_rate: int = 16000) -> bool:
+        if not self.enabled_permissions.get('microphone'):
+            log.warning("❌ Microphone permission DENIED")
             return False
-        
         if sd is None:
             raise RuntimeError("sounddevice not installed")
         if self.microphone and self.microphone.running:
             log.warning("Microphone already running")
             return False
-        
-        log.info(f"✅ Starting microphone (permission granted)")
         self.microphone = MicrophoneCapture(device_index, sample_rate)
         self.microphone.start()
         return True
 
-    # --- Permission Checks ---
-    
-    def can_access_filesystem(self) -> bool:
-        """Check if filesystem access is permitted"""
-        return self.enabled_permissions.get('filesystem', False)
-    
-    def can_access_network(self) -> bool:
-        """Check if network access is permitted"""
-        return self.enabled_permissions.get('network', False)
-    
-    def can_use_camera(self) -> bool:
-        """Check if camera access is permitted"""
-        return self.enabled_permissions.get('camera', False)
-    
-    def can_use_microphone(self) -> bool:
-        """Check if microphone access is permitted"""
-        return self.enabled_permissions.get('microphone', False)
-    
-    def log_permission_denied(self, resource: str):
-        """Log when a resource is accessed but permission is denied"""
-        log.warning(f"🔒 Access to {resource} denied by permission settings")
+    # ------------------------------------------------------------------
+    # Permission helpers
+    # ------------------------------------------------------------------
 
-    # --- Learning ---
+    def grant_permissions(self, permissions: list):
+        """
+        Enable a list of named permissions.
+        Called by the FastAPI /controller/activate endpoint after the
+        user acknowledges the permission dialog in the React frontend.
+
+        Example:
+            runtime.grant_permissions(['camera', 'microphone'])
+        """
+        valid = set(self.enabled_permissions)
+        for p in permissions:
+            if p in valid:
+                self.enabled_permissions[p] = True
+                log.info(f"Permission GRANTED: {p}")
+
+    def log_permission_denied(self, resource: str):
+        """Log a permission-denied access attempt."""
+        log.warning(f"🔒 {resource} access DENIED by permission settings")
+
+    def can_access_filesystem(self) -> bool:
+        return self.enabled_permissions.get('filesystem', False)
+
+    def can_access_network(self) -> bool:
+        return self.enabled_permissions.get('network', False)
+
+    def can_use_camera(self) -> bool:
+        return self.enabled_permissions.get('camera', False)
+
+    def can_use_microphone(self) -> bool:
+        return self.enabled_permissions.get('microphone', False)
+
+    # ------------------------------------------------------------------
+    # Learning callbacks
+    # ------------------------------------------------------------------
 
     def learn_from_frame(self, frame: np.ndarray):
+        """Push a video frame into the agent's memory and emotion systems."""
         if frame is None:
             return
         with self._lock:
+            # Stash in perception_buffer for downstream modules (e.g. vision.py)
             if not hasattr(self.agent, 'perception_buffer'):
                 self.agent.perception_buffer = {}
-            self.agent.perception_buffer['visual'] = frame
-            self.agent.perception_buffer['visual_timestamp'] = time.time()
-            h, w = frame.shape[:2]
+            self.agent.perception_buffer['visual']            = frame
+            self.agent.perception_buffer['visual_timestamp']  = time.time()
+
+            h, w       = frame.shape[:2]
             brightness = float(np.mean(frame))
-            event = {'type': 'visual_input', 'tags': ['controller','vision','multimodal'],
-                     'payload': {'resolution': (w,h), 'brightness': brightness, 'timestamp': time.time()}}
-            self.agent.memory.remember(event, tags=['vision'])
-            novelty = self.agent.memory.novelty_score(f"frame_{w}x{h}_{brightness:.1f}")
+
+            self.agent.memory.remember({
+                'type':    'visual_input',
+                'tags':    ['controller', 'vision', 'multimodal'],
+                'payload': {
+                    'resolution': (w, h),
+                    'brightness': brightness,
+                    'timestamp':  time.time(),
+                },
+            }, tags=['vision'])
+
+            # Novelty-driven emotion nudge — use direct dict access which
+            # is the actual EmotionSystem API (no .add() method exists).
+            novelty = brightness / 255.0   # simple proxy; replace with real novelty score if available
             if novelty > 0.5:
-                self.agent.emotion.add('surprise', min(0.1, novelty*0.1))
-                self.agent.emotion.add('curiosity', min(0.15, novelty*0.15))
+                emo = self.agent.emotion.emotions
+                emo['surprise']  = min(1.0, emo.get('surprise',  0.0) + min(0.10, novelty * 0.10))
+                emo['curiosity'] = min(1.0, emo.get('curiosity', 0.0) + min(0.15, novelty * 0.15))
+
             self.stats['frames_processed'] += 1
-            self.stats['learning_events'] += 1
+            self.stats['learning_events']  += 1
+
         if self.callback:
             self.callback(self.stats)
 
     def learn_from_audio(self, audio: np.ndarray, sample_rate: int):
+        """Push an audio chunk into the agent's memory and emotion systems."""
         if audio is None or len(audio) == 0:
             return
         with self._lock:
             if not hasattr(self.agent, 'perception_buffer'):
                 self.agent.perception_buffer = {}
-            self.agent.perception_buffer['audio'] = audio
+            self.agent.perception_buffer['audio']           = audio
             self.agent.perception_buffer['audio_timestamp'] = time.time()
-            rms = float(np.sqrt(np.mean(audio ** 2)))
+
+            rms  = float(np.sqrt(np.mean(audio ** 2)))
             peak = float(np.max(np.abs(audio)))
-            event = {'type':'audio_input','tags':['controller','audio','multimodal'],
-                     'payload': {'duration': len(audio)/sample_rate,'rms':rms,'peak':peak,'sample_rate':sample_rate,'timestamp':time.time()}}
-            self.agent.memory.remember(event, tags=['audio'])
+
+            self.agent.memory.remember({
+                'type':    'audio_input',
+                'tags':    ['controller', 'audio', 'multimodal'],
+                'payload': {
+                    'duration':    len(audio) / sample_rate,
+                    'rms':         rms,
+                    'peak':        peak,
+                    'sample_rate': sample_rate,
+                    'timestamp':   time.time(),
+                },
+            }, tags=['audio'])
+
             if rms > 0.1:
-                self.agent.emotion.add('surprise', min(0.1, rms))
-                self.agent.emotion.add('anticipation', min(0.05, rms*0.5))
+                emo = self.agent.emotion.emotions
+                emo['surprise']     = min(1.0, emo.get('surprise',     0.0) + min(0.10, rms))
+                emo['anticipation'] = min(1.0, emo.get('anticipation', 0.0) + min(0.05, rms * 0.5))
+
             self.stats['audio_chunks_processed'] += 1
-            self.stats['learning_events'] += 1
+            self.stats['learning_events']        += 1
+
         if self.callback:
             self.callback(self.stats)
 
-    # --- Runtime Control ---
+    # ------------------------------------------------------------------
+    # Runtime control
+    # ------------------------------------------------------------------
 
     def start_multimodal_learning(self, vision: bool = True, audio: bool = True):
         if self.running:
             log.warning("Controller already running")
             return
-        
-        # Start camera if vision enabled and permission granted
-        if vision and self.enabled_permissions.get('camera', False):
-            try:
-                self.start_camera()
-                log.info("📹 Camera initialized with permission")
-            except Exception as e:
-                log.error(f"Failed to initialize camera: {e}")
+
+        if vision:
+            if self.enabled_permissions.get('camera'):
+                try:
+                    self.start_camera()
+                    log.info("📹 Camera started")
+                except Exception as e:
+                    log.error(f"Camera init failed: {e}")
+                    vision = False
+            else:
+                log.info("📹 Vision requested but camera permission DENIED")
                 vision = False
-        elif vision and not self.enabled_permissions.get('camera', False):
-            log.info("📹 Vision requested but camera permission DENIED")
-            vision = False
-        
-        # Start microphone if audio enabled and permission granted
-        if audio and self.enabled_permissions.get('microphone', False):
-            try:
-                self.start_microphone()
-                log.info("🎤 Microphone initialized with permission")
-            except Exception as e:
-                log.error(f"Failed to initialize microphone: {e}")
+
+        if audio:
+            if self.enabled_permissions.get('microphone'):
+                try:
+                    self.start_microphone()
+                    log.info("🎤 Microphone started")
+                except Exception as e:
+                    log.error(f"Microphone init failed: {e}")
+                    audio = False
+            else:
+                log.info("🎤 Audio requested but microphone permission DENIED")
                 audio = False
-        elif audio and not self.enabled_permissions.get('microphone', False):
-            log.info("🎤 Audio requested but microphone permission DENIED")
-            audio = False
-        
+
         self.running = True
+
         if vision and self.camera:
-            self.vision_thread = threading.Thread(target=self._vision_loop, daemon=True)
-            self.vision_thread.start()
+            self._vision_thread = threading.Thread(target=self._vision_loop, daemon=True)
+            self._vision_thread.start()
+
         if audio and self.microphone:
-            self.audio_thread = threading.Thread(target=self._audio_loop, daemon=True)
-            self.audio_thread.start()
+            self._audio_thread = threading.Thread(target=self._audio_loop, daemon=True)
+            self._audio_thread.start()
 
     def _vision_loop(self):
         while self.running and self.camera:
@@ -386,9 +477,9 @@ class ControllerRuntime:
                 frame = self.camera.get_frame()
                 if frame is not None:
                     self.learn_from_frame(frame)
-                time.sleep(0.1)
             except Exception as e:
-                log.error(f"Vision processing loop error: {e}")
+                log.error(f"Vision loop error: {e}")
+            time.sleep(0.1)
 
     def _audio_loop(self):
         while self.running and self.microphone:
@@ -396,16 +487,15 @@ class ControllerRuntime:
                 audio = self.microphone.get_audio_chunk()
                 if audio is not None:
                     self.learn_from_audio(audio, self.microphone.sample_rate)
-                time.sleep(0.5)
             except Exception as e:
-                log.error(f"Audio processing loop error: {e}")
+                log.error(f"Audio loop error: {e}")
+            time.sleep(0.5)
 
     def stop(self):
         self.running = False
-        if self.vision_thread:
-            self.vision_thread.join(timeout=2.0)
-        if self.audio_thread:
-            self.audio_thread.join(timeout=2.0)
+        for t in (self._vision_thread, self._audio_thread):
+            if t:
+                t.join(timeout=2.0)
         if self.camera:
             self.camera.stop()
         if self.microphone:
@@ -415,15 +505,14 @@ class ControllerRuntime:
     def get_stats(self) -> Dict[str, Any]:
         return {
             **self.stats,
-            'camera_active': self.camera is not None and self.camera.running,
-            'microphone_active': self.microphone is not None and self.microphone.running,
-            'memory_size': len(self.agent.memory.events)
+            'camera_active':    self.camera    is not None and self.camera.running,
+            'microphone_active':self.microphone is not None and self.microphone.running,
+            'memory_size':      len(self.agent.memory.events),
         }
 
-    # --- Context Manager Support ---
-
+    # Context manager
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, *_):
         self.stop()

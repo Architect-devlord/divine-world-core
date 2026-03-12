@@ -4,77 +4,76 @@ import com.divineworld.client.DWClientMod;
 import com.divineworld.client.entity.gods.*;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.level.Level;
 
 /**
  * God Entity Manager
- * Manages custom god entities with special abilities
+ *
+ * FIX Bug 4 — entities created but never added to the level:
+ *   All spawn methods were returning `new AIWither(level)` etc. but never
+ *   calling level.addFreshEntity().  The objects existed in RAM but the
+ *   game engine never ticked them — tick(), ability cooldowns, physics,
+ *   and rendering were all dead.
+ *
+ *   Fix: createAndSpawn() positions the entity at the local player and
+ *   calls level.addFreshEntity() so the engine owns and ticks it.
  */
 public class GodEntityManager {
+
     private static Entity currentGodEntity;
-    private static String currentGodType;
+    private static String  currentGodType;
     private static boolean isPlayerForm = false;
 
-    /**
-     * Initialize god entity based on type
-     */
     public static void initializeGodEntity(String godType) {
         currentGodType = godType;
-
         DWClientMod.LOGGER.info("Initializing god entity: {}", godType);
 
-        // Spawn the appropriate god entity
-        switch (godType.toLowerCase()) {
-            case "ender_dragon", "dragon" -> currentGodEntity = spawnEnderDragonGod();
-            case "wither" -> currentGodEntity = spawnWitherGod();
-            case "warden" -> currentGodEntity = spawnWardenGod();
-            case "oracle" -> currentGodEntity = spawnOracleGod();
-            case "elder_guardian" -> currentGodEntity = spawnElderGuardianGod();
-            case "creaking" -> currentGodEntity = spawnCreakingGod();
-            default -> {
-                DWClientMod.LOGGER.warn("Unknown god type: {}", godType);
-                return;
-            }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) {
+            DWClientMod.LOGGER.error("Cannot spawn god entity — level or player is null");
+            return;
         }
 
-        DWClientMod.LOGGER.info("God entity spawned successfully");
-    }
+        // Discard any previously spawned body
+        if (currentGodEntity != null && !currentGodEntity.isRemoved()) {
+            currentGodEntity.remove(Entity.RemovalReason.DISCARDED);
+            currentGodEntity = null;
+        }
 
-    private static Entity spawnOracleGod() {
-        return new AIOracle(Minecraft.getInstance().level);
-    }
+        Level level = mc.level;
 
-    private static Entity spawnEnderDragonGod() {
-        return new AIEnderDragon(Minecraft.getInstance().level);
-    }
+        // FIX Bug 4: createAndSpawn() calls addFreshEntity() — old code did not
+        currentGodEntity = switch (godType.toLowerCase()) {
+            case "ender_dragon", "dragon" -> createAndSpawn(new AIEnderDragon(level), level);
+            case "wither"                 -> createAndSpawn(new AIWither(level),       level);
+            case "warden"                 -> createAndSpawn(new AIWarden(level),       level);
+            case "oracle"                 -> createAndSpawn(new AIOracle(level),       level);
+            case "elder_guardian"         -> createAndSpawn(new AIElderGuardian(level),level);
+            case "creaking"               -> createAndSpawn(new AICreaking(level),     level);
+            default -> { DWClientMod.LOGGER.warn("Unknown god type: {}", godType); yield null; }
+        };
 
-    private static Entity spawnWitherGod() {
-        return new AIWither(Minecraft.getInstance().level);
-    }
-
-    private static Entity spawnWardenGod() {
-        return new AIWarden(Minecraft.getInstance().level);
-    }
-
-    private static Entity spawnElderGuardianGod() {
-        return new AIElderGuardian(Minecraft.getInstance().level);
-    }
-
-    private static Entity spawnCreakingGod() {
-        return new AICreaking(Minecraft.getInstance().level);
+        if (currentGodEntity != null) {
+            DWClientMod.LOGGER.info("God entity added to level and will tick: {}", godType);
+        }
     }
 
     /**
-     * Transform between god form and player form
+     * Position entity at player's feet and register it with the level engine.
+     * Without addFreshEntity() the entity is never ticked.
      */
+    private static Entity createAndSpawn(Entity entity, Level level) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null) {
+            entity.moveTo(mc.player.getX(), mc.player.getY(), mc.player.getZ(),
+                          mc.player.getYRot(), mc.player.getXRot());
+        }
+        level.addFreshEntity(entity);  // FIX Bug 4: this line was entirely missing
+        return entity;
+    }
+
     public static void transformToPlayerForm() {
         if (!isPlayerForm && currentGodEntity != null) {
-            // Store god entity state
-            saveGodEntityState();
-
-            // Switch to player entity
-            // (Implementation depends on how you handle the player entity)
-
             isPlayerForm = true;
             DWClientMod.LOGGER.info("Transformed to player form");
         }
@@ -82,50 +81,23 @@ public class GodEntityManager {
 
     public static void transformToGodForm() {
         if (isPlayerForm) {
-            // Restore god entity
-            restoreGodEntityState();
-
             isPlayerForm = false;
             DWClientMod.LOGGER.info("Transformed to god form");
         }
     }
 
     /**
-     * Execute god-specific ability
+     * Dispatch a god ability to the current AI entity.
+     * Called on the main thread by both TCPServer and WebSocketManager.
      */
     public static void executeGodAbility(String abilityName, Object... params) {
         if (currentGodEntity == null) return;
-
-        // Delegate to specific god entity
-        if (currentGodEntity instanceof IGodEntity) {
-            ((IGodEntity) currentGodEntity).useAbility(abilityName, params);
-        }
-    }
-
-    private static void saveGodEntityState() {
-        // Save position, health, inventory
         if (currentGodEntity instanceof IGodEntity god) {
-            // State is automatically saved in entity NBT
-            DWClientMod.LOGGER.debug("God entity state saved");
+            god.useAbility(abilityName, params);
         }
     }
 
-    private static void restoreGodEntityState() {
-        // State is automatically restored from NBT
-        if (currentGodEntity instanceof IGodEntity god) {
-            DWClientMod.LOGGER.debug("God entity state restored");
-        }
-    }
-
-    public static Entity getCurrentGodEntity() {
-        return currentGodEntity;
-    }
-
-    public static String getCurrentGodType() {
-        return currentGodType;
-    }
-
-    public static boolean isPlayerForm() {
-        return isPlayerForm;
-    }
+    public static Entity  getCurrentGodEntity() { return currentGodEntity; }
+    public static String  getCurrentGodType()   { return currentGodType;   }
+    public static boolean isPlayerForm()        { return isPlayerForm;     }
 }

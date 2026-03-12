@@ -359,3 +359,26 @@ grep -r "AgentConfigLoader" DivineWorld/src/main/java/
 - **SYNC_SYSTEM.md** - Complete technical documentation
 - **DEPLOYMENT.md** - Step-by-step deployment guide
 - **This file** - Implementation summary
+
+## Architecture Overview
+agents.json ──► AgentConfigLoader
+                    │
+                    ▼
+Server: PlayerLoggedInEvent
+    DWEventHandler ──► TaggedEntitySystem.detectAgentType() ──► notifyBackend()
+    GodSpawnHandler ──► spawnGodBody() ──► entity in world
+                    │
+                    ▼
+         GodControlHandler (every PlayerTickEvent)
+             puppet position ──► body sync
+             body drift ──────► puppet reverse sync (Bug 11 fix)
+
+Client: ClientEventHandler
+    TCPServer (port 8765) ──► ActionExecutor ──► Minecraft inputs
+    WebSocketManager ────────────────────────► ActionExecutor (fallback)
+                    │
+                    ▼
+Python: NPCAgent
+    WebSocket /ws/agent ──► perception loop
+    act_god() ──► ActionFrame ──► BinaryProtocol.pack_action()
+                                ──► TCP: ForgeIPCClient.send_action()

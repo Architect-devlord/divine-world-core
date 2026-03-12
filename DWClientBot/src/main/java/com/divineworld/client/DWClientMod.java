@@ -2,7 +2,7 @@
 package com.divineworld.client;
 
 import com.divineworld.client.entity.ModEntities;
-import com.divineworld.client.network.NetworkHandler;
+import com.divineworld.client.network.ClientNetworkHandler;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.common.MinecraftForge;
@@ -62,6 +62,7 @@ public class DWClientMod {
         MinecraftForge.EVENT_BUS.register(ClientEventHandler.class);
         MinecraftForge.EVENT_BUS.register(TransformationHandler.class);
         MinecraftForge.EVENT_BUS.register(GodAbilityVisualHandler.class);
+        MinecraftForge.EVENT_BUS.register(ClientChatEventHandler.class);
 
         LOGGER.info("=".repeat(60));
         LOGGER.info("  Divine World Client Mod v2.2 (CLIENT-SIDE)");
@@ -86,7 +87,7 @@ public class DWClientMod {
         LOGGER.info("[CommonSetup] Initializing network handlers...");
 
         // Register network handlers
-        NetworkHandler.register();
+        ClientNetworkHandler.register();
 
         LOGGER.info("[CommonSetup] ✅ Network handlers registered");
     }

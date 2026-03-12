@@ -1,25 +1,27 @@
+/* ─── Tailwind imports MUST come first — PostCSS requires this ─── */
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
 
+/* ─── CSS custom properties & base layer ─────────────────────── */
 @layer base {
   :root {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    --app-bg: #020617; /* slate-950 */
-    --app-text: #f1f5f9; /* slate-100 */
-    --card-bg: rgba(15, 23, 42, 0.6); /* slate-900/60 */
-    --card-border: rgba(30, 41, 59, 0.5); /* slate-800/50 */
-    --input-bg: rgba(2, 6, 23, 0.5); /* slate-950/50 */
+    --app-bg:     #020617;              /* slate-950 */
+    --app-text:   #f1f5f9;             /* slate-100 */
+    --card-bg:    rgba(15, 23, 42, 0.6);  /* slate-900/60 */
+    --card-border:rgba(30, 41, 59, 0.5);  /* slate-800/50 */
+    --input-bg:   rgba(2, 6, 23, 0.5);   /* slate-950/50 */
   }
 
   .light-theme {
-    --app-bg: #f1f5f9; /* slate-100 */
-    --app-text: #0f172a; /* slate-900 */
-    --card-bg: #ffffff;
-    --card-border: #cbd5e1; /* slate-300 */
-    --input-bg: #f8fafc; /* slate-50 */
+    --app-bg:     #f1f5f9;   /* slate-100 */
+    --app-text:   #0f172a;   /* slate-900 */
+    --card-bg:    #ffffff;
+    --card-border:#cbd5e1;   /* slate-300 */
+    --input-bg:   #f8fafc;   /* slate-50  */
   }
-  
+
   body {
     margin: 0;
     padding: 0;
@@ -30,68 +32,55 @@
   }
 }
 
+/* ─── Component utilities ────────────────────────────────────── */
 @layer components {
   .glass {
     @apply backdrop-blur-md border;
     background-color: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.1);
+    border-color:     rgba(255, 255, 255, 0.1);
   }
-
   .light-theme .glass {
     background-color: rgba(255, 255, 255, 0.4);
-    border-color: rgba(0, 0, 0, 0.1);
+    border-color:     rgba(0, 0, 0, 0.1);
   }
-
   .glass-dark {
     @apply backdrop-blur-md border;
     background-color: var(--card-bg);
-    border-color: var(--card-border);
+    border-color:     var(--card-border);
   }
-
   .glass-card {
     @apply backdrop-blur-lg border shadow-xl transition-colors duration-300;
     background-color: var(--card-bg);
-    border-color: var(--card-border);
+    border-color:     var(--card-border);
   }
 }
 
-/* Custom scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
+/* ─── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  {
   @apply bg-slate-800/50 rounded-full hover:bg-slate-700/50 transition-colors;
 }
 
-/* Smooth selection colors */
-::selection {
-  @apply bg-indigo-500/30 text-indigo-200;
-}
+/* ─── Selection ──────────────────────────────────────────────── */
+::selection { @apply bg-indigo-500/30 text-indigo-200; }
 
-/* ------------------------------
-   🌈 Custom Animations
--------------------------------- */
+/* ─── Global transition (non-layout props only to avoid jank) ── */
+* { transition: background-color 0.2s ease, color 0.2s ease; }
 
+/* ─── Custom animations ──────────────────────────────────────── */
 @keyframes pulse-soft {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+  50%       { opacity: 0.7; }
 }
-
 .animate-pulse-soft {
   animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 @keyframes glow {
-  0%, 100% { box-shadow: 0 0 5px rgba(99, 102, 241, 0.2); }
-  50% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.4); }
+  0%, 100% { box-shadow: 0 0 5px  rgba(99, 102, 241, 0.2); }
+  50%       { box-shadow: 0 0 20px rgba(99, 102, 241, 0.4); }
 }
-
 .animate-glow {
   animation: glow 3s ease-in-out infinite;
 }

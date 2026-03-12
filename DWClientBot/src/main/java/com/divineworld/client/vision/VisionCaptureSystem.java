@@ -33,6 +33,9 @@ public class VisionCaptureSystem {
         }
 
         DWClientMod.LOGGER.info("Vision capture initialized: {}x{} @ {}", width, height, quality);
+
+        // Initialise audio capture alongside vision
+        AudioCaptureSystem.initialize();
     }
 
     /**
@@ -141,5 +144,6 @@ public class VisionCaptureSystem {
             lastCapture.close();
             lastCapture = null;
         }
+        AudioCaptureSystem.cleanup();
     }
 }

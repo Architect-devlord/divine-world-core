@@ -1,262 +1,335 @@
-# ai_core/god_controls.py - God Agent Special Controls
+# ai_core/god_controls.py
 """
 God Agent Special Controls
-Extends the action system for god entities with special abilities
+==========================
+Manages god-specific abilities and action space extension.
+
+Design rules (aligned with brain_core / reward_system)
+-------------------------------------------------------
+- GodControlSystem owns ability state (cooldowns, definitions).
+- Ability outcomes are evaluated through the agent's RewardSystem as
+  regular events with 'god_ability' tags — NOT through a separate
+  compute_god_ability_reward() function (removed).
+- integrate_god_controls() no longer monkey-patches agent.act().
+  Instead it:
+    1. Attaches agent.god_controls = GodControlSystem(god_type)
+    2. Adds agent.use_god_ability(name, **params) as a clean API
+    3. Stores the extended action dim on the agent so the planner and
+       policy know the god has a larger action space.
+- The cognitive loop / planner call agent.use_god_ability() explicitly
+  when the brain decides an ability is worth using — same deliberate
+  pattern as all other decisions.
 """
 
 import numpy as np
 import time
 import logging
 from typing import Dict, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 log = logging.getLogger("god_controls")
 
 
+# ============================================================================
+# Ability definition
+# ============================================================================
+
 @dataclass
 class GodAbility:
-    """Represents a god-specific ability"""
-    name: str
-    cooldown: float = 0.0
-    cost: float = 0.0
-    last_used: float = 0.0
+    """A single god-specific ability with cooldown tracking."""
+    name:      str
+    cooldown:  float = 0.0   # seconds between uses
+    last_used: float = 0.0   # timestamp of most recent use
 
+    def is_available(self) -> bool:
+        return (time.time() - self.last_used) >= self.cooldown
+
+    def seconds_until_ready(self) -> float:
+        remaining = self.cooldown - (time.time() - self.last_used)
+        return max(0.0, remaining)
+
+    def mark_used(self):
+        self.last_used = time.time()
+
+
+# ============================================================================
+# God Control System
+# ============================================================================
 
 class GodControlSystem:
     """
-    Manages god-specific abilities and controls.
-    Extends base action system with god powers.
+    Manages the ability set for a specific god type.
+    Pure data/logic — no direct agent references here.
     """
-    
+
+    _ABILITY_DEFS: Dict[str, Dict[str, GodAbility]] = {
+        "ender_dragon": {
+            "dragon_breath": GodAbility("dragon_breath", cooldown=5.0),
+            "fireball":      GodAbility("fireball",      cooldown=2.0),
+            "perch":         GodAbility("perch",         cooldown=0.0),
+            "fly":           GodAbility("fly",           cooldown=0.0),
+            "transform":     GodAbility("transform",     cooldown=5.0),
+            "revert":        GodAbility("revert",        cooldown=1.0),
+        },
+        "dragon": {   # alias
+            "dragon_breath": GodAbility("dragon_breath", cooldown=5.0),
+            "fireball":      GodAbility("fireball",      cooldown=2.0),
+            "perch":         GodAbility("perch",         cooldown=0.0),
+            "fly":           GodAbility("fly",           cooldown=0.0),
+            "transform":     GodAbility("transform",     cooldown=5.0),
+            "revert":        GodAbility("revert",        cooldown=1.0),
+        },
+        "wither": {
+            "wither_skull":            GodAbility("wither_skull",            cooldown=1.0),
+            "blue_skull":              GodAbility("blue_skull",              cooldown=1.0),
+            "dash":                    GodAbility("dash",                    cooldown=3.0),
+            "summon_wither_skeletons": GodAbility("summon_wither_skeletons", cooldown=10.0),
+            "explosion":               GodAbility("explosion",               cooldown=8.0),
+            "fly":                     GodAbility("fly",                     cooldown=0.0),
+            "transform":               GodAbility("transform",               cooldown=5.0),
+            "revert":                  GodAbility("revert",                  cooldown=1.0),
+        },
+        "warden": {
+            "sonic_boom": GodAbility("sonic_boom", cooldown=5.0),
+            "darkness":   GodAbility("darkness",   cooldown=15.0),
+            "sniff":      GodAbility("sniff",       cooldown=0.0),
+            "burrow":     GodAbility("burrow",      cooldown=10.0),
+            "emerge":     GodAbility("emerge",      cooldown=0.0),
+            "transform":  GodAbility("transform",   cooldown=5.0),
+            "revert":     GodAbility("revert",      cooldown=1.0),
+        },
+        "oracle": {
+            "wisdom_aura":    GodAbility("wisdom_aura",    cooldown=30.0),
+            "foresight":      GodAbility("foresight",      cooldown=5.0),
+            "teleport":       GodAbility("teleport",       cooldown=3.0),
+            "healing_wave":   GodAbility("healing_wave",   cooldown=10.0),
+            "knowledge_beam": GodAbility("knowledge_beam", cooldown=4.0),
+            "fly":            GodAbility("fly",            cooldown=0.0),
+            "transform":      GodAbility("transform",      cooldown=5.0),
+            "revert":         GodAbility("revert",         cooldown=1.0),
+        },
+        "elder_guardian": {
+            "mining_fatigue":   GodAbility("mining_fatigue",   cooldown=60.0),
+            "laser_beam":       GodAbility("laser_beam",       cooldown=3.0),
+            "thorn_attack":     GodAbility("thorn_attack",     cooldown=5.0),
+            "guardian_spikes":  GodAbility("guardian_spikes",  cooldown=20.0),
+            "transform":        GodAbility("transform",        cooldown=5.0),
+            "revert":           GodAbility("revert",           cooldown=1.0),
+        },
+        "creaking": {
+            "toggle_underground": GodAbility("toggle_underground", cooldown=1.0),
+            "toggle_ceiling":     GodAbility("toggle_ceiling",     cooldown=1.0),
+            "deploy_tentacles":   GodAbility("deploy_tentacles",   cooldown=0.5),
+            "tentacle_whip":      GodAbility("tentacle_whip",      cooldown=0.8),
+            "life_steal":         GodAbility("life_steal",         cooldown=2.0),
+            "transform":          GodAbility("transform",          cooldown=5.0),
+            "revert":             GodAbility("revert",             cooldown=1.0),
+        },
+    }
+
     def __init__(self, god_type: str):
         self.god_type = god_type
-        self.abilities = self._initialize_abilities()
-        self.current_form = "god"  # "god" or "player"
-        
-    def _initialize_abilities(self) -> Dict[str, GodAbility]:
-        """Initialize abilities based on god type"""
-        
-        abilities = {}
-        
-        if self.god_type in ["ender_dragon", "dragon"]:
-            abilities = {
-                "dragon_breath": GodAbility("dragon_breath", cooldown=5.0),
-                "fireball": GodAbility("fireball", cooldown=2.0),
-                "perch": GodAbility("perch", cooldown=0.0),
-                "fly": GodAbility("fly", cooldown=0.0),
-                "transform": GodAbility("transform", cooldown=5.0),
-                "revert": GodAbility("revert", cooldown=1.0)
-            }
-            
-        elif self.god_type == "wither":
-            abilities = {
-                "wither_skull": GodAbility("wither_skull", cooldown=1.0),
-                "blue_skull": GodAbility("blue_skull", cooldown=1.0),
-                "dash": GodAbility("dash", cooldown=3.0),
-                "summon_wither_skeletons": GodAbility("summon_wither_skeletons", cooldown=10.0),
-                "explosion": GodAbility("explosion", cooldown=8.0),
-                "fly": GodAbility("fly", cooldown=0.0),
-                "transform": GodAbility("transform", cooldown=5.0),
-                "revert": GodAbility("revert", cooldown=1.0)
-            }
-            
-        elif self.god_type == "warden":
-            abilities = {
-                "sonic_boom": GodAbility("sonic_boom", cooldown=5.0),
-                "darkness": GodAbility("darkness", cooldown=15.0),
-                "sniff": GodAbility("sniff", cooldown=0.0),
-                "burrow": GodAbility("burrow", cooldown=10.0),
-                "emerge": GodAbility("emerge", cooldown=0.0),
-                "transform": GodAbility("transform", cooldown=5.0),
-                "revert": GodAbility("revert", cooldown=1.0)
-            }
-            
-        elif self.god_type == "oracle":
-            abilities = {
-                "wisdom_aura": GodAbility("wisdom_aura", cooldown=30.0),
-                "foresight": GodAbility("foresight", cooldown=5.0),
-                "teleport": GodAbility("teleport", cooldown=3.0),
-                "healing_wave": GodAbility("healing_wave", cooldown=10.0),
-                "knowledge_beam": GodAbility("knowledge_beam", cooldown=4.0),
-                "fly": GodAbility("fly", cooldown=0.0),
-                "transform": GodAbility("transform", cooldown=5.0),
-                "revert": GodAbility("revert", cooldown=1.0)
-            }
-            
-        elif self.god_type == "elder_guardian":
-            abilities = {
-                "mining_fatigue": GodAbility("mining_fatigue", cooldown=60.0),
-                "laser_beam": GodAbility("laser_beam", cooldown=3.0),
-                "thorn_attack": GodAbility("thorn_attack", cooldown=5.0),
-                "guardian_spikes": GodAbility("guardian_spikes", cooldown=20.0),
-                "transform": GodAbility("transform", cooldown=5.0),
-                "revert": GodAbility("revert", cooldown=1.0)
-            }
-            
-        elif self.god_type == "creaking":
-            abilities = {
-                "toggle_underground": GodAbility("toggle_underground", cooldown=1.0),
-                "toggle_ceiling": GodAbility("toggle_ceiling", cooldown=1.0),
-                "deploy_tentacles": GodAbility("deploy_tentacles", cooldown=0.5),
-                "tentacle_whip": GodAbility("tentacle_whip", cooldown=0.8),
-                "life_steal": GodAbility("life_steal", cooldown=2.0),
-                "transform": GodAbility("transform", cooldown=5.0),
-                "revert": GodAbility("revert", cooldown=1.0)
-            }
-            
-        return abilities
-    
-    def use_ability(self, ability_name: str, **params) -> Optional[Dict[str, Any]]:
+        template = self._ABILITY_DEFS.get(god_type, {})
+        # Make fresh copies so instances don't share cooldown state
+        from copy import deepcopy
+        self.abilities: Dict[str, GodAbility] = deepcopy(template)
+
+        if not self.abilities:
+            log.warning(f"Unknown god_type '{god_type}' — no abilities defined")
+
+        log.info(
+            f"GodControlSystem: {god_type} "
+            f"({len(self.abilities)} abilities: {list(self.abilities)})"
+        )
+
+    # ── Ability access ────────────────────────────────────────────────────
+
+    def get_available_abilities(self) -> Dict[str, bool]:
+        """Return {ability_name: is_ready} for all abilities."""
+        return {name: ab.is_available() for name, ab in self.abilities.items()}
+
+    def ability_names(self) -> list:
+        return list(self.abilities.keys())
+
+    def try_use(self, ability_name: str,
+                **params) -> Optional[Dict[str, Any]]:
         """
-        Attempt to use an ability.
-        Returns None if on cooldown, otherwise returns ability command.
+        Attempt to activate an ability.
+
+        Returns a command dict if the ability is ready, None if on cooldown
+        or unknown.  The caller is responsible for sending the command to
+        the Minecraft client AND routing the outcome through the reward system.
         """
         if ability_name not in self.abilities:
-            log.warning(f"Unknown ability: {ability_name}")
+            log.warning(f"Unknown ability '{ability_name}' for {self.god_type}")
             return None
-        
+
         ability = self.abilities[ability_name]
-        current_time = time.time()
-        
-        # Check cooldown
-        time_since_last = current_time - ability.last_used
-        if time_since_last < ability.cooldown:
-            return None  # On cooldown
-        
-        # Mark as used
-        ability.last_used = current_time
-        
-        # Build command (will be sent via minecraft_client)
-        command = {
-            "god_ability": ability_name,
-            **params
-        }
-        
-        log.debug(f"Using god ability: {ability_name}")
+        if not ability.is_available():
+            log.debug(
+                f"Ability '{ability_name}' on cooldown "
+                f"({ability.seconds_until_ready():.1f}s remaining)"
+            )
+            return None
+
+        ability.mark_used()
+        command = {"god_ability": ability_name, **params}
+        log.debug(f"God ability activated: {ability_name}")
         return command
-    
-    def get_available_abilities(self) -> Dict[str, bool]:
-        """Check which abilities are off cooldown"""
-        current_time = time.time()
-        available = {}
-        
-        for name, ability in self.abilities.items():
-            time_since_last = current_time - ability.last_used
-            available[name] = time_since_last >= ability.cooldown
-        
-        return available
-    
+
+    # ── Action encoding ───────────────────────────────────────────────────
+
     def encode_ability_to_action(
-        self, 
-        base_action: np.ndarray,
-        ability_name: Optional[str] = None,
-        params: Optional[Dict[str, float]] = None
+        self,
+        base_action:   np.ndarray,
+        ability_name:  Optional[str]         = None,
+        params:        Optional[Dict[str, float]] = None,
     ) -> np.ndarray:
         """
-        Extend base 11-dim action array with god ability data.
-        Returns 16-dim array: [base(11) + ability_trigger + ability_idx + param1 + param2 + param3]
+        Extend a base 11-dim action vector with 5 god-ability dimensions.
+
+        Result shape: (16,)
+        Dimensions 11-15: [trigger_flag, ability_idx, param1, param2, param3]
         """
-        # God extension: 5 dimensions
         god_ext = np.zeros(5, dtype=np.float32)
-        
+
         if ability_name and ability_name in self.abilities:
-            # Get ability index
-            ability_names = list(self.abilities.keys())
-            ability_idx = ability_names.index(ability_name)
-            
-            god_ext[0] = 1.0  # Trigger flag
-            god_ext[1] = float(ability_idx)
-            
-            # Fill in parameters
+            names      = self.ability_names()
+            ability_idx = names.index(ability_name)
+            god_ext[0]  = 1.0                   # trigger flag
+            god_ext[1]  = float(ability_idx)
             if params:
-                for i, (key, value) in enumerate(list(params.items())[:3]):
-                    god_ext[2 + i] = float(value)
-        
-        # Combine with base action
-        return np.concatenate([base_action, god_ext])
+                for i, v in enumerate(list(params.values())[:3]):
+                    god_ext[2 + i] = float(v)
+
+        return np.concatenate([base_action[:11], god_ext])
+
+    def decode_action(
+        self, extended_action: np.ndarray
+    ) -> Optional[str]:
+        """
+        Decode a 16-dim god action vector back to an ability name.
+        Returns None if the trigger flag is not set or idx is out of range.
+        """
+        if len(extended_action) < 16:
+            return None
+        if extended_action[11] < 0.5:   # trigger flag
+            return None
+        idx   = int(round(extended_action[12]))
+        names = self.ability_names()
+        if 0 <= idx < len(names):
+            return names[idx]
+        return None
+
+    def get_params_from_action(
+        self, extended_action: np.ndarray
+    ) -> Dict[str, float]:
+        """Extract param1/2/3 from a 16-dim action vector."""
+        if len(extended_action) < 16:
+            return {}
+        return {
+            'param1': float(extended_action[13]),
+            'param2': float(extended_action[14]),
+            'param3': float(extended_action[15]),
+        }
 
 
-def integrate_god_controls(agent):
+# ============================================================================
+# Integration
+# ============================================================================
+
+def integrate_god_controls(agent) -> None:
     """
-    Integrate god control system into an NPCAgent.
-    Wraps the act() method to handle god abilities.
+    Attach GodControlSystem to an NPCAgent.
+
+    What this does
+    --------------
+    1. Creates agent.god_controls = GodControlSystem(agent.god_type)
+    2. Adds agent.use_god_ability(name, **params) — clean call-site API
+       that tries the ability, sends it to Minecraft, AND routes the
+       outcome through the RewardSystem so the brain learns from it.
+    3. Records agent.god_action_dim = 16 so the planner/policy can
+       produce the right action shape for this agent.
+
+    What this does NOT do
+    ---------------------
+    - Does NOT monkey-patch agent.act() — act() still handles base 11-dim
+      controls. God abilities are triggered explicitly by the cognitive loop
+      or planner via agent.use_god_ability().
     """
-    if not hasattr(agent, 'god_type') or not agent.god_type:
+    if not getattr(agent, 'god_type', None):
         log.warning("Cannot integrate god controls: agent has no god_type")
         return
-    
-    # Create god control system
-    agent.god_controls = GodControlSystem(agent.god_type)
-    
-    # Wrap the original act() method
-    original_act = agent.act
-    
-    def act_with_god_abilities(action: np.ndarray) -> Dict[str, Any]:
-        """Enhanced act() that handles god abilities"""
-        
-        # Base actions (first 11 dimensions)
-        base_action = action[:11] if len(action) >= 11 else action
-        base_controls = original_act(base_action)
-        
-        # Check for god ability trigger (if action is extended)
-        if len(action) >= 16:
-            god_extension = action[11:16]
-            
-            # Check if ability should be triggered
-            if god_extension[0] > 0.5:  # Trigger flag
-                ability_idx = int(god_extension[1])
-                ability_names = list(agent.god_controls.abilities.keys())
-                
-                if 0 <= ability_idx < len(ability_names):
-                    ability_name = ability_names[ability_idx]
-                    
-                    # Extract parameters
-                    params = {
-                        'param1': float(god_extension[2]),
-                        'param2': float(god_extension[3]),
-                        'param3': float(god_extension[4])
-                    }
-                    
-                    # Try to use ability
-                    god_command = agent.god_controls.use_ability(ability_name, **params)
-                    
-                    if god_command:
-                        # Merge god command into controls
-                        base_controls.update(god_command)
-        
-        return base_controls
-    
-    # Replace agent's act method
-    agent.act = act_with_god_abilities
-    
-    log.info(f"God controls integrated for {agent.god_type}")
-# Reward shaping for god abilities
-def compute_god_ability_reward(
-    ability_used: str,
-    outcome: Dict[str, Any],
-    god_type: str
-) -> float:
-    """
-    Compute reward for using god abilities
-    Helps train the AI to use abilities effectively
-    """
-    reward = 0.0
-    
-    # Successful ability use
-    if outcome.get('ability_success', False):
-        reward += 2.0
-    
-    # Damage dealt with ability
-    damage = outcome.get('ability_damage', 0.0)
-    reward += damage * 0.1
-    
-    # Healing from ability
-    healing = outcome.get('ability_healing', 0.0)
-    reward += healing * 0.15
-    
-    # Tactical positioning (e.g., creaking going underground to ambush)
-    if 'underground' in ability_used or 'ceiling' in ability_used:
-        if outcome.get('surprise_attack', False):
-            reward += 5.0
-    
-    return reward
+
+    agent.god_controls  = GodControlSystem(agent.god_type)
+    agent.god_action_dim = 16   # 11 base + 5 god extension
+
+    def use_god_ability(ability_name: str,
+                        outcome: Optional[Dict[str, Any]] = None,
+                        **params) -> bool:
+        """
+        Activate a god ability and route the outcome through the reward system.
+
+        Args:
+            ability_name — name of the ability to use
+            outcome      — dict of outcome data from the Minecraft mod response
+                           (ability_success, ability_damage, ability_healing, etc.)
+                           Pass None when firing; call again with outcome when
+                           the mod responds.
+            **params     — ability-specific parameters (param1, param2, param3,
+                           or named: x, y, z, target, etc.)
+
+        Returns True if the ability was activated (not on cooldown).
+
+        NOTE: This does NOT send to minecraft_client directly.
+        The ability name and params are returned in the controls dict from
+        act_god(), which the ActionFrame builder in communication_protocol.py
+        uses to populate god_ability / god_params in the binary frame sent
+        to the mod. Sending here would cause a double-send.
+        """
+        command = agent.god_controls.try_use(ability_name, **params)
+        if command is None:
+            return False   # on cooldown or unknown
+
+        # Route through RewardSystem so the brain learns from ability use
+        if agent.reward_system is not None and outcome is not None:
+            event = {
+                'type':    'god_ability',
+                'tags':    ['god_ability', 'action', agent.god_type],
+                'payload': {
+                    'ability':         ability_name,
+                    'success':         outcome.get('ability_success', False),
+                    'ability_damage':  outcome.get('ability_damage',  0.0),
+                    'ability_healing': outcome.get('ability_healing', 0.0),
+                    'surprise_attack': outcome.get('surprise_attack', False),
+                    **params,
+                },
+            }
+            signal = agent.reward_system.compute_reward(event=event, outcome=outcome)
+            agent.reward_system.apply_signal(signal)
+
+            agent.memory.remember({
+                'type':     'god_ability_used',
+                'ability':  ability_name,
+                'god_type': agent.god_type,
+                'outcome':  outcome,
+                'reward':   signal.total,
+            }, tags=['god_ability', 'action', 'learning'])
+
+        return True
+
+    agent.use_god_ability = use_god_ability
+
+    # Add god abilities as planner action templates so deliberation can
+    # consider them alongside regular actions
+    if hasattr(agent, 'planner') and agent.planner is not None:
+        for ability_name in agent.god_controls.ability_names():
+            agent.planner.add_template({
+                'type':    'god_ability',
+                'ability': ability_name,
+            })
+
+    log.info(
+        f"God controls integrated for {agent.god_type} "
+        f"({len(agent.god_controls.abilities)} abilities)"
+    )

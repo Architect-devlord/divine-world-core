@@ -1,12 +1,11 @@
 package com.divineworld.entity;
 
 import com.divineworld.DWMod;
-import com.divineworld.network.ChatPacket;
 import com.divineworld.network.NetworkHandler;
 import com.divineworld.utils.TaggedEntitySystem;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraftforge.network.PacketDistributor;
+import net.minecraft.server.level.ServerPlayer;
 
 import java.util.HashMap;
 import java.util.List;
@@ -16,204 +15,130 @@ import java.util.stream.Collectors;
 
 /**
  * Manager for AI-controlled ServerPlayer entities.
- * AI agents join as normal ServerPlayer instances via their own Minecraft clients.
- * This class handles tagging, chat bubbles, and differentiation from real players.
  *
- * SIMPLIFIED: No custom entities - all agents are ServerPlayer with tags
+ * Chat bubble system REMOVED — proximity chat (ProximityChatHandler) handles
+ * all agent speech.  When an agent speaks, Python calls the chat command which
+ * triggers sendSystemMessage via ProximityChatHandler, reaching nearby players
+ * and the agent's own WebSocket observation automatically.
+ *
+ * ChatPacket and NetworkHandler.INSTANCE.send() calls are gone from this class.
  */
 public class DWNPCManager {
 
-    // Track AI player cooldowns
-    private static final Map<UUID, Integer> chatCooldowns = new HashMap<>();
+    // tickCooldowns still used for future per-agent rate limits if needed
+    private static final Map<UUID, Integer> cooldowns = new HashMap<>();
 
-    /**
-     * Register a ServerPlayer as AI-controlled (normal agent).
-     * Called when an AI agent's Minecraft client joins the server.
-     */
     public static void registerAIPlayer(ServerPlayer player, String agentId) {
-        // Tag the player entity
         TaggedEntitySystem.tagEntity(player, TaggedEntitySystem.TAG_DW_NPC);
         TaggedEntitySystem.setAIID(player, agentId);
-
         DWMod.LOGGER.info("✅ Registered AI player: {} (Agent ID: {})",
                 player.getName().getString(), agentId);
     }
 
-    /**
-     * Register a god-tier player entity.
-     * Gods are ServerPlayer with special tags and permissions.
-     */
     public static void registerGodPlayer(ServerPlayer player, String agentId, String godType) {
-        // Tag as both NPC and God
         TaggedEntitySystem.tagEntity(player,
                 TaggedEntitySystem.TAG_DW_NPC,
                 TaggedEntitySystem.TAG_DW_GOD);
-
         TaggedEntitySystem.setAIID(player, agentId);
         TaggedEntitySystem.setGodType(player, godType);
         TaggedEntitySystem.setDivinePower(player, 100);
         TaggedEntitySystem.makeGenesisImmune(player);
-
         DWMod.LOGGER.info("✅ Registered God player: {} (Type: {}, Agent ID: {})",
                 player.getName().getString(), godType, agentId);
     }
 
-    /**
-     * Check if a player is AI-controlled.
-     */
     public static boolean isAIPlayer(ServerPlayer player) {
         return TaggedEntitySystem.hasTag(player, TaggedEntitySystem.TAG_DW_NPC);
     }
 
-    /**
-     * Check if a player is a god entity.
-     */
     public static boolean isGodPlayer(ServerPlayer player) {
         return TaggedEntitySystem.hasTag(player, TaggedEntitySystem.TAG_DW_GOD);
     }
 
     /**
-     * Send overhead chat bubble (NOT global chat).
-     * This is called by Python backend via network packet.
+     * Make an agent send a chat message to nearby players.
+     * ProximityChatHandler intercepts it and delivers it to everyone within
+     * PROXIMITY_RADIUS — no separate chat-bubble packet needed.
      */
-    public static void sendChatBubble(ServerLevel world, String agentId, String message) {
-        if (message == null || message.isEmpty()) {
-            return;
-        }
+    public static void sendAgentChat(ServerLevel world, String agentId, String message) {
+        if (message == null || message.isEmpty()) return;
 
-        // Find the ServerPlayer with matching AI ID
         for (ServerPlayer player : world.players()) {
-            if (isAIPlayer(player) &&
-                    TaggedEntitySystem.getAIID(player).equals(agentId)) {
+            if (isAIPlayer(player) && agentId.equals(TaggedEntitySystem.getAIID(player))) {
 
-                // Check cooldown
-                int cooldown = chatCooldowns.getOrDefault(player.getUUID(), 0);
-                if (cooldown > 0) {
-                    return; // Still on cooldown
-                }
+                int cooldown = cooldowns.getOrDefault(player.getUUID(), 0);
+                if (cooldown > 0) return;
+                cooldowns.put(player.getUUID(), 20); // 1-second rate limit
 
-                // Set cooldown (20 ticks = 1 second)
-                chatCooldowns.put(player.getUUID(), 20);
+                // Simulate the agent speaking — ProximityChatHandler handles delivery
+                // and notifies god agents via HTTP automatically.
+                player.getServer().getPlayerList().broadcastSystemMessage(
+                        Component.literal("<" + player.getName().getString() + "> " + message),
+                        false
+                );
 
-                // Send chat bubble packet to nearby players
-                ChatPacket packet = new ChatPacket(player.getUUID(), message);
-
-                for (ServerPlayer nearbyPlayer : world.players()) {
-                    double distSq = nearbyPlayer.distanceToSqr(player);
-                    if (distSq < 64 * 64) { // Within 64 blocks
-                        NetworkHandler.INSTANCE.send(
-                                PacketDistributor.PLAYER.with(() -> nearbyPlayer),
-                                packet
-                        );
-                    }
-                }
-
-                // Log to server console (optional)
-                DWMod.LOGGER.debug("[Chat Bubble] {}: {}",
-                        player.getName().getString(), message);
-
+                DWMod.LOGGER.debug("[AgentChat] {}: {}", agentId, message);
                 return;
             }
         }
-
-        DWMod.LOGGER.warn("Agent not found for chat bubble: {}", agentId);
+        DWMod.LOGGER.warn("Agent not found for chat: {}", agentId);
     }
 
-    /**
-     * Update cooldowns (call every server tick).
-     */
     public static void tickCooldowns() {
-        chatCooldowns.replaceAll((uuid, ticks) -> Math.max(0, ticks - 1));
+        cooldowns.replaceAll((uuid, ticks) -> Math.max(0, ticks - 1));
     }
 
-    /**
-     * Get all AI-controlled players in world.
-     */
     public static List<ServerPlayer> getAIPlayers(ServerLevel world) {
         return world.players().stream()
                 .filter(DWNPCManager::isAIPlayer)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Get all god-tier players in world.
-     */
     public static List<ServerPlayer> getGodPlayers(ServerLevel world) {
         return world.players().stream()
                 .filter(DWNPCManager::isGodPlayer)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Get agent ID from player.
-     */
     public static String getAgentId(ServerPlayer player) {
-        if (!isAIPlayer(player)) {
-            return null;
-        }
-        return TaggedEntitySystem.getAIID(player);
+        return isAIPlayer(player) ? TaggedEntitySystem.getAIID(player) : null;
     }
 
-    /**
-     * Find player by agent ID.
-     */
     public static ServerPlayer findPlayerByAgentId(ServerLevel world, String agentId) {
-        for (ServerPlayer player : world.players()) {
-            if (isAIPlayer(player) &&
-                    TaggedEntitySystem.getAIID(player).equals(agentId)) {
+        for (ServerPlayer player : world.players())
+            if (isAIPlayer(player) && agentId.equals(TaggedEntitySystem.getAIID(player)))
                 return player;
-            }
-        }
         return null;
     }
 
-    /**
-     * Unregister AI player (on disconnect).
-     */
     public static void unregisterAIPlayer(ServerPlayer player) {
         String agentId = getAgentId(player);
         if (agentId != null) {
-            chatCooldowns.remove(player.getUUID());
+            cooldowns.remove(player.getUUID());
             DWMod.LOGGER.info("Unregistered AI player: {} (Agent ID: {})",
                     player.getName().getString(), agentId);
         }
     }
 
-    /**
-     * Grant god permissions to a player.
-     * Useful for promoting an existing AI to god status.
-     */
     public static void promoteToGod(ServerPlayer player, String godType) {
         if (!isAIPlayer(player)) {
             DWMod.LOGGER.warn("Cannot promote non-AI player to god: {}",
                     player.getName().getString());
             return;
         }
-
         TaggedEntitySystem.tagEntity(player, TaggedEntitySystem.TAG_DW_GOD);
         TaggedEntitySystem.setGodType(player, godType);
         TaggedEntitySystem.setDivinePower(player, 100);
         TaggedEntitySystem.makeGenesisImmune(player);
-
-        DWMod.LOGGER.info("Promoted {} to God ({})",
-                player.getName().getString(), godType);
+        DWMod.LOGGER.info("Promoted {} to God ({})", player.getName().getString(), godType);
     }
 
-    /**
-     * Revoke god status from a player.
-     */
     public static void demoteFromGod(ServerPlayer player) {
-        if (!isGodPlayer(player)) {
-            return;
-        }
-
-        // Remove god tag (keep NPC tag)
+        if (!isGodPlayer(player)) return;
         player.getPersistentData().remove(TaggedEntitySystem.TAG_DW_GOD);
         player.getPersistentData().remove(TaggedEntitySystem.TAG_GOD_TYPE);
         player.getPersistentData().remove(TaggedEntitySystem.TAG_DIVINE_POWER);
         player.getPersistentData().remove(TaggedEntitySystem.TAG_GENESIS_IMMUNE);
-
-        DWMod.LOGGER.info("Demoted {} from God status",
-                player.getName().getString());
+        DWMod.LOGGER.info("Demoted {} from God status", player.getName().getString());
     }
 }

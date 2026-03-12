@@ -187,6 +187,24 @@ public class PythonBackendClient {
         sendAsync(json, "/api/breeding/event");
     }
 
+    /**
+     * Notify a DW agent that it overheard a nearby chat message.
+     * Called by ProximityChatHandler for every agent within PROXIMITY_RADIUS.
+     * The Python cognitive loop receives this via /api/agents/chat_heard.
+     *
+     * @param hearerAgentId  clean name of the agent that heard the message
+     * @param speakerName    display name of whoever spoke
+     * @param message        the raw chat string
+     */
+    public static void notifyChatHeard(String hearerAgentId, String speakerName, String message) {
+        JsonObject json = new JsonObject();
+        json.addProperty("hearer_id",    hearerAgentId);
+        json.addProperty("speaker_name", speakerName);
+        json.addProperty("message",      message);
+        json.addProperty("timestamp",    System.currentTimeMillis());
+        sendAsync(json, "/api/agents/chat_heard");
+    }
+
     private static void sendAsync(JsonObject json, String endpoint) {
         new Thread(() -> {
             try {

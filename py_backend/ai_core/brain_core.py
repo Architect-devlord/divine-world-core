@@ -1,530 +1,938 @@
-# ai_core/brain_core.py - ENHANCED VERSION
+# ai_core/brain_core.py
 """
-Enhanced Brain Core with:
-- Integrated language intelligence (default)
-- General pattern recognition (behavior, visual, audio)
-- Avalanche continual learning hooks
-- Multi-modal learning support
-"""
-import time
-import numpy as np
-from typing import Any, Dict, Tuple, Optional, List
-from collections import defaultdict, deque
+BrainCore — Central Intelligence for DW Agents
+===============================================
 
+The brain sits between raw perception and action. It is responsible for:
+
+  1. Fast evaluation  — routine intuitive response via RewardSystem +
+                        PatternRecognizer + learned value table. This runs
+                        every cognitive cycle. No world model involved.
+
+  2. Selective deliberation — expensive imagination via the WorldModel.
+                        The brain decides WHEN deliberation is worth it
+                        (novelty, urgency, stakes) and exposes the result
+                        to the cognitive loop, which decides WHAT to do
+                        with it. The world model is a tool the agent
+                        reaches for, not a mandatory pipeline stage.
+
+  3. Language          — routes to LanguageIntelligence for input processing
+                        and speech generation.
+
+  4. Continual memory  — stores experiences for Avalanche-style replay.
+
+Design rules
+------------
+- BrainCore owns its world model connection via set_world_model().
+  Nobody patches brain.evaluate_event from outside.
+- evaluate_event() is always fast. Never blocks on torch.
+- deliberate() is always explicit. The cognitive loop calls it only when
+  it has decided the situation warrants deep thought.
+- GodBrainExtension is removed. Gods use the same brain — their
+  personality weights and reward system configuration make them different.
+- PatternRecognizer.observe_pattern uses time() correctly (not time.time()).
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from collections import defaultdict, deque
+from time import time
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+
+log = logging.getLogger("brain_core")
+
+
+# ============================================================================
+# PatternRecognizer
+# ============================================================================
 
 class PatternRecognizer:
     """
-    General pattern recognition for behavior, vision, audio, and language.
-    Uses statistical clustering and frequency analysis.
+    Lightweight online pattern tracker.
+
+    Records observations by type, tracks transition frequencies, and
+    computes novelty (inverse frequency). Thread-safe via a single lock.
+
+    Pattern types: behavior | visual | audio | language | state
     """
-    
-    def __init__(self, pattern_types: List[str] = None):
+
+    def __init__(self, pattern_types: Optional[List[str]] = None):
         if pattern_types is None:
             pattern_types = ['behavior', 'visual', 'audio', 'language', 'state']
-        
-        self.pattern_types = pattern_types
-        
-        # Pattern storage: {pattern_type: {pattern_hash: [occurrences, last_seen, context]}}
-        self.patterns: Dict[str, Dict[str, List]] = {pt: {} for pt in pattern_types}
-        
-        # Sequence patterns: {pattern_type: [(sequence, count)]}
-        self.sequences: Dict[str, List[Tuple[tuple, int]]] = {pt: [] for pt in pattern_types}
-        
-        # Pattern transitions: {pattern_type: {(pattern_a, pattern_b): count}}
-        self.transitions: Dict[str, Dict[Tuple[str, str], int]] = {
-            pt: defaultdict(int) for pt in pattern_types
-        }
-        
-        # Recent patterns for sequence detection
-        self.recent_patterns: Dict[str, deque] = {
-            pt: deque(maxlen=10) for pt in pattern_types
-        }
-    
-    def observe_pattern(self, pattern_type: str, pattern_data: Any, 
-                       context: Optional[Dict] = None) -> Dict[str, Any]:
+
+        self.pattern_types   = pattern_types
+        # {type: {hash: [count, last_seen_ts, context]}}
+        self.patterns        = {pt: {} for pt in pattern_types}
+        # {type: {(prev_hash, next_hash): count}}
+        self.transitions     = {pt: defaultdict(int) for pt in pattern_types}
+        # {type: deque of recent hashes}
+        self.recent_patterns = {pt: deque(maxlen=10) for pt in pattern_types}
+
+        self._lock = threading.Lock()
+
+    # ── public ──────────────────────────────────────────────────────────────
+
+    def observe_pattern(self, pattern_type: str,
+                        pattern_data: Any,
+                        context: Optional[Dict] = None) -> Dict[str, Any]:
         """
-        Observe and record a pattern.
-        Returns analysis: {novelty, frequency, related_patterns}
+        Record an observation and return analysis.
+
+        Returns:
+            novelty         — 1.0 = never seen before, approaches 0 as freq grows
+            frequency       — how many times this exact pattern has been seen
+            related_patterns — list of hashes that commonly co-occur
+            pattern_hash    — the hash used internally
         """
         if pattern_type not in self.pattern_types:
-            return {'novelty': 0.0, 'frequency': 0, 'related_patterns': []}
-        
-        # Hash the pattern
-        pattern_hash = self._hash_pattern(pattern_data)
-        
-        # Record occurrence
-        if pattern_hash not in self.patterns[pattern_type]:
-            self.patterns[pattern_type][pattern_hash] = [0, time.time(), context or {}]
-            novelty = 1.0
-        else:
-            novelty = 1.0 / (1.0 + self.patterns[pattern_type][pattern_hash][0])
-        
-        self.patterns[pattern_type][pattern_hash][0] += 1
-        self.patterns[pattern_type][pattern_hash][1] = time.time()
-        
-        frequency = self.patterns[pattern_type][pattern_hash][0]
-        
-        # Update recent patterns for sequence detection
-        self.recent_patterns[pattern_type].append(pattern_hash)
-        
-        # Detect transitions
-        if len(self.recent_patterns[pattern_type]) >= 2:
-            prev_pattern = self.recent_patterns[pattern_type][-2]
-            self.transitions[pattern_type][(prev_pattern, pattern_hash)] += 1
-        
-        # Find related patterns
-        related = self._find_related_patterns(pattern_type, pattern_hash)
-        
+            return {'novelty': 0.0, 'frequency': 0,
+                    'related_patterns': [], 'pattern_hash': ''}
+
+        h = self._hash_pattern(pattern_data)
+
+        with self._lock:
+            store = self.patterns[pattern_type]
+
+            if h not in store:
+                # [count, last_seen, context]
+                store[h] = [0, time(), context or {}]
+                novelty = 1.0
+            else:
+                novelty = 1.0 / (1.0 + store[h][0])
+
+            store[h][0] += 1
+            store[h][1]  = time()       # ← correct: time() not time.time()
+            freq         = store[h][0]
+
+            recent = self.recent_patterns[pattern_type]
+            if len(recent) >= 2:
+                prev = list(recent)[-1]
+                self.transitions[pattern_type][(prev, h)] += 1
+            recent.append(h)
+
+            related = self._related(pattern_type, h)
+
         return {
-            'novelty': novelty,
-            'frequency': frequency,
+            'novelty':          novelty,
+            'frequency':        freq,
             'related_patterns': related,
-            'pattern_hash': pattern_hash
-        }
-    
-    def detect_sequences(self, pattern_type: str, min_length: int = 2, 
-                        min_occurrences: int = 2) -> List[Tuple[tuple, int]]:
-        """
-        Detect recurring sequences of patterns.
-        Returns [(sequence, count), ...]
-        """
-        if pattern_type not in self.pattern_types:
-            return []
-        
-        recent = list(self.recent_patterns[pattern_type])
-        
-        if len(recent) < min_length:
-            return []
-        
-        # Sliding window to find sequences
-        sequence_counts = defaultdict(int)
-        
-        for length in range(min_length, len(recent)):
-            for i in range(len(recent) - length + 1):
-                seq = tuple(recent[i:i+length])
-                sequence_counts[seq] += 1
-        
-        # Filter by minimum occurrences
-        sequences = [
-            (seq, count) for seq, count in sequence_counts.items()
-            if count >= min_occurrences
-        ]
-        
-        # Sort by count
-        sequences.sort(key=lambda x: x[1], reverse=True)
-        
-        return sequences[:10]  # Top 10
-    
-    def predict_next_pattern(self, pattern_type: str) -> Optional[str]:
-        """
-        Predict next likely pattern based on current context.
-        Uses transition probabilities.
-        """
-        if pattern_type not in self.pattern_types:
-            return None
-        
-        if not self.recent_patterns[pattern_type]:
-            return None
-        
-        current_pattern = self.recent_patterns[pattern_type][-1]
-        
-        # Find most likely next pattern
-        candidates = {}
-        for (prev, next_p), count in self.transitions[pattern_type].items():
-            if prev == current_pattern:
-                candidates[next_p] = count
-        
-        if not candidates:
-            return None
-        
-        # Return most frequent
-        return max(candidates.items(), key=lambda x: x[1])[0]
-    
-    def _hash_pattern(self, pattern_data: Any) -> str:
-        """Create hash from pattern data"""
-        if isinstance(pattern_data, np.ndarray):
-            # For arrays, round and hash
-            rounded = np.round(pattern_data.flatten()[:20], 2)
-            return '_'.join(str(x) for x in rounded)
-        elif isinstance(pattern_data, dict):
-            # For dicts, hash key-value pairs
-            items = sorted(pattern_data.items())[:10]
-            return '_'.join(f"{k}:{v}" for k, v in items)
-        else:
-            # For strings/primitives
-            return str(pattern_data)[:100]
-    
-    def _find_related_patterns(self, pattern_type: str, 
-                               pattern_hash: str, limit: int = 5) -> List[str]:
-        """Find patterns that frequently co-occur"""
-        related = []
-        
-        # Look at transition probabilities
-        for (prev, next_p), count in self.transitions[pattern_type].items():
-            if prev == pattern_hash or next_p == pattern_hash:
-                other = next_p if prev == pattern_hash else prev
-                if other != pattern_hash:
-                    related.append((other, count))
-        
-        # Sort by frequency and return top
-        related.sort(key=lambda x: x[1], reverse=True)
-        return [p for p, _ in related[:limit]]
-    
-    def get_pattern_stats(self, pattern_type: str) -> Dict[str, Any]:
-        """Get statistics for pattern type"""
-        if pattern_type not in self.pattern_types:
-            return {}
-        
-        total_patterns = len(self.patterns[pattern_type])
-        total_observations = sum(p[0] for p in self.patterns[pattern_type].values())
-        
-        # Most frequent patterns
-        frequent = sorted(
-            self.patterns[pattern_type].items(),
-            key=lambda x: x[1][0],
-            reverse=True
-        )[:10]
-        
-        return {
-            'total_unique_patterns': total_patterns,
-            'total_observations': total_observations,
-            'most_frequent': [
-                {'hash': h[:50], 'count': data[0]} 
-                for h, data in frequent
-            ],
-            'recent_sequence_length': len(self.recent_patterns[pattern_type])
+            'pattern_hash':     h,
         }
 
+    def get_novelty(self, pattern_type: str, pattern_data: Any) -> float:
+        """
+        Read-only novelty check — does NOT record an observation.
+        Safe to call from evaluate_event without double-counting.
+        """
+        if pattern_type not in self.pattern_types:
+            return 0.0
+        h = self._hash_pattern(pattern_data)
+        with self._lock:
+            entry = self.patterns[pattern_type].get(h)
+        if entry is None:
+            return 1.0
+        return 1.0 / (1.0 + entry[0])
+
+    def predict_next_pattern(self, pattern_type: str) -> Optional[str]:
+        """Return the most likely next pattern hash given the current one."""
+        with self._lock:
+            recent = self.recent_patterns.get(pattern_type)
+            if not recent:
+                return None
+            cur   = list(recent)[-1]
+            cands = {
+                n: c
+                for (p, n), c in self.transitions[pattern_type].items()
+                if p == cur
+            }
+        return max(cands, key=cands.get) if cands else None
+
+    def get_pattern_stats(self, pattern_type: str) -> Dict[str, Any]:
+        if pattern_type not in self.pattern_types:
+            return {}
+        with self._lock:
+            store      = self.patterns[pattern_type]
+            total_obs  = sum(p[0] for p in store.values())
+            frequent   = sorted(store.items(),
+                                key=lambda x: x[1][0], reverse=True)[:10]
+        return {
+            'total_unique_patterns': len(store),
+            'total_observations':    total_obs,
+            'most_frequent': [
+                {'hash': h[:50], 'count': d[0]} for h, d in frequent
+            ],
+        }
+
+    # ── private ─────────────────────────────────────────────────────────────
+
+    def _hash_pattern(self, data: Any) -> str:
+        if isinstance(data, np.ndarray):
+            return '_'.join(str(x) for x in np.round(data.flatten()[:20], 2))
+        if isinstance(data, dict):
+            return '_'.join(f"{k}:{v}" for k, v in sorted(data.items())[:10])
+        return str(data)[:100]
+
+    def _related(self, pt: str, h: str, limit: int = 5) -> List[str]:
+        rel = []
+        for (p, n), c in self.transitions[pt].items():
+            if p == h or n == h:
+                other = n if p == h else p
+                if other != h:
+                    rel.append((other, c))
+        rel.sort(key=lambda x: x[1], reverse=True)
+        return [p for p, _ in rel[:limit]]
+
+
+# ============================================================================
+# DeliberationResult
+# ============================================================================
+
+class DeliberationResult:
+    """
+    Output of BrainCore.deliberate().
+
+    Contains ranked action candidates with their imagined values, plus
+    metadata the cognitive loop can use to decide whether to interrupt
+    a running plan.
+    """
+
+    def __init__(self,
+                 ranked_actions: List[Tuple[float, Dict[str, Any]]],
+                 imagination_summaries: List[Dict[str, Any]],
+                 context_novelty: float,
+                 context_urgency: float,
+                 used_world_model: bool):
+        # [(score, action_dict), ...] — highest score first
+        self.ranked_actions        = ranked_actions
+        # One summary dict per imagined trajectory (from ImagineResult.summary())
+        self.imagination_summaries = imagination_summaries
+        self.context_novelty       = context_novelty
+        self.context_urgency       = context_urgency
+        self.used_world_model      = used_world_model
+
+    @property
+    def best_action(self) -> Optional[Dict[str, Any]]:
+        """The highest-scored action candidate."""
+        if self.ranked_actions:
+            return self.ranked_actions[0][1]
+        return None
+
+    @property
+    def best_score(self) -> float:
+        if self.ranked_actions:
+            return self.ranked_actions[0][0]
+        return 0.0
+
+    def should_abort_current_plan(self,
+                                  running_plan_score: float,
+                                  urgency_threshold: float = 0.75) -> bool:
+        """
+        Returns True if the cognitive loop should abandon its current plan
+        and switch to the best action found here.
+
+        Conditions:
+          - Urgency spiked above threshold (danger, starvation, etc.)
+          - A significantly better option was found (>20% improvement)
+        """
+        if self.context_urgency >= urgency_threshold:
+            return True
+        if self.best_score > running_plan_score * 1.2:
+            return True
+        return False
+
+    def summary(self) -> Dict[str, Any]:
+        return {
+            'best_action':       self.best_action,
+            'best_score':        self.best_score,
+            'n_candidates':      len(self.ranked_actions),
+            'used_world_model':  self.used_world_model,
+            'context_novelty':   self.context_novelty,
+            'context_urgency':   self.context_urgency,
+            'top_3': [
+                {'score': s, 'action': a.get('type')}
+                for s, a in self.ranked_actions[:3]
+            ],
+        }
+
+
+# ============================================================================
+# BrainCore
+# ============================================================================
 
 class BrainCore:
     """
-    Enhanced brain with integrated language and pattern recognition.
-    Complements neural network policies.
+    Central intelligence hub.
+
+    Wiring
+    ------
+    After construction, call:
+        brain.set_world_model(wm)     — attach WorldModel (optional)
+        brain.set_reward_system(rs)   — attach RewardSystem (optional,
+                                         also done by agent.initialize_reward_system)
+
+    Both can be swapped at runtime without restarting the agent.
     """
-    
+
     def __init__(self, agent_ref=None):
-        self.agent = agent_ref
-        
-        # Value learning (existing)
-        self.value_table = {}
-        self.forward_model = {}
-        self.curiosity_weight = 0.5
+        self.agent  = agent_ref
+
+        # ── Sub-systems (wired after construction) ───────────────────────
+        self.reward_system: Any   = None   # RewardSystem
+        self._world_model:  Any   = None   # WorldModel (private — use property)
+        self._wm_lock               = threading.Lock()
+
+        # ── Fast evaluation systems ──────────────────────────────────────
+        # value_table: {(event_type, first_tag): [cumulative_reward, count]}
+        self.value_table: Dict[Tuple, List] = {}
+        # forward_model: {action_type: {outcome_tag: probability}}
+        self.forward_model: Dict[str, Dict[str, float]] = {}
+
+        self.curiosity_weight      = 0.5
         self.predictability_weight = 0.2
-        
-        # Pattern recognition (NEW)
+
         self.pattern_recognizer = PatternRecognizer()
-        
-        # Language intelligence (INTEGRATED)
-        from ai_core.brain_language import LanguageIntelligence
-        self.language = LanguageIntelligence(agent_ref=agent_ref)
-        
-        # Avalanche continual learning buffer (NEW)
-        self.continual_buffer = deque(maxlen=10000)
-        self.task_labels = {}  # For task-aware continual learning
-        self.current_task = 0
-    
-    def evaluate_event(self, event: Dict[str, Any], 
-                      context: Optional[Dict[str, Any]] = None) -> Tuple[float, Dict[str, float]]:
-        """
-        Enhanced event evaluation with pattern recognition.
-        """
+
+        # ── Language ────────────────────────────────────────────────────
+        # Initialised by add_language_to_brain() in agent.__init__
+        # Importing here would create a circular dependency in some setups
+        self.language: Any = None
         try:
-            etype = event.get('type', 'unknown')
-            tags = event.get('tags', [])
-            payload = event.get('payload', {})
-            
-            # Detect pattern type
-            pattern_type = self._classify_event_pattern_type(event)
-            
-            # Observe pattern
-            pattern_analysis = self.pattern_recognizer.observe_pattern(
-                pattern_type=pattern_type,
-                pattern_data=event,
-                context=context
-            )
-            
-            # Compute reward components
-            drive_reward = self._drive_reward(payload)
-            novelty = pattern_analysis['novelty']
-            curiosity_bonus = self.curiosity_weight * novelty
-            learned_val = self._lookup_learned_value(event)
-            predict_err = self._prediction_error(event)
-            predictability_bonus = -self.predictability_weight * predict_err
-            
-            # Pattern recognition bonus
-            pattern_bonus = 0.0
-            if novelty > 0.7:
-                pattern_bonus = 0.1  # Reward for discovering new patterns
-            
+            from ai_core.brain_language import LanguageIntelligence
+            self.language = LanguageIntelligence(agent_ref=agent_ref)
         except Exception as e:
-            return 0.0, {"surprise": 0.1}
-        
-        reward = (drive_reward + curiosity_bonus + learned_val + 
-                 predictability_bonus + pattern_bonus)
-        
-        emo_delta = self._reward_to_emotion_delta(reward, event)
-        
-        # Update learning
-        self._update_learning(event, payload, reward)
-        
-        # Store in continual learning buffer
+            log.warning(f"LanguageIntelligence not available at init: {e}")
+
+        # ── Continual learning buffer ────────────────────────────────────
+        self.continual_buffer: deque = deque(maxlen=10_000)
+        self.task_labels: Dict[int, float] = {}
+        self.current_task: int = 0
+
+        # ── Deliberation settings ────────────────────────────────────────
+        self.deliberation_novelty_threshold: float = 0.55
+        self.deliberation_urgency_threshold: float = 0.60
+        self.deliberation_cooldown: float          = 2.0
+        self._last_deliberation_ts: float          = 0.0
+
+        # ── Browsing settings ─────────────────────────────────────────────
+        # Minimum browse_desire score before the agent considers browsing
+        self.browsing_desire_threshold: float = 0.40
+        # Minimum seconds between autonomous browsing sessions
+        self.browsing_cooldown: float         = 60.0
+
+        log.info("BrainCore initialised.")
+
+    # ── World model property (thread-safe swap) ──────────────────────────
+
+    @property
+    def world_model(self):
+        with self._wm_lock:
+            return self._world_model
+
+    @world_model.setter
+    def world_model(self, wm):
+        with self._wm_lock:
+            self._world_model = wm
+
+    def set_world_model(self, wm) -> None:
+        """
+        Attach a WorldModel to the brain.
+
+        This is the ONLY sanctioned way to wire in the world model.
+        No external monkey-patching of evaluate_event is needed or allowed.
+        """
+        self.world_model = wm
+        log.info(f"BrainCore: WorldModel attached "
+                 f"({'with VAE' if getattr(wm, 'config', None) and wm.config.use_vae else 'no VAE'}).")
+
+    def set_reward_system(self, rs) -> None:
+        """Attach a RewardSystem. Also called by agent.initialize_reward_system()."""
+        self.reward_system = rs
+        log.info("BrainCore: RewardSystem attached.")
+
+    # =========================================================================
+    # FAST PATH — evaluate_event
+    # =========================================================================
+
+    def evaluate_event(self,
+                       event: Dict[str, Any],
+                       context: Optional[Dict] = None
+                       ) -> Tuple[float, Dict[str, float]]:
+        """
+        Fast intuitive evaluation of an event.
+
+        Routes through RewardSystem when available (full personality-weighted
+        scoring, emotion updates, curiosity signals). Falls back to the
+        table-based scorer otherwise.
+
+        This method NEVER touches the world model. Keep it fast.
+
+        Returns:
+            (reward: float, emotion_delta: dict)
+
+        When RewardSystem is attached:
+            emotion_delta is {} — apply_signal() already updated emotion_system
+            and personality. Callers must NOT apply emotion_delta again.
+
+        When RewardSystem is NOT attached (table fallback):
+            emotion_delta contains raw deltas for the caller to apply.
+        """
+        # ── RewardSystem path ─────────────────────────────────────────────
+        if self.reward_system is not None:
+            try:
+                signal = self.reward_system.compute_reward(
+                    event=event, outcome=context or {}
+                )
+                self.reward_system.apply_signal(signal)
+                self._update_learning(event, event.get('payload', {}), signal.total)
+                self._store_continual_experience(event, signal.total, context)
+                return signal.total, {}
+            except Exception as e:
+                log.warning(f"RewardSystem failed, falling back to table: {e}")
+
+        # ── Table fallback ────────────────────────────────────────────────
+        try:
+            payload      = event.get('payload', {})
+            pattern_type = self._classify_event_pattern_type(event)
+            analysis     = self.pattern_recognizer.observe_pattern(
+                pattern_type, event, context
+            )
+            novelty = analysis['novelty']
+            reward  = (
+                self._drive_reward(payload)
+                + self.curiosity_weight * novelty
+                + self._lookup_learned_value(event)
+                - self.predictability_weight * self._prediction_error(event)
+                + (0.1 if novelty > 0.7 else 0.0)
+            )
+        except Exception:
+            return 0.0, {'surprise': 0.1}
+
+        emo_delta = {
+            'joy':      max(0.0,  reward) * 0.2,
+            'fear':     max(0.0, -reward) * 0.3,
+            'surprise': novelty * 0.2,
+        }
+        self._update_learning(event, event.get('payload', {}), reward)
         self._store_continual_experience(event, reward, context)
-        
         return reward, emo_delta
-    
-    def _classify_event_pattern_type(self, event: Dict[str, Any]) -> str:
-        """Classify event into pattern type"""
-        etype = event.get('type', '')
-        tags = event.get('tags', [])
-        
-        if 'vision' in tags or 'visual' in etype:
-            return 'visual'
-        elif 'audio' in tags or 'sound' in etype:
-            return 'audio'
-        elif 'chat' in tags or 'language' in tags:
-            return 'language'
-        elif 'action' in tags or 'movement' in etype:
-            return 'behavior'
-        else:
-            return 'state'
-    
-    def _drive_reward(self, payload: Dict[str, Any]) -> float:
-        """Compute drive-based reward"""
-        r = 0.0
-        
-        if 'health_delta' in payload:
-            r += float(payload['health_delta']) * 1.0
-        
-        if 'hunger_delta' in payload:
-            r += float(payload['hunger_delta']) * 0.25
-        
-        if payload.get('danger_increased', False):
-            r -= 0.5
-        
-        if payload.get('success', False):
-            r += 0.5
-        
-        return r
-    
-    def _novelty_for_event(self, event: Dict[str, Any]) -> float:
-        """Compute novelty score using pattern recognizer"""
-        pattern_type = self._classify_event_pattern_type(event)
-        
-        # Use pattern recognizer's novelty
-        analysis = self.pattern_recognizer.observe_pattern(
-            pattern_type, event
+
+    # =========================================================================
+    # DELIBERATION GATE — should the agent think deeply right now?
+    # =========================================================================
+
+    def should_deliberate(self,
+                          novelty: float,
+                          urgency: float,
+                          force: bool = False) -> bool:
+        """
+        Decide whether a full world-model deliberation is worth running.
+
+        Called by the cognitive loop before invoking deliberate().
+        Returns False quickly when the world model is absent, on cooldown,
+        or the situation is routine.
+
+        Args:
+            novelty  — 0–1, from cognitive loop perception
+            urgency  — 0–1, from cognitive loop perception
+            force    — skip cooldown check (e.g. explicit planning request)
+        """
+        if self.world_model is None:
+            return False
+
+        # Rate limit — don't deliberate on every cycle
+        if not force:
+            since_last = time() - self._last_deliberation_ts
+            if since_last < self.deliberation_cooldown:
+                return False
+
+        # Situation must be interesting enough
+        if (novelty >= self.deliberation_novelty_threshold or
+                urgency >= self.deliberation_urgency_threshold):
+            return True
+
+        return False
+
+    # =========================================================================
+    # BROWSING GATE — should the agent look something up on the web?
+    # =========================================================================
+
+    def should_browse(self,
+                      novelty:  float,
+                      urgency:  float,
+                      context:  Optional[Dict] = None) -> bool:
+        """
+        Decide whether the agent wants to browse the web right now.
+
+        This is the agent's own decision — not the user's. The brain weighs
+        personality (curiosity, openness), situation (novelty, urgency), and
+        how recently it last browsed. It does NOT check whether there are URLs
+        in the queue — that is the cognitive loop's job after this returns True.
+
+        Args:
+            novelty  — 0–1 from perception (new situations spark curiosity)
+            urgency  — 0–1, high urgency suppresses idle browsing
+            context  — optional dict with 'recent_events' for memory check
+
+        Returns True only when:
+            - The agent has web browsing attached
+            - Curiosity + situation cross a threshold
+            - Browsing cooldown has elapsed
+            - The situation is not urgent enough to demand action instead
+        """
+        # No browser attached
+        if self.agent is None or not hasattr(self.agent, 'web_browser'):
+            return False
+
+        browser = self.agent.web_browser
+        # No allowed domains — browsing is not permitted
+        if not browser.allowed_domains:
+            return False
+
+        # Urgent situations demand action, not browsing
+        if urgency > 0.70:
+            return False
+
+        # Browsing cooldown (don't browse more than once per 60s autonomously)
+        since_last = time() - browser.stats.get('last_browse_time', 0.0)
+        if since_last < self.browsing_cooldown:
+            return False
+
+        # Personality-weighted curiosity score
+        traits    = {}
+        if self.agent is not None and hasattr(self.agent, 'personality'):
+            traits = self.agent.personality.traits
+
+        curiosity     = traits.get('curiosity',     0.5)
+        openness      = traits.get('openness',      0.5)
+        conscientiousness = traits.get('conscientiousness', 0.5)
+
+        # Curious + open agents browse more; conscientious agents only browse
+        # when there's a clear knowledge gap (novelty)
+        browse_desire = (
+            curiosity     * 0.45 +
+            openness      * 0.25 +
+            novelty       * 0.20 +
+            (1.0 - conscientiousness) * 0.10   # less focused → more wandering
         )
-        
-        return analysis['novelty']
-    
-    def _lookup_learned_value(self, event: Dict[str, Any]) -> float:
-        """Get learned value for event type"""
-        key = (event.get('type'), event.get('tags', [None])[0])
-        v = self.value_table.get(key)
-        if v:
-            total, cnt = v
-            return total / max(1, cnt)
-        return 0.0
-    
-    def _prediction_error(self, event: Dict[str, Any]) -> float:
-        """Compute prediction error"""
+
+        # Boost if recent memory mentions a URL or an unanswered question
+        if context is not None:
+            recent = context.get('recent_events', [])
+            for ev in recent[-5:]:
+                text = str(ev.get('text', '') or ev.get('message', ''))
+                if 'http' in text or '?' in text:
+                    browse_desire = min(1.0, browse_desire + 0.15)
+                    break
+
+        # Stochastic gate — prevents mechanical periodicity
+        import random
+        threshold = self.browsing_desire_threshold
+        if browse_desire >= threshold and random.random() < browse_desire:
+            log.debug(
+                f"BrainCore.should_browse → True "
+                f"(desire={browse_desire:.2f}, novelty={novelty:.2f})"
+            )
+            return True
+
+        return False
+
+    # =========================================================================
+    # SLOW PATH — deliberate (world-model imagination)
+    # =========================================================================
+
+    def deliberate(self,
+                   perception: Dict[str, Any],
+                   candidate_actions: Optional[List[Dict]] = None,
+                   horizon: int = 3,
+                   n_trials: int = 15) -> DeliberationResult:
+        """
+        Full imagination-based deliberation via the WorldModel.
+
+        The cognitive loop calls this ONLY when should_deliberate() returns
+        True. The result is handed back to the cognitive loop, which decides
+        what to do with it — brain and planner stay decoupled.
+
+        Args:
+            perception        — current perception dict from _perceive()
+            candidate_actions — action dicts to evaluate. If None, the
+                                planner's DEFAULT_TEMPLATES are used.
+            horizon           — imagination rollout depth
+            n_trials          — random sequences to sample per candidate
+
+        Returns:
+            DeliberationResult with ranked actions and imagination summaries
+        """
+        novelty = float(perception.get('novelty', 0.0))
+        urgency = float(perception.get('urgency', 0.0))
+
+        # Build context for world model observations
+        context = self._perception_to_context(perception)
+
+        # Resolve candidate actions
+        if candidate_actions is None:
+            try:
+                from ai_core.planner import DEFAULT_TEMPLATES
+                candidate_actions = DEFAULT_TEMPLATES
+            except Exception:
+                candidate_actions = [
+                    {'type': 'explore'}, {'type': 'flee'},
+                    {'type': 'attack'}, {'type': 'eat'},
+                ]
+
+        ranked: List[Tuple[float, Dict]] = []
+        summaries: List[Dict]            = []
+        used_wm                          = False
+
+        wm = self.world_model  # snapshot — safe even if swapped mid-call
+        if wm is not None and context:
+            used_wm = True
+            try:
+                ranked, summaries = self._deliberate_with_world_model(
+                    wm, candidate_actions, context, horizon, n_trials
+                )
+            except Exception as e:
+                log.warning(f"World-model deliberation failed, falling back: {e}")
+                used_wm = False
+
+        # Fallback to value-table scoring if WM unavailable or failed
+        if not ranked:
+            ranked = self._deliberate_with_table(candidate_actions, context)
+
+        # Sort descending by score
+        ranked.sort(key=lambda x: x[0], reverse=True)
+
+        self._last_deliberation_ts = time()
+
+        result = DeliberationResult(
+            ranked_actions        = ranked,
+            imagination_summaries = summaries,
+            context_novelty       = novelty,
+            context_urgency       = urgency,
+            used_world_model      = used_wm,
+        )
+
+        log.debug(
+            f"BrainCore.deliberate: best={result.best_action}, "
+            f"score={result.best_score:.3f}, wm={used_wm}, "
+            f"novelty={novelty:.2f}, urgency={urgency:.2f}"
+        )
+
+        return result
+
+    # ── Deliberation internals ────────────────────────────────────────────
+
+    def _deliberate_with_world_model(
+            self,
+            wm,
+            candidates: List[Dict],
+            context: Dict,
+            horizon: int,
+            n_trials: int
+    ) -> Tuple[List[Tuple[float, Dict]], List[Dict]]:
+        """
+        Score each candidate action by imagining short rollouts and applying
+        the planner's scoring function (if available) or pure reward.
+        """
+        import random
+
+        # Get scoring_fn from planner if available
+        scoring_fn = None
+        if (self.agent is not None and
+                hasattr(self.agent, 'planner') and
+                self.agent.planner is not None):
+            scoring_fn = getattr(self.agent.planner, 'scoring_fn', None)
+        if scoring_fn is None:
+            scoring_fn = lambda r: r.total_reward  # noqa: E731
+
+        try:
+            from ai_core.planner import ImagineResult, ACTION_TYPE_INDEX
+            from ai_core.world_model import _build_observation_from_context
+            import torch
+        except ImportError as e:
+            raise RuntimeError(f"Cannot import planner/world_model: {e}")
+
+        initial_obs = _build_observation_from_context(self.agent, context)
+        action_dim  = wm.config.action_dim
+        device      = wm.device
+
+        ranked:    List[Tuple[float, Dict]] = []
+        summaries: List[Dict]               = []
+
+        for candidate in candidates:
+            best_trial_score = -1e9
+            best_summary     = None
+
+            for _ in range(n_trials):
+                # Build a short sequence starting with this candidate
+                seq = [candidate] + [
+                    random.choice(candidates) for _ in range(horizon - 1)
+                ]
+
+                action_matrix = np.zeros((1, horizon, action_dim), dtype=np.float32)
+                for t, act in enumerate(seq):
+                    idx = ACTION_TYPE_INDEX.get(act.get('type', ''), 0) % action_dim
+                    action_matrix[0, t, idx] = 1.0
+
+                actions_t = torch.tensor(action_matrix,
+                                         dtype=torch.float32, device=device)
+
+                try:
+                    with torch.no_grad():
+                        imagined = wm.imagine(initial_obs, actions_t, steps=horizon)
+
+                    ir = ImagineResult(
+                        sequence          = seq,
+                        rewards           = imagined['rewards'][0, :, 0].cpu().numpy(),
+                        termination_probs = imagined['terminations'][0, :, 0].cpu().numpy(),
+                        states            = imagined['states'][0].cpu().numpy(),
+                    )
+                    score = scoring_fn(ir)
+
+                    # Novelty bonus for rarely-tried actions
+                    score += self._action_novelty_bonus(candidate) * 0.15
+
+                    if score > best_trial_score:
+                        best_trial_score = score
+                        best_summary     = ir.summary()
+
+                except Exception as e:
+                    log.debug(f"Imagination trial failed for {candidate}: {e}")
+                    continue
+
+            if best_summary is not None:
+                ranked.append((best_trial_score, candidate))
+                summaries.append(best_summary)
+
+        return ranked, summaries
+
+    def _deliberate_with_table(
+            self,
+            candidates: List[Dict],
+            context: Optional[Dict]
+    ) -> List[Tuple[float, Dict]]:
+        """Score candidates using the learned value table only."""
+        return [
+            (self.predict_value_of_action(c, context), c)
+            for c in candidates
+        ]
+
+    # =========================================================================
+    # Value prediction (used by both deliberation and planner)
+    # =========================================================================
+
+    def predict_value_of_action(self,
+                                action: Dict[str, Any],
+                                context: Optional[Dict] = None) -> float:
+        """
+        Estimate the value of a single action.
+
+        Uses the world model when available and context is provided,
+        otherwise uses the learned value table. This is the fast single-step
+        version — deliberate() is the multi-step version.
+        """
+        if self.world_model is not None and context is not None:
+            try:
+                return self._world_model_action_value(action, context)
+            except Exception as e:
+                log.debug(f"WM single-step value failed, using table: {e}")
+        return self._table_action_value(action)
+
+    def _table_action_value(self, action: Dict) -> float:
+        atype = action.get('type')
+        if atype not in self.forward_model:
+            return 0.0
+        total = 0.0
+        for outcome, prob in self.forward_model[atype].items():
+            v = self.value_table.get((atype, outcome))
+            if v and v[1] > 0:
+                total += prob * (v[0] / v[1])
+        return total
+
+    def _world_model_action_value(self,
+                                  action: Dict,
+                                  context: Dict) -> float:
+        import torch
+        from ai_core.world_model import _build_observation_from_context
+        from ai_core.planner import ACTION_TYPE_INDEX
+
+        wm  = self.world_model
+        obs = _build_observation_from_context(self.agent, context)
+
+        vec = np.zeros(wm.config.action_dim, dtype=np.float32)
+        idx = ACTION_TYPE_INDEX.get(action.get('type', ''), 0) % wm.config.action_dim
+        vec[idx] = 1.0
+
+        obs['action'] = torch.tensor(
+            vec, dtype=torch.float32, device=wm.device
+        ).unsqueeze(0).unsqueeze(0)
+
+        with torch.no_grad():
+            pred = wm(obs)
+        return float(pred['reward'][0, -1, 0].item())
+
+    # =========================================================================
+    # Language
+    # =========================================================================
+
+    def process_language_input(self,
+                               text: str,
+                               context: Optional[Dict] = None) -> str:
+        """Route text through LanguageIntelligence."""
+        if self.language is None:
+            log.warning("BrainCore: no LanguageIntelligence attached.")
+            return ""
+        try:
+            return self.language.process_input(text, context or {})
+        except Exception as e:
+            log.error(f"BrainCore.process_language_input: {e}")
+            return ""
+
+    def get_language_progress(self) -> Dict[str, Any]:
+        """Return language system stats for agent status reporting."""
+        if self.language is None:
+            return {}
+        try:
+            return {
+                'stage':      self.language.language_stage,
+                'vocab_size': self.language.vocab.next_id,
+            }
+        except Exception:
+            return {}
+
+    # =========================================================================
+    # Continual learning buffer
+    # =========================================================================
+
+    def get_continual_buffer(self,
+                             task: Optional[int] = None,
+                             limit: Optional[int] = None) -> List[Dict]:
+        exps = [
+            e for e in self.continual_buffer
+            if task is None or e['task'] == task
+        ]
+        return exps[-limit:] if limit else exps
+
+    def switch_task(self, new_task: int) -> None:
+        self.current_task = new_task
+        self.task_labels[new_task] = time()
+
+    def get_pattern_summary(self) -> Dict[str, Any]:
+        return {
+            pt: self.pattern_recognizer.get_pattern_stats(pt)
+            for pt in self.pattern_recognizer.pattern_types
+        }
+
+    # =========================================================================
+    # Internal helpers
+    # =========================================================================
+
+    def _classify_event_pattern_type(self, event: Dict) -> str:
+        etype = event.get('type', '')
+        tags  = event.get('tags', [])
+        if 'vision'  in tags or 'visual'   in etype: return 'visual'
+        if 'audio'   in tags or 'sound'    in etype: return 'audio'
+        if 'chat'    in tags or 'language' in tags:  return 'language'
+        if 'action'  in tags or 'movement' in etype: return 'behavior'
+        return 'state'
+
+    def _drive_reward(self, payload: Dict) -> float:
+        r = 0.0
+        if 'health_delta' in payload: r += float(payload['health_delta'])
+        if 'hunger_delta' in payload: r += float(payload['hunger_delta']) * 0.25
+        if payload.get('danger_increased'): r -= 0.5
+        if payload.get('success'):          r += 0.5
+        return r
+
+    def _lookup_learned_value(self, event: Dict) -> float:
+        key = (event.get('type'), (event.get('tags') or [None])[0])
+        v   = self.value_table.get(key)
+        return (v[0] / max(1, v[1])) if v else 0.0
+
+    def _prediction_error(self, event: Dict) -> float:
         a = event.get('type')
         if a in self.forward_model:
-            model = self.forward_model[a]
             actual = event.get('tags', [])
             if actual:
-                tag = actual[0]
-                prob = model.get(tag, 0.0)
-                return 1.0 - prob
+                return 1.0 - self.forward_model[a].get(actual[0], 0.0)
         return 0.0
-    
-    def _reward_to_emotion_delta(self, reward: float, 
-                                 event: Dict[str, Any]) -> Dict[str, float]:
-        """Convert reward to emotion changes"""
-        joy = max(0.0, reward) * 0.2
-        fear = max(0.0, -reward) * 0.3
-        surprise = self._novelty_for_event(event) * 0.2
-        return {'joy': joy, 'fear': fear, 'surprise': surprise}
-    
-    def _update_learning(self, event: Dict[str, Any], 
-                        payload: Dict[str, Any], reward: float):
-        """Update value table and forward model"""
-        key = (event.get('type'), event.get('tags', [None])[0])
+
+    def _update_learning(self,
+                         event: Dict,
+                         payload: Dict,
+                         reward: float) -> None:
+        # Value table update
+        key = (event.get('type'), (event.get('tags') or [None])[0])
         if key not in self.value_table:
             self.value_table[key] = [0.0, 0]
         self.value_table[key][0] += reward
         self.value_table[key][1] += 1
-        
-        # Update forward model
+
+        # Forward model update (transition frequency → probability)
         action = event.get('type')
-        outcome_tag = event.get('tags', ['none'])[0]
+        tag    = (event.get('tags') or ['none'])[0]
         if action not in self.forward_model:
             self.forward_model[action] = {}
-        
-        self.forward_model[action][outcome_tag] = \
-            self.forward_model[action].get(outcome_tag, 0) + 1
-        
+        self.forward_model[action][tag] = \
+            self.forward_model[action].get(tag, 0) + 1
         total = sum(self.forward_model[action].values())
         for k in self.forward_model[action]:
-            self.forward_model[action][k] = self.forward_model[action][k] / total
-    
-    def _store_continual_experience(self, event: Dict[str, Any], 
-                                   reward: float, 
-                                   context: Optional[Dict] = None):
-        """Store experience for continual learning (Avalanche)"""
-        experience = {
-            'event': event,
-            'reward': reward,
-            'context': context,
-            'task': self.current_task,
-            'timestamp': time.time()
+            self.forward_model[action][k] /= total
+
+    def _store_continual_experience(self,
+                                    event: Dict,
+                                    reward: float,
+                                    context: Optional[Dict]) -> None:
+        self.continual_buffer.append({
+            'event':     event,
+            'reward':    reward,
+            'context':   context,
+            'task':      self.current_task,
+            'timestamp': time(),
+        })
+
+    def _perception_to_context(self,
+                               perception: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert a cognitive-loop perception dict to the context format
+        expected by _build_observation_from_context in world_model.py.
+        """
+        state = perception.get('state', {})
+        return {
+            'health':   state.get('health',  20.0),
+            'hunger':   state.get('hunger',  20.0),
+            'emotions': state.get('emotions', {}),
+            'novelty':  perception.get('novelty', 0.0),
+            'urgency':  perception.get('urgency', 0.0),
         }
-        
-        self.continual_buffer.append(experience)
-    
-    def _event_key(self, event: Dict[str, Any]) -> str:
-        """Generate unique key for event"""
-        et = event.get('type', '')
-        tags = ','.join(event.get('tags', []))
-        return f"{et}|{tags}"
-    
-    def predict_value_of_action(self, action: Dict[str, Any]) -> float:
-        """Predict value of an action (for planning)"""
-        action_type = action.get('type')
-        if action_type in self.forward_model:
-            total_value = 0.0
-            for outcome, prob in self.forward_model[action_type].items():
-                key = (action_type, outcome)
-                if key in self.value_table:
-                    val, cnt = self.value_table[key]
-                    avg_val = val / max(1, cnt)
-                    total_value += prob * avg_val
-            return total_value
-        return 0.0
-    
-    def get_continual_buffer(self, task: Optional[int] = None, 
-                            limit: Optional[int] = None) -> List[Dict]:
-        """Get experiences for continual learning replay"""
-        if task is None:
-            experiences = list(self.continual_buffer)
-        else:
-            experiences = [
-                exp for exp in self.continual_buffer 
-                if exp['task'] == task
-            ]
-        
-        if limit:
-            experiences = experiences[-limit:]
-        
-        return experiences
-    
-    def switch_task(self, new_task: int):
-        """Switch to new task (for continual learning)"""
-        self.current_task = new_task
-        self.task_labels[new_task] = time.time()
-    
-    def get_pattern_summary(self) -> Dict[str, Any]:
-        """Get summary of all recognized patterns"""
-        summary = {}
-        
-        for pattern_type in self.pattern_recognizer.pattern_types:
-            summary[pattern_type] = self.pattern_recognizer.get_pattern_stats(
-                pattern_type
-            )
-        
-        return summary
-    
-    # ... existing code above
 
-    def process_language_input(self, text, context):
+    def _action_novelty_bonus(self, action: Dict) -> float:
         """
-        Wrapper: routes language processing through existing subsystems.
-        Returns an empty string if no valid response is produced.
+        Small bonus for actions the agent hasn't tried much.
+        Uses the forward model as a proxy for action frequency.
         """
-        try:
-            # if you already have something like self.language.process_input or self.language_model
-            if hasattr(self, "language") and hasattr(self.language, "process_input"):
-                response = self.language.process_input(text, context)
-            elif hasattr(self, "language_model"):
-                response = self.language_model.generate_response(text, context)
-            else:
-                response = None
+        atype = action.get('type', '')
+        if atype not in self.forward_model:
+            return 1.0   # never tried → maximum novelty bonus
+        total_uses = sum(self.forward_model[atype].values())
+        return 1.0 / (1.0 + total_uses)
 
-            # Return empty string if no response (agent stays silent)
-            return response if response else ""
-        except Exception as e:
-            print(f"[BrainCore] Language input error: {e}")
-            return ""
-# Add to BrainCore for decision making
-class GodBrainExtension:
-    """
-    Extends BrainCore with god-specific decision making
-    """
-    
-    @staticmethod
-    def decide_god_ability(
-        brain,
-        obs: np.ndarray,
-        available_abilities: Dict[str, bool]
-    ) -> int:
+    def _reward_to_emotion_delta(self,
+                                  reward: float,
+                                  event: Dict) -> Dict[str, float]:
         """
-        Decide which god ability to use based on observation
-        Returns ability index or -1 for none
+        Convert a scalar reward + event into an emotion delta dict.
+        Used by integrate_world_model_with_agent in world_model.py as a
+        fallback when the RewardSystem path is not taken.
         """
-        if not hasattr(brain, 'god_ability_policy'):
-            return -1
-        
-        # Simple heuristic for now (can be learned)
-        # Check if in combat
-        nearby_enemies = obs[7] if len(obs) > 7 else 0.0
-        health_percent = obs[0] if len(obs) > 0 else 1.0
-        
-        ability_names = list(available_abilities.keys())
-        
-        # Combat situation
-        if nearby_enemies > 0.3:
-            # Use offensive ability
-            for i, name in enumerate(ability_names):
-                if available_abilities[name] and 'attack' in name.lower():
-                    return i
-        
-        # Low health
-        if health_percent < 0.3:
-            # Use defensive/healing ability
-            for i, name in enumerate(ability_names):
-                if available_abilities[name] and ('heal' in name.lower() or 'life' in name.lower()):
-                    return i
-        
-        return -1  # No ability
-
-
-# Reward shaping for god abilities
-def compute_god_ability_reward(
-    ability_used: str,
-    outcome: Dict[str, Any],
-    god_type: str
-) -> float:
-    """
-    Compute reward for using god abilities
-    Helps train the AI to use abilities effectively
-    """
-    reward = 0.0
-    
-    # Successful ability use
-    if outcome.get('ability_success', False):
-        reward += 2.0
-    
-    # Damage dealt with ability
-    damage = outcome.get('ability_damage', 0.0)
-    reward += damage * 0.1
-    
-    # Healing from ability
-    healing = outcome.get('ability_healing', 0.0)
-    reward += healing * 0.15
-    
-    # Tactical positioning (e.g., creaking going underground to ambush)
-    if 'underground' in ability_used or 'ceiling' in ability_used:
-        if outcome.get('surprise_attack', False):
-            reward += 5.0
-    
-    return reward
+        novelty = self.pattern_recognizer.get_novelty(
+            self._classify_event_pattern_type(event), event
+        )
+        return {
+            'joy':      max(0.0,  reward) * 0.2,
+            'fear':     max(0.0, -reward) * 0.3,
+            'surprise': novelty * 0.2,
+        }

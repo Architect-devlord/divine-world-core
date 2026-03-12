@@ -1,340 +1,430 @@
-# ------------------------------------------------------------------------------
-# ai_core/reward_system.py - Unified intrinsic reward with RND/ICM
-# ------------------------------------------------------------------------------
+# ai_core/reward_system.py
 """
-Unified reward system integrating:
-- Random Network Distillation (RND) for curiosity
-- Inverse/Forward models (ICM)
-- Action entropy tracking
-- Survival rewards
-- TorchRL integration support
+Unified Reward System
+=====================
+Philosophy:
+  Any agent experience (perception/action/thought/memory/language)
+      -> personality-weighted reward
+      -> immediate emotion delta  (applied inside apply_signal)
+      -> per-event personality pressure (applied inside apply_signal)
+      -> slow personality drift from sustained emotions  (_apply_drift, every DRIFT_EVERY signals)
+
+The same event genuinely feels different to different agents
+because every weight is derived from personality traits.
+
+Changes vs original
+-------------------
+* apply_signal() now also applies signal.personality_pressure to personality —
+  this was computed but never used before.
+* apply_signal() is the SINGLE place that touches emotion_system and personality
+  after a compute_reward() call.  Callers (brain_core, cognitive_loop) must NOT
+  apply emotion deltas manually; they should call apply_signal() instead.
 """
 import numpy as np
 import torch
 import torch.nn as nn
 from collections import deque, defaultdict
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
+import logging
+
+log = logging.getLogger("reward_system")
+
 
 class RandomNetworkDistillation(nn.Module):
-    """
-    RND for exploration bonus based on prediction error.
-    """
     def __init__(self, obs_dim: int, hidden_dim: int = 256):
         super().__init__()
-        
-        # Target network (fixed, random)
-        self.target_net = nn.Sequential(
-            nn.Linear(obs_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim // 2)
-        )
-        
-        # Predictor network (trained)
-        self.predictor_net = nn.Sequential(
-            nn.Linear(obs_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim // 2)
-        )
-        
-        # Freeze target network
-        for param in self.target_net.parameters():
-            param.requires_grad = False
-        
-        self.optimizer = torch.optim.Adam(self.predictor_net.parameters(), lr=1e-4)
-    
-    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Returns (target_features, predicted_features)"""
-        with torch.no_grad():
-            target = self.target_net(obs)
-        predicted = self.predictor_net(obs)
-        return target, predicted
-    
-    def compute_intrinsic_reward(self, obs: torch.Tensor) -> float:
-        """Compute RND bonus (prediction error)"""
-        target, predicted = self.forward(obs)
-        error = torch.mean((target - predicted) ** 2)
-        return error.item()
-    
-    def update(self, obs: torch.Tensor):
-        """Train predictor network"""
-        target, predicted = self.forward(obs)
-        loss = nn.functional.mse_loss(predicted, target)
-        
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        
+        self.target = nn.Sequential(
+            nn.Linear(obs_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2))
+        self.predictor = nn.Sequential(
+            nn.Linear(obs_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2))
+        for p in self.target.parameters(): p.requires_grad = False
+        self.opt = torch.optim.Adam(self.predictor.parameters(), lr=1e-4)
+
+    def compute_bonus(self, obs: torch.Tensor) -> float:
+        with torch.no_grad(): t = self.target(obs)
+        return torch.mean((t - self.predictor(obs)) ** 2).item()
+
+    def update(self, obs: torch.Tensor) -> float:
+        with torch.no_grad(): t = self.target(obs)
+        loss = nn.functional.mse_loss(self.predictor(obs), t)
+        self.opt.zero_grad(); loss.backward(); self.opt.step()
         return loss.item()
 
 
 class ICMModule(nn.Module):
-    """
-    Intrinsic Curiosity Module with forward and inverse models.
-    """
     def __init__(self, obs_dim: int, action_dim: int, hidden_dim: int = 256):
         super().__init__()
-        
-        # Feature encoder (shared)
-        self.encoder = nn.Sequential(
-            nn.Linear(obs_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim // 2)
-        )
-        
-        # Forward model: predicts next state features from current + action
-        self.forward_model = nn.Sequential(
-            nn.Linear(hidden_dim // 2 + action_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim // 2)
-        )
-        
-        # Inverse model: predicts action from state transition
-        self.inverse_model = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, action_dim)
-        )
-        
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
-    
-    def encode(self, obs: torch.Tensor) -> torch.Tensor:
-        """Encode observation to feature space"""
-        return self.encoder(obs)
-    
-    def predict_next_state(self, obs_features: torch.Tensor, 
-                          action: torch.Tensor) -> torch.Tensor:
-        """Forward model: predict next state features"""
-        x = torch.cat([obs_features, action], dim=-1)
-        return self.forward_model(x)
-    
-    def predict_action(self, obs_features: torch.Tensor,
-                      next_obs_features: torch.Tensor) -> torch.Tensor:
-        """Inverse model: predict action from transition"""
-        x = torch.cat([obs_features, next_obs_features], dim=-1)
-        return self.inverse_model(x)
-    
-    def compute_intrinsic_reward(self, obs: torch.Tensor, action: torch.Tensor,
-                                next_obs: torch.Tensor) -> float:
-        """Compute curiosity bonus (forward model prediction error)"""
-        obs_feat = self.encode(obs)
-        next_obs_feat = self.encode(next_obs)
-        pred_next_feat = self.predict_next_state(obs_feat, action)
-        
-        error = torch.mean((pred_next_feat - next_obs_feat) ** 2)
-        return error.item()
-    
-    def update(self, obs: torch.Tensor, action: torch.Tensor,
-              next_obs: torch.Tensor):
-        """Train ICM (forward + inverse models)"""
-        obs_feat = self.encode(obs)
-        next_obs_feat = self.encode(next_obs)
-        
-        # Forward model loss
-        pred_next_feat = self.predict_next_state(obs_feat, action)
-        forward_loss = nn.functional.mse_loss(pred_next_feat, next_obs_feat)
-        
-        # Inverse model loss
-        pred_action = self.predict_action(obs_feat, next_obs_feat)
-        inverse_loss = nn.functional.mse_loss(pred_action, action)
-        
-        # Combined loss
-        loss = forward_loss + 0.2 * inverse_loss
-        
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        
-        return {'total': loss.item(), 'forward': forward_loss.item(), 
-                'inverse': inverse_loss.item()}
+        fd = hidden_dim // 2
+        self.encoder = nn.Sequential(nn.Linear(obs_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, fd))
+        self.fwd     = nn.Sequential(nn.Linear(fd + action_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, fd))
+        self.inv     = nn.Sequential(nn.Linear(fd * 2, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, action_dim))
+        self.opt = torch.optim.Adam(self.parameters(), lr=1e-4)
+
+    def compute_bonus(self, obs, action, next_obs) -> float:
+        f = self.encoder(obs); nf = self.encoder(next_obs)
+        pf = self.fwd(torch.cat([f, action], dim=-1))
+        return torch.mean((pf - nf.detach()) ** 2).item()
+
+    def update(self, obs, action, next_obs) -> Dict[str, float]:
+        f = self.encoder(obs); nf = self.encoder(next_obs).detach()
+        fl = nn.functional.mse_loss(self.fwd(torch.cat([f, action], dim=-1)), nf)
+        il = nn.functional.mse_loss(self.inv(torch.cat([f, nf], dim=-1)), action)
+        loss = fl + 0.2 * il
+        self.opt.zero_grad(); loss.backward(); self.opt.step()
+        return {'total': loss.item(), 'forward': fl.item(), 'inverse': il.item()}
 
 
 class ActionEntropyTracker:
-    """Track action diversity for exploration bonus"""
-    def __init__(self, window_size: int = 1000):
-        self.action_counts = defaultdict(int)
-        self.total_actions = 0
-        self.window = deque(maxlen=window_size)
-    
+    def __init__(self, window: int = 1000):
+        self._counts: Dict[tuple, int] = defaultdict(int)
+        self._window: deque = deque(maxlen=window)
+        self._total = 0
+
     def update(self, action: np.ndarray):
-        """Record action"""
-        action_key = tuple(np.round(action, 2))
-        
-        if len(self.window) == self.window.maxlen:
-            old_action = self.window[0]
-            self.action_counts[old_action] -= 1
-            self.total_actions -= 1
-        
-        self.window.append(action_key)
-        self.action_counts[action_key] += 1
-        self.total_actions += 1
-    
-    def get_entropy_bonus(self, action: np.ndarray) -> float:
-        """Higher bonus for rare actions"""
-        if self.total_actions == 0:
-            return 0.5
-        
-        action_key = tuple(np.round(action, 2))
-        count = self.action_counts.get(action_key, 0)
-        frequency = count / self.total_actions
-        
-        if frequency == 0:
-            return 1.0
-        
-        entropy = -np.log(frequency + 1e-8)
-        normalized = np.clip(entropy / 10.0, 0.0, 1.0)
-        return normalized
+        key = tuple(np.round(action, 2))
+        if len(self._window) == self._window.maxlen:
+            old = self._window[0]; self._counts[old] -= 1; self._total -= 1
+        self._window.append(key); self._counts[key] += 1; self._total += 1
+
+    def bonus(self, action: np.ndarray) -> float:
+        if self._total == 0: return 0.5
+        freq = self._counts.get(tuple(np.round(action, 2)), 0) / self._total
+        return float(np.clip(-np.log(freq + 1e-8) / 10.0, 0.0, 1.0))
 
 
-class ImprovedRewardSystem:
+class RewardSignal:
+    """Structured output of compute_reward(). Always pass to apply_signal()."""
+    __slots__ = ('total','curiosity','exploration','survival',
+                 'task','social','aesthetic','emotion_deltas','personality_pressure')
+    def __init__(self, **kw):
+        for k in self.__slots__: setattr(self, k, kw.get(k, 0.0))
+    def to_dict(self): return {k: getattr(self, k) for k in self.__slots__}
+    def __repr__(self):
+        return f"RewardSignal(total={self.total:.3f}, curiosity={self.curiosity:.3f}, survival={self.survival:.3f})"
+
+
+class RewardSystem:
     """
-    Unified reward system combining:
-    - RND curiosity
-    - ICM forward/inverse models
-    - Action entropy (exploration)
-    - Survival rewards
-    - Persona-weighted preferences
+    Personality-aware reward system — nervous system connecting all subsystems.
+
+    Every agent experience passes through here:
+      perception, action, language, memory recall, internal thought, file reading
+
+    Personality traits determine weights:
+      curious agent   -> more reward from novelty
+      neurotic agent  -> more fear/pain from danger
+      social agent    -> more reward from language/interaction
+      bold agent      -> survival penalties are dampened
+      open agent      -> more reward from creative/exploratory actions
+
+    Emotion -> personality drift (slow, irreversible):
+      sustained joy    -> openness, conscientiousness nudge up
+      sustained fear   -> neuroticism up, boldness down
+      sustained trust  -> agreeableness, sociability up
+      sustained surprise -> curiosity, openness up
+      sustained sadness  -> neuroticism up, extraversion down
+
+    apply_signal() is the SINGLE authoritative path for updating both
+    emotion_system and personality after each compute_reward() call.
+    Do NOT apply emotion deltas manually elsewhere.
     """
-    
-    def __init__(self, obs_dim: int, action_dim: int, persona: np.ndarray,
-                 use_rnd: bool = True, use_icm: bool = True):
-        self.obs_dim = obs_dim
-        self.action_dim = action_dim
-        self.persona = persona
-        
-        # Curiosity modules
+
+    DRIFT_EVERY = 200    # signals between sustained-emotion drift steps
+    DRIFT_RATE  = 0.002  # max personality change per drift (keeps it slow)
+
+    # Per-event personality pressure learning rate — much faster than drift
+    # so individual strong events can nudge personality noticeably but not wildly.
+    PRESSURE_LR = 0.0005
+
+    def __init__(self, obs_dim: int, action_dim: int,
+                 personality, emotion_system,
+                 use_rnd: bool = True, use_icm: bool = True,
+                 device: str = None):
+        """
+        Args:
+            obs_dim:        Observation vector dimension.
+            action_dim:     Action vector dimension.
+            personality:    Personality instance (must have .traits dict and
+                            .apply_update(delta_array, lr) method).
+            emotion_system: EmotionSystem instance (must have .add(emotion, value)).
+            use_rnd:        Enable Random Network Distillation curiosity bonus.
+            use_icm:        Enable Intrinsic Curiosity Module bonus.
+            device:         Torch device string. Auto-detected if None.
+        """
+        self.personality    = personality
+        self.emotion_system = emotion_system
+        self.obs_dim        = obs_dim
+        self.action_dim     = action_dim
+        self.device = torch.device(device or ('cuda' if torch.cuda.is_available() else 'cpu'))
+
         self.use_rnd = use_rnd
         self.use_icm = use_icm
-        
-        if use_rnd:
-            self.rnd = RandomNetworkDistillation(obs_dim)
-        
-        if use_icm:
-            self.icm = ICMModule(obs_dim, action_dim)
-        
-        # Exploration tracking
+        if use_rnd: self.rnd = RandomNetworkDistillation(obs_dim).to(self.device)
+        if use_icm: self.icm = ICMModule(obs_dim, action_dim).to(self.device)
         self.entropy_tracker = ActionEntropyTracker()
-        
-        # Survival tracking
-        self.alive_ticks = 0
-        self.last_health = 20.0
-        
-        # Persona influences reward weights
-        self.curiosity_weight = 0.3 + 0.2 * persona[6]  # curiosity trait
-        self.entropy_weight = 0.2
-        self.survival_weight = 0.3
-        self.task_weight = 0.2
-        
-        # History for emotion state
-        self.reward_history = deque(maxlen=100)
-    
-    def compute_reward(self, obs: torch.Tensor, action: torch.Tensor,
-                      next_obs: torch.Tensor, outcome: Dict[str, Any]) -> Tuple[float, Dict]:
+
+        self.alive_ticks  = 0
+        self.last_health  = 20.0
+        self.reward_history: deque = deque(maxlen=500)
+        self._pressure: Dict[str, float] = defaultdict(float)
+        self._since_drift = 0
+        log.info(f"RewardSystem ready on {self.device}")
+
+    # ------------------------------------------------------------------
+    # Primary scoring
+    # ------------------------------------------------------------------
+
+    def compute_reward(self,
+                       event:    Dict[str, Any],
+                       obs:      Optional[torch.Tensor] = None,
+                       action:   Optional[torch.Tensor] = None,
+                       next_obs: Optional[torch.Tensor] = None,
+                       outcome:  Optional[Dict[str, Any]] = None) -> RewardSignal:
         """
-        Compute total reward with breakdown.
-        
-        Returns:
-            total_reward: float
-            info_dict: breakdown and emotion state
+        Score any agent experience. Called for EVERY event type:
+        perception, action, language, memory recall, internal thought, file processing.
+
+        Does NOT update emotion_system or personality directly —
+        call apply_signal(signal) immediately after to apply all side-effects.
         """
-        
-        # 1. Curiosity rewards
-        curiosity_reward = 0.0
-        if self.use_rnd:
-            rnd_bonus = self.rnd.compute_intrinsic_reward(next_obs)
-            curiosity_reward += 0.5 * rnd_bonus
-        
-        if self.use_icm:
-            icm_bonus = self.icm.compute_intrinsic_reward(obs, action, next_obs)
-            curiosity_reward += 0.5 * icm_bonus
-        
-        curiosity_reward = self.curiosity_weight * np.tanh(curiosity_reward)
-        
-        # 2. Exploration bonus
-        action_np = action.detach().cpu().numpy().flatten()
-        self.entropy_tracker.update(action_np)
-        entropy_bonus = self.entropy_tracker.get_entropy_bonus(action_np)
-        entropy_reward = self.entropy_weight * entropy_bonus
-        
-        # 3. Survival reward
-        health = outcome.get('health', self.last_health)
-        is_dead = outcome.get('is_dead', False)
-        
-        survival_reward = 0.0
+        outcome  = outcome or {}
+        payload  = event.get('payload', {})
+        tags     = event.get('tags', [])
+        etype    = event.get('type', 'unknown')
+        traits   = self.personality.traits
+        emotions = self.emotion_system.snapshot()
+
+        # 1. CURIOSITY (RND + ICM, scaled by curiosity trait)
+        raw_curiosity = 0.0
+        if obs is not None:
+            ob = obs.to(self.device)
+            if self.use_rnd:
+                raw_curiosity += 0.5 * self.rnd.compute_bonus(ob)
+                self.rnd.update(ob)
+            if self.use_icm and action is not None and next_obs is not None:
+                ac, no = action.to(self.device), next_obs.to(self.device)
+                raw_curiosity += 0.5 * self.icm.compute_bonus(ob, ac, no)
+                self.icm.update(ob, ac, no)
+        c_w = 0.2 + 0.3 * max(0.0, traits.get('curiosity', 0.0))
+        curiosity_r = float(np.tanh(c_w * raw_curiosity))
+
+        # 2. EXPLORATION (action entropy, scaled by openness)
+        entropy_r = 0.0
+        if action is not None:
+            anp = action.detach().cpu().numpy().flatten()
+            self.entropy_tracker.update(anp)
+            e_w = 0.1 + 0.2 * max(0.0, traits.get('openness', 0.0))
+            entropy_r = e_w * self.entropy_tracker.bonus(anp)
+
+        # 3. SURVIVAL (health/hunger/death, scaled by neuroticism/boldness)
+        health  = float(outcome.get('health',  payload.get('health',  self.last_health)))
+        is_dead = bool(outcome.get('is_dead',  payload.get('is_dead', False)))
+        survival_r = 0.0
         if is_dead:
-            survival_reward = -10.0
-            self.alive_ticks = 0
+            survival_r = -10.0; self.alive_ticks = 0
         else:
             self.alive_ticks += 1
-            health_delta = health - self.last_health
-            survival_reward += health_delta * 0.1
-            
-            if self.alive_ticks % 1000 == 0:
-                survival_reward += 1.0
-        
-        survival_reward = self.survival_weight * survival_reward
+            survival_r += (health - self.last_health) * 0.15
+            survival_r += float(payload.get('hunger_delta', 0.0)) * 0.05
+            if payload.get('danger_increased'): survival_r -= 0.4
+            if self.alive_ticks % 500 == 0:     survival_r += 1.0
+        s_scale = 0.3 + 0.15 * traits.get('neuroticism',0.0) - 0.10 * traits.get('boldness',0.0)
+        survival_r *= s_scale
         self.last_health = health
-        
-        # 4. Task-specific reward
-        task_reward = self.task_weight * outcome.get('task_reward', 0.0)
-        
-        # Total reward
-        total_reward = curiosity_reward + entropy_reward + survival_reward + task_reward
-        
-        # Update curiosity modules
-        if self.use_rnd:
-            self.rnd.update(next_obs)
-        if self.use_icm:
-            self.icm.update(obs, action, next_obs)
-        
-        # Track history
-        self.reward_history.append(total_reward)
-        
-        # Info dict
-        info = {
-            'total': total_reward,
-            'curiosity': curiosity_reward,
-            'exploration': entropy_reward,
-            'survival': survival_reward,
-            'task': task_reward,
-            'emotion_state': self._compute_emotion_label()
-        }
-        
-        return total_reward, info
-    
-    def _compute_emotion_label(self) -> str:
-        """Label current state for debugging"""
-        if not self.reward_history:
-            return "neutral"
-        
-        recent_avg = np.mean(list(self.reward_history)[-20:])
-        
-        if recent_avg > 0.5:
-            return "satisfied"
-        elif recent_avg > 0.0:
-            return "content"
-        elif recent_avg > -0.5:
-            return "struggling"
-        else:
-            return "distressed"
-    
-    def save(self, path: str):
-        """Save reward system state"""
-        state = {}
-        if self.use_rnd:
-            state['rnd'] = self.rnd.state_dict()
-        if self.use_icm:
-            state['icm'] = self.icm.state_dict()
-        torch.save(state, path)
-    
-    def load(self, path: str):
-        """Load reward system state"""
-        state = torch.load(path, map_location='cpu')
-        if self.use_rnd and 'rnd' in state:
-            self.rnd.load_state_dict(state['rnd'])
-        if self.use_icm and 'icm' in state:
-            self.icm.load_state_dict(state['icm'])
 
+        # 4. TASK (conscientiousness scales task reward)
+        t_scale = 0.2 + 0.1 * traits.get('conscientiousness', 0.0)
+        task_r  = t_scale * float(outcome.get('task_reward', payload.get('task_reward', 0.0)))
+
+        # 5. SOCIAL (language/interaction, scaled by sociability + agreeableness)
+        social_r = 0.0
+        if 'language' in tags or 'chat' in tags or etype in ('language_input','autonomous_speech'):
+            soc = traits.get('sociability',0.0) + traits.get('agreeableness',0.0)
+            social_r = soc * 0.15
+            if payload.get('success'): social_r += 0.1
+
+        # 6. AESTHETIC/CREATIVE (build/craft/express, scaled by openness)
+        aesthetic_r = 0.0
+        if etype in ('craft','build','language_output','autonomous_speech','file_processed'):
+            op = max(0.0, traits.get('openness', 0.0))
+            aesthetic_r = op * 0.1
+            if payload.get('success'): aesthetic_r += op * 0.15
+
+        # 7. EMOTION MODULATION (current feelings bias reward perception)
+        joy_boost  = 1.0 + 0.2 * emotions.get('joy',  0.0)
+        fear_boost = 1.0 + 0.2 * emotions.get('fear', 0.0)
+        pos = (curiosity_r + entropy_r + task_r + social_r + aesthetic_r) * joy_boost
+        neg = min(0.0, survival_r) * fear_boost
+        survival_r = max(0.0, survival_r) + neg
+        total = pos + survival_r
+
+        # 8. EMOTION DELTAS
+        ed = self._emotion_deltas(total, curiosity_r, survival_r,
+                                   social_r, aesthetic_r, is_dead, payload, traits)
+
+        # 9. PERSONALITY PRESSURE (per-event nudge — applied in apply_signal)
+        pp = self._personality_pressure(total, ed, traits)
+
+        signal = RewardSignal(
+            total=float(total), curiosity=float(curiosity_r),
+            exploration=float(entropy_r), survival=float(survival_r),
+            task=float(task_r), social=float(social_r),
+            aesthetic=float(aesthetic_r),
+            emotion_deltas=ed, personality_pressure=pp)
+
+        self.reward_history.append(total)
+        self._accumulate(ed)
+        self._since_drift += 1
+        if self._since_drift >= self.DRIFT_EVERY:
+            self._apply_drift(); self._since_drift = 0
+
+        return signal
+
+    # ------------------------------------------------------------------
+    # Side-effect application  (SINGLE unified path)
+    # ------------------------------------------------------------------
+
+    def apply_signal(self, signal: RewardSignal) -> None:
+        """
+        Apply ALL side-effects of a RewardSignal to the agent's emotion and
+        personality systems.  This is the ONE place these are updated after
+        a compute_reward() call.
+
+        1. Emotion deltas  — immediate, every call.
+        2. Personality pressure — per-event micro-nudge, every call.
+
+        The sustained-emotion drift (_apply_drift) is handled inside
+        compute_reward() on a DRIFT_EVERY cadence and is separate from this.
+        """
+        # 1. Apply emotion deltas
+        if isinstance(signal.emotion_deltas, dict):
+            for emotion, delta in signal.emotion_deltas.items():
+                if delta != 0.0:
+                    self.emotion_system.add(emotion, float(delta))
+
+        # 2. Apply per-event personality pressure
+        # personality_pressure is a dict[trait_name -> float delta].
+        # We convert it to the array format personality.apply_update() expects.
+        if isinstance(signal.personality_pressure, dict) and signal.personality_pressure:
+            try:
+                traits_list = self.personality.TRAITS  # ordered list of trait names
+                delta_array = np.zeros(len(traits_list), dtype=np.float32)
+                for i, trait in enumerate(traits_list):
+                    delta_array[i] = signal.personality_pressure.get(trait, 0.0)
+                # Only nudge if there's meaningful signal — avoids noise on zero-pressure events
+                if np.any(delta_array != 0.0):
+                    self.personality.apply_update(delta_array, lr=self.PRESSURE_LR)
+            except Exception as e:
+                log.debug(f"apply_signal: personality pressure update skipped: {e}")
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _emotion_deltas(self, total, curiosity, survival, social,
+                         aesthetic, is_dead, payload, traits) -> Dict[str, float]:
+        d: Dict[str, float] = {}
+        n = traits.get('neuroticism', 0.0)
+        a = traits.get('agreeableness', 0.0)
+        o = traits.get('openness', 0.0)
+        if total > 0:    d['joy']     = min(0.3, total * 0.15)
+        else:            d['sadness'] = min(0.3, abs(total) * 0.1 * (1.0 + n))
+        if curiosity > 0.05:
+            d['anticipation'] = curiosity * 0.2
+            d['surprise']     = curiosity * 0.1
+        if survival < -0.1:
+            d['fear']  = min(0.5, abs(survival) * 0.3 * (1.0 + n))
+            d['anger'] = min(0.3, abs(survival) * 0.15)
+        if is_dead: d['fear'] = 1.0; d['sadness'] = 1.0
+        if social > 0.05:
+            d['trust'] = social * 0.3 * (1.0 + a)
+            d['joy']   = d.get('joy', 0.0) + social * 0.1
+        if aesthetic > 0.02:
+            amp = 1.0 + max(0.0, o)
+            d['joy']          = d.get('joy', 0.0) + aesthetic * 0.15 * amp
+            d['anticipation'] = d.get('anticipation', 0.0) + aesthetic * 0.05
+        if payload.get('danger_increased'):
+            d['disgust'] = 0.1 + 0.1 * n
+        return d
+
+    def _personality_pressure(self, total, ed, traits) -> Dict[str, float]:
+        p: Dict[str, float] = {}
+        joy   = ed.get('joy',         0.0)
+        fear  = ed.get('fear',        0.0)
+        trust = ed.get('trust',       0.0)
+        surp  = ed.get('surprise',    0.0)
+        anti  = ed.get('anticipation',0.0)
+        if total > 0.1:
+            p['openness'] = total * 0.01; p['conscientiousness'] = total * 0.005
+        if fear > 0.05:
+            p['neuroticism'] = fear * 0.02; p['boldness'] = -fear * 0.01
+        if trust > 0.05:
+            p['agreeableness'] = trust * 0.015; p['sociability'] = trust * 0.01
+        if surp + anti > 0.05:
+            p['curiosity'] = (surp + anti) * 0.01
+            p['openness']  = p.get('openness', 0.0) + (surp + anti) * 0.005
+        if total < -0.2:
+            p['neuroticism']  = p.get('neuroticism', 0.0) + abs(total) * 0.01
+            p['extraversion'] = -abs(total) * 0.005
+        if total > 0 and self.alive_ticks > 100:
+            p['boldness'] = p.get('boldness', 0.0) + 0.001
+        return p
+
+    def _accumulate(self, ed: Dict[str, float]):
+        for k in ('joy','fear','trust','surprise','anticipation','sadness'):
+            self._pressure[k] += ed.get(k, 0.0)
+
+    def _apply_drift(self):
+        """
+        Nudge personality based on sustained emotional state.
+        Intentionally slow — personality should not change overnight.
+        This runs every DRIFT_EVERY signals (i.e. roughly every few hundred events).
+        """
+        n  = max(1, self._since_drift)
+        p  = {k: self._pressure[k] / n for k in self._pressure}
+        ti = {t: i for i, t in enumerate(self.personality.TRAITS)}
+        drift = np.zeros(len(self.personality.TRAITS), dtype=np.float32)
+        drift[ti['openness']]          += p.get('joy',         0) * 0.3
+        drift[ti['conscientiousness']] += p.get('joy',         0) * 0.2
+        drift[ti['neuroticism']]       += p.get('fear',        0) * 0.4
+        drift[ti['boldness']]          -= p.get('fear',        0) * 0.2
+        drift[ti['agreeableness']]     += p.get('trust',       0) * 0.3
+        drift[ti['sociability']]       += p.get('trust',       0) * 0.2
+        drift[ti['curiosity']]         += p.get('surprise',    0) * 0.3
+        drift[ti['openness']]          += p.get('surprise',    0) * 0.2
+        drift[ti['openness']]          += p.get('anticipation',0) * 0.15
+        drift[ti['neuroticism']]       += p.get('sadness',     0) * 0.2
+        drift[ti['extraversion']]      -= p.get('sadness',     0) * 0.1
+        self.personality.apply_update(drift, lr=self.DRIFT_RATE)
+        self._pressure = defaultdict(float)
+        log.debug(f"Personality drift applied: {self.personality.traits}")
+
+    # ------------------------------------------------------------------
+    # Utility
+    # ------------------------------------------------------------------
+
+    def recent_average(self, n: int = 50) -> float:
+        recent = list(self.reward_history)[-n:]
+        return float(np.mean(recent)) if recent else 0.0
+
+    def emotional_state_label(self) -> str:
+        avg = self.recent_average(20)
+        if avg >  0.5: return "satisfied"
+        if avg >  0.0: return "content"
+        if avg > -0.5: return "struggling"
+        return "distressed"
+
+    def save(self, path: str):
+        s = {}
+        if self.use_rnd: s['rnd'] = self.rnd.state_dict()
+        if self.use_icm: s['icm'] = self.icm.state_dict()
+        torch.save(s, path)
+
+    def load(self, path: str):
+        s = torch.load(path, map_location='cpu')
+        if self.use_rnd and 'rnd' in s: self.rnd.load_state_dict(s['rnd'])
+        if self.use_icm and 'icm' in s: self.icm.load_state_dict(s['icm'])

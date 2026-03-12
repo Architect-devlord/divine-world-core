@@ -5,6 +5,7 @@ import com.divineworld.commands.DivineCommands;
 import com.divineworld.commands.OracleCommandRegistrar;
 import com.divineworld.entity.ModEntities;
 import com.divineworld.events.BreedingEventHandler;
+import com.divineworld.events.ProximityChatHandler;
 import com.divineworld.network.NetworkHandler;
 import com.divineworld.oracle.LLMOracleBrain;
 import com.divineworld.oracle.OllamaManager;
@@ -62,6 +63,7 @@ public class DWMod {
         forgeBus.register(BreedingEventHandler.class);
         forgeBus.register(TaggedEntitySystem.class);
         forgeBus.register(GenesisManager.class);
+        forgeBus.register(ProximityChatHandler.class);
         forgeBus.register(this);
 
         LOGGER.info("=".repeat(60));
@@ -230,11 +232,22 @@ public class DWMod {
     }
 
     public void scheduleRepeatingTask(java.util.function.BooleanSupplier task, long delayTicks, long periodTicks) {
-        scheduler.scheduleAtFixedRate(() -> {
+        // We need to capture the future so we can cancel it when the task signals done.
+        // ScheduledFuture is assigned after scheduleAtFixedRate returns, so we wrap it
+        // in a single-element array to allow the lambda to reference it.
+        java.util.concurrent.ScheduledFuture<?>[] futureRef = new java.util.concurrent.ScheduledFuture<?>[1];
+
+        futureRef[0] = scheduler.scheduleAtFixedRate(() -> {
             if (server != null) {
                 server.execute(() -> {
-                    if (!task.getAsBoolean()) {
-                        // Stop repeating if task returns false
+                    boolean continueTask = task.getAsBoolean();
+                    if (!continueTask) {
+                        // Cancel the repeating task from outside the scheduler thread
+                        // (mayInterruptIfRunning=false so the current execution is not
+                        //  interrupted — we just stop future invocations).
+                        if (futureRef[0] != null) {
+                            futureRef[0].cancel(false);
+                        }
                     }
                 });
             }

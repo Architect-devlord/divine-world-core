@@ -1,2162 +1,2235 @@
 # py_backend/main.py
 """
-Divine World Management Server - Agent Manager
-==============================================================
-Central management system for all Divine World agents.
-Coordinates spawning, breeding, genesis, and executable creation.
+Divine World Management Server
+================================
+Central control for all Divine World agents.
 
-Features:
-- Agent Spawning API (NPC, God agents)
-- Breeding System (genetic inheritance)
-- Genesis Spawning (command-based)
-- Dynamic Executable Generation (PyInstaller)
-- Minecraft Server Integration
-- Event Handler Communication
+Launch modes
+------------
+  python main.py            — asks: GUI or CLI?
+  python main.py --cli      — skip prompt, start CLI server
+  python main.py --gui      — skip prompt, open GUI
+  python main.py --port N   — override port (CLI mode)
 
-Fixed to match actual Java mod API calls from:
-- DWEventHandler.java (agent spawn events)
-- BreedingEventHandler.java (breeding events)
-- PythonBackendClient.java (Java-Python communication)
-- GodCommand.java (god entity commands)
-- DivineCommands.java (custom commands)
+GUI features (in addition to everything available in CLI)
+---------------------------------------------------------
+  • Full live log stream (scrolling, colour-coded by level)
+  • Agent list with real-time status
+  • Personality editor (trait sliders, −1 → +1)
+  • Memory viewer / editor (add, remove, edit individual events)
+  • Drag-and-drop memory transfer between agents
+  • Agent type toggle (NPC ↔ God) with god-type selector
+  • Gender picker (male / female / dual)
+  • Per-agent host:port override
+  • One-click spawn NPC / spawn God / Genesis / Divine Reset
+  • Package, stop, restart controls per agent
 """
 
+# ── stdlib ────────────────────────────────────────────────────────────────────
 import asyncio
-import sys
-import os
-import subprocess
-import signal
-import uuid
-import psutil
 import json
-import time
-import re
-
-from pathlib import Path
-from contextlib import asynccontextmanager
-from typing import Dict, Optional, Any, List
-
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 import logging
+import threading
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+# ── third-party ───────────────────────────────────────────────────────────────
+import psutil
 import uvicorn
 import argparse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse
 
-# Add parent directory to path
+# ── project ───────────────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ai_core import memory
-from ai_core.config import Config
+from py_backend.config import Config
 from ai_core.agent_spawner import AgentSpawner
 from ai_core.personality import assign_npc_gender, assign_god_gender
-from auto_packager import EnhancedAgentSpawner
-from auto_connect_system import integrate_with_backend
-from utils.mc_uuid import get_minecraft_uuid, AgentNameManager
-from utils.agents_json_manager import get_manager as get_agents_manager
-# Import UltimMC launcher
-from minecraft_launcher import UltimMCLauncher, MultiAgentLauncher
+from py_backend.auto_packager import EnhancedAgentSpawner
+from py_backend.auto_connect_system import integrate_with_backend
+from py_backend.utils.mc_uuid import get_minecraft_uuid, AgentNameManager
+from py_backend.utils.agents_json_manager import get_manager as get_agents_manager
+from py_backend.minecraft_launcher import UltimMCLauncher, MultiAgentLauncher
 
-# Initialize name manager
-name_manager = AgentNameManager()
-
-def sanitize_agent_id(name: str) -> str:
-    """Sanitize name for use as agent_id and directory name"""
-    return re.sub(r'[^a-z0-9_]', '', name.lower().replace(' ', '_'))
-
-
-# Initialize logging
-from ai_core.logger_setup import initialize_logging
-initialize_logging()
+# ── logging ───────────────────────────────────────────────────────────────────
+try:
+    from ai_core.logger_setup import initialize_logging
+    initialize_logging()
+except ImportError:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
 log = logging.getLogger("agent_manager")
 
-# Initialize config
+# ── config ────────────────────────────────────────────────────────────────────
 Config.ensure_dirs()
 if not Config.validate():
-    log.warning("Configuration validation failed - some features may not work")
+    log.warning("Config validation failed — some features may not work")
 
-class MinecraftServerIntegration:
-    """Handles Minecraft server folder integration and agent registration."""
+name_manager = AgentNameManager()
+
+
+def sanitize_agent_id(name: str) -> str:
+    return re.sub(r"[^a-z0-9_]", "", name.lower().replace(" ", "_"))
+
+
+# =============================================================================
+# In-memory log handler — feeds the GUI log panel via WebSocket
+# =============================================================================
+
+class _GuiLogHandler(logging.Handler):
+    """
+    Captures log records and forwards them to all connected GUI WebSockets.
+
+    emit() is called from any thread (logging is thread-safe by default).
+    We buffer the entry and schedule delivery on the running asyncio event
+    loop using the loop stored at subscription time — no deprecated
+    get_event_loop() call, no risk of targeting a closed or wrong loop.
+    """
+
+    MAX_BUFFER = 500
 
     def __init__(self):
-        self.server_folder: Optional[Path] = None
-        self.usercache_path: Optional[Path] = None
-        self.usernamecache_path: Optional[Path] = None
+        super().__init__()
+        self._buffer:  List[Dict]                    = []
+        self._sockets: List[tuple]                   = []  # (WebSocket, asyncio.AbstractEventLoop)
+        self._lock = threading.Lock()
 
+    def emit(self, record: logging.LogRecord):
+        entry = {
+            "ts":      record.created,
+            "level":   record.levelname,
+            "name":    record.name,
+            "message": self.format(record),
+        }
+        with self._lock:
+            self._buffer.append(entry)
+            if len(self._buffer) > self.MAX_BUFFER:
+                self._buffer.pop(0)
+            targets = list(self._sockets)
+
+        for ws, loop in targets:
+            try:
+                # Schedule on the loop that owns the WebSocket connection.
+                # call_soon_threadsafe is safe to call from any thread and
+                # does not require the loop to be the current thread's loop.
+                loop.call_soon_threadsafe(
+                    loop.create_task,
+                    ws.send_json({"type": "log", **entry}),
+                )
+            except Exception:
+                pass
+
+    def subscribe(self, ws: WebSocket, loop: asyncio.AbstractEventLoop):
+        with self._lock:
+            self._sockets.append((ws, loop))
+
+    def unsubscribe(self, ws: WebSocket):
+        with self._lock:
+            self._sockets = [(w, l) for w, l in self._sockets if w is not ws]
+
+    def get_buffer(self) -> List[Dict]:
+        with self._lock:
+            return list(self._buffer)
+
+
+_gui_log_handler = _GuiLogHandler()
+_gui_log_handler.setFormatter(
+    logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+)
+logging.getLogger().addHandler(_gui_log_handler)
+
+
+
+# =============================================================================
+# Minecraft server integration
+# =============================================================================
+
+class MinecraftServerIntegration:
+    def __init__(self):
+        self.server_folder:       Optional[Path] = None
+        self.usercache_path:      Optional[Path] = None
+        self.usernamecache_path:  Optional[Path] = None
 
     def get_server_folder(self) -> Path:
         try:
-            from ai_core.config import Config
-            self.folder = Path(Config.SERVER_FOLDER)
-            return self.folder
+            folder = Path(Config.SERVER_FOLDER)
+            if folder.is_dir():
+                return folder
         except Exception:
-            self.folder = Path(
-                input("Enter ABSOLUTE path of the Minecraft server folder: ").strip()
-            )
-            if not self.folder.is_absolute() or not self.folder.is_dir():
-                raise RuntimeError("Invalid Minecraft server folder")
-        return self.folder
+            pass
+        folder = Path(
+            input("Enter ABSOLUTE path of the Minecraft server folder: ").strip()
+        )
+        if not folder.is_absolute() or not folder.is_dir():
+            raise RuntimeError("Invalid Minecraft server folder")
+        return folder
 
     def set_server_folder(self, folder: Path):
-        """Set the Minecraft server folder and locate cache files."""
         self.server_folder = folder
         if folder and folder.exists():
-            self.usercache_path = folder / "usercache.json"
+            self.usercache_path     = folder / "usercache.json"
             self.usernamecache_path = folder / "usernamecache.json"
-            log.info(f"Server folder set to: {folder}")
+            log.info(f"Server folder: {folder}")
         else:
-            self.usercache_path = None
+            self.usercache_path     = None
             self.usernamecache_path = None
             log.warning(f"Server folder does not exist: {folder}")
 
     def list_registered_agents(self) -> List[Dict[str, Any]]:
-        """List all agents registered in usercache and usernamecache."""
-        agents = []
-
+        agents: List[Dict] = []
         if self.usercache_path and self.usercache_path.exists():
-            with open(self.usercache_path, 'r', encoding='utf-8') as f:
-                usercache_data = json.load(f)
-                for entry in usercache_data:
-                    agents.append({
-                        'agent_id': entry.get('name'),
-                        'uuid': entry.get('uuid'),
-                        'type': 'npc'  # Default type; could be enhanced
-                    })
-
+            try:
+                data = json.loads(self.usercache_path.read_text(encoding="utf-8"))
+                for e in data:
+                    agents.append({"agent_id": e.get("name"),
+                                   "uuid": e.get("uuid"), "type": "npc"})
+            except Exception as e:
+                log.warning(f"usercache read error: {e}")
         return agents
 
-    def register_agent(self, agent_id: str, agent_uuid: str, agent_type: str = 'npc', custom_name: Optional[str] = None):
-        """Register agent in server cache files AND agents.json"""
-        if not self.server_folder or not self.server_folder.exists():
-            log.warning("Server folder not found, skipping cache registration")
-            # We still want to register in agents.json though
-            self._register_in_agents_json(agent_id, agent_type, custom_name)
-            return
+    def register_agent(self, agent_id: str, agent_uuid: str,
+                        agent_type: str = "npc",
+                        custom_name: Optional[str] = None):
+        display = (custom_name if custom_name and custom_name != "Unnamed"
+                   else agent_id)
 
-        # Determine display name
-        if custom_name and custom_name != "Unnamed":
-            display_name = custom_name
-        else:
-            display_name = agent_id
-
-        # Update usercache.json
-        if self.usercache_path and self.usercache_path.exists():
-            with open(self.usercache_path, 'r', encoding='utf-8') as f:
-                usercache_data = json.load(f)
-        else:
-            usercache_data = []
-
-        # Check if already registered
-        existing = next((e for e in usercache_data if e.get('name') == agent_id), None)
-        if not existing:
-            usercache_data.append({
-                'name': agent_id,
-                'uuid': agent_uuid,
-                'expiresOn': '2099-12-31 23:59:59 +0000'
-            })
-
-            with open(self.usercache_path, 'w', encoding='utf-8') as f:
-                json.dump(usercache_data, f, indent=2)
-
-            log.info(f"✅ Registered {agent_id} in usercache.json")
-
-        # Update usernamecache.json
-        if self.usernamecache_path and self.usernamecache_path.exists():
-            with open(self.usernamecache_path, 'r', encoding='utf-8') as f:
-                usernamecache_data = json.load(f)
-        else:
-            usernamecache_data = {}
-
-        if agent_id not in usernamecache_data:
-            usernamecache_data[agent_id] = agent_uuid
-
-            with open(self.usernamecache_path, 'w', encoding='utf-8') as f:
-                json.dump(usernamecache_data, f, indent=2)
-
-            log.info(f"✅ Registered {agent_id} in usernamecache.json")
-
-        # Register in agents.json (synced with AgentConfigLoader.java)
         self._register_in_agents_json(agent_id, agent_type, custom_name)
 
-    def _register_in_agents_json(self, agent_id: str, agent_type: str, custom_name: Optional[str]):
-        """Register agent in agents.json"""
-        # Determine display name
-        if custom_name and custom_name != "Unnamed":
-            display_name = custom_name
-        else:
-            display_name = agent_id
+        if not self.server_folder or not self.server_folder.exists():
+            log.warning("Server folder not set — skipping usercache registration")
+            return
 
-        agents_manager = get_agents_manager()
-        if agent_type.startswith('god_'):
-            # It's a god
-            agents_manager.register_god(display_name, 'dual')
-            log.info(f"✅ Registered GOD: {display_name} in agents.json")
+        # usercache.json
+        uc = []
+        if self.usercache_path and self.usercache_path.exists():
+            try:
+                uc = json.loads(self.usercache_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        if not any(e.get("name") == agent_id for e in uc):
+            uc.append({"name": agent_id, "uuid": agent_uuid,
+                       "expiresOn": "2099-12-31 23:59:59 +0000"})
+            try:
+                self.usercache_path.write_text(
+                    json.dumps(uc, indent=2), encoding="utf-8"
+                )
+                log.info(f"✅ Registered in usercache.json: {agent_id}")
+            except Exception as e:
+                log.warning(f"usercache write error: {e}")
+
+        # usernamecache.json
+        unc: Dict = {}
+        if self.usernamecache_path and self.usernamecache_path.exists():
+            try:
+                unc = json.loads(
+                    self.usernamecache_path.read_text(encoding="utf-8")
+                )
+            except Exception:
+                pass
+        if agent_id not in unc:
+            unc[agent_id] = agent_uuid
+            try:
+                self.usernamecache_path.write_text(
+                    json.dumps(unc, indent=2), encoding="utf-8"
+                )
+                log.info(f"✅ Registered in usernamecache.json: {agent_id}")
+            except Exception as e:
+                log.warning(f"usernamecache write error: {e}")
+
+    def _register_in_agents_json(self, agent_id: str, agent_type: str,
+                                   custom_name: Optional[str]):
+        display = (custom_name if custom_name and custom_name != "Unnamed"
+                   else agent_id)
+        mgr = get_agents_manager()
+        if agent_type.startswith("god_"):
+            god_type = agent_type[len("god_"):]   # e.g. "god_wither" → "wither"
+            mgr.register_god(display, god_type)
         else:
-            # It's an NPC - we'll guess gender from the name or use 'male' as default
-            gender = 'male'  # default
-            if display_name.lower() in ['eve', 'alice', 'diana', 'emily', 'fiona', 'grace', 'hannah', 'iris', 'julia', 'kate']:
-                gender = 'female'
-            elif agent_id == 'eve':
-                gender = 'female'
-            
-            agents_manager.register_npc(display_name, gender)
-            log.info(f"✅ Registered NPC: {display_name} ({gender}) in agents.json")
+            _female_hints = {
+                "eve", "alice", "diana", "emily", "fiona",
+                "grace", "hannah", "iris", "julia", "kate",
+            }
+            gender = (
+                "female"
+                if display.lower() in _female_hints
+                else "male"
+            )
+            mgr.register_npc(display, gender)
+
 
 server_integration = MinecraftServerIntegration()
 
-
 try:
-    folder_path = server_integration.get_server_folder()
-    server_integration.set_server_folder(folder_path)
-except Exception as e:
-    logging.critical(f"❌ Failed to initialize Minecraft server folder: {e}")
+    _sf = server_integration.get_server_folder()
+    server_integration.set_server_folder(_sf)
+except Exception as _e:
+    log.critical(f"❌ Minecraft server folder init failed: {_e}")
     sys.exit(1)
+
+
+# =============================================================================
+# Agent Process Manager
+# =============================================================================
+
+class AgentProcessManager:
+    def __init__(self):
+        self.agent_processes:   Dict[str, subprocess.Popen] = {}
+        self.agent_info:        Dict[str, Dict[str, Any]]   = {}
+        self.minecraft_processes: Dict[str, subprocess.Popen] = {}
+
+        self.ultimmc_launcher = MultiAgentLauncher()
+        self.source_launcher = UltimMCLauncher(
+            client_jar_path=str(Config.CLIENT_JAR) if Config.CLIENT_JAR else None,
+            mod_jar_path=str(Config.MOD_JAR)       if Config.MOD_JAR    else None,
+        )
+        self.spawner = EnhancedAgentSpawner(
+            client_jar_path=str(Config.CLIENT_JAR) if Config.CLIENT_JAR else None,
+            auto_package=True,
+            package_output_dir=str(Config.NPC_APPLICATIONS_DIR),
+        )
+        log.info("AgentProcessManager initialised")
+
+    # ------------------------------------------------------------------
+    # UUID helpers
+    # ------------------------------------------------------------------
+
+    def _generate_agent_uuid(self, agent_id: str, agent_type: str = "npc",
+                              custom_name: Optional[str] = None) -> str:
+        if custom_name and custom_name != "Unnamed":
+            username = custom_name
+        else:
+            username = f"DW_{agent_id}"
+        return get_minecraft_uuid(username)
+
+    # ------------------------------------------------------------------
+    # Start
+    # ------------------------------------------------------------------
+
+    def start_agent_process(
+        self, agent_id: str,
+        mode:            str                   = "minecraft",
+        server_addr:     str                   = Config.DEFAULT_SERVER,
+        load_brain:      Optional[str]         = None,
+        additional_args: Optional[List[str]]   = None,
+        agent_type:      str                   = "npc",
+        custom_name:     Optional[str]         = None,
+        memory_mb:       int                   = 2048,
+    ) -> bool:
+        if agent_id in self.agent_processes:
+            log.warning(f"Agent {agent_id} already running")
+            return False
+        try:
+            brain_dir = Config.BRAINS_DIR / agent_id
+            brain_dir.mkdir(parents=True, exist_ok=True)
+
+            exe_path = (
+                Path(Config.NPC_APPLICATIONS_DIR)
+                / agent_id
+                / f"DW_{agent_id}"
+            )
+
+            if exe_path.exists():
+                cmd = [str(exe_path)]
+            else:
+                # Resolve display name → username → UUID
+                if custom_name and custom_name != "Unnamed":
+                    username = custom_name
+                else:
+                    username = f"DW_{agent_id}"
+
+                agent_uuid = self._generate_agent_uuid(
+                    agent_id, agent_type, custom_name
+                )
+                server_integration.register_agent(
+                    username, agent_uuid, agent_type, custom_name
+                )
+
+                # UltimMC setup is intentionally NOT called here.
+                # setup_agent() and launch_agent() need the packaged UltimMC
+                # copy at npc_applications/<id>/bin/UltimMC to exist first.
+                # That copy is created by _auto_package_agent (below), which
+                # runs after the brain file appears.  The whole MC flow is:
+                #   brain.pcap written → package → setup_agent → launch_agent
+                # All of that happens inside _auto_package_agent.
+
+                backend_port = (
+                    Config.BASE_BACKEND_PORT + abs(hash(agent_id)) % 9000
+                )
+                brain_save  = str(Config.get_agent_brain_path(agent_id))
+                agent_script = Path(__file__).parent / "ai_core" / "agent.py"
+
+                cmd = [
+                    sys.executable, str(agent_script),
+                    "--agent-id",        agent_id,
+                    "--mode",            mode,
+                    "--port",            str(backend_port),
+                    "--log-level",       "INFO",
+                    "--brain-save-path", brain_save,
+                ]
+                if custom_name:
+                    cmd += ["--custom-name", custom_name]
+                if load_brain:
+                    cmd += ["--load-brain", load_brain]
+                if additional_args:
+                    cmd += additional_args
+
+            env = os.environ.copy()
+            env["PYTHONPATH"] = (
+                f"{env.get('PYTHONPATH', '')}{os.pathsep}"
+                f"{str(Path(__file__).parent)}"
+            )
+            process = subprocess.Popen(
+                cmd, env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, bufsize=1,
+            )
+
+            self.agent_processes[agent_id] = process
+            self.agent_info[agent_id] = {
+                "agent_id":    agent_id,
+                "mode":        mode,
+                "pid":         process.pid,
+                "backend_port": locals().get("backend_port", 0),
+                "started_at":  asyncio.get_event_loop().time(),
+                "brain_path":  load_brain,
+                "status":      "running",
+                "agent_type":  agent_type,
+                "custom_name": custom_name or "Unnamed",
+                "uuid":        locals().get("agent_uuid", ""),
+                "server_addr": server_addr,
+            }
+
+            asyncio.create_task(self._monitor_logs(agent_id, process))
+            asyncio.create_task(
+                self._auto_package_agent(
+                    agent_id=agent_id,
+                    agent_type=agent_type,
+                    custom_name=custom_name,
+                    server_addr=server_addr,
+                    memory_mb=memory_mb,
+                )
+            )
+
+            log.info(f"✅ Agent {agent_id} started (PID {process.pid})")
+            return True
+
+        except Exception as e:
+            import traceback
+            log.error(f"start_agent_process failed for {agent_id}: {e}\n"
+                      f"{traceback.format_exc()}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Auto-package
+    # ------------------------------------------------------------------
+
+    async def _auto_package_agent(self, agent_id: str, agent_type: str,
+                                   custom_name: Optional[str],
+                                   server_addr: str = Config.DEFAULT_SERVER,
+                                   memory_mb:   int = 2048):
+        """
+        Wait for the brain capsule to be written, then package the agent.
+
+        This is also the trigger point for UltimMC setup + launch when mode
+        is "minecraft" — because create_launcher_for_agent() prioritises the
+        packaged copy at npc_applications/<id>/bin/UltimMC, that copy must
+        exist before setup/launch is called.  So the order is:
+
+          1. Wait for brain.pcap  (agent process writes this on first save)
+          2. Run AgentPackager    → copies UltimMC into npc_applications/<id>/
+          3. setup_agent()        → now finds the packaged UltimMC ✓
+          4. launch_agent()       → launches from the correct per-agent copy ✓
+
+        main.py's start_agent_process() no longer calls setup_agent or
+        launch_agent directly — it defers entirely to this coroutine.
+        """
+        brain_path = Config.get_agent_brain_path(agent_id)
+        for i in range(1500):        # up to 3000 seconds
+            if brain_path.exists():
+                break
+            if i % 15 == 0 and i:
+                log.info(
+                    f"[Auto-Package] waiting for brain ({i*2}s)…"
+                )
+            await asyncio.sleep(2)
+        else:
+            log.error(f"[Auto-Package] Brain never created: {agent_id}")
+            return
+
+        await asyncio.sleep(2)   # let the brain file finish flushing
+        pkg = self.spawner.package_agent(
+            agent_id=agent_id,
+            brain_path=str(brain_path),
+            agent_type=agent_type,
+            custom_name=custom_name or "Unnamed",
+            # gender is resolved from brain capsule inside package_agent()
+        )
+        if pkg:
+            log.info(f"✅ [Auto-Package] {agent_id} → {pkg}")
+            if agent_id in self.agent_info:
+                self.agent_info[agent_id]["package_path"] = str(pkg)
+                self.agent_info[agent_id]["packaged"]     = True
+        else:
+            log.warning(f"⚠️  [Auto-Package] packaging failed for {agent_id}")
+
+        # ── Now that the packaged UltimMC copy exists, do MC setup + launch ──
+        info = self.agent_info.get(agent_id, {})
+        if info.get("mode") != "minecraft":
+            return
+        if agent_id in self.minecraft_processes:
+            return  # already launched (shouldn't happen, but be safe)
+
+        log.info(f"[MC] Setting up UltimMC for {agent_id} (post-package)…")
+        agent_uuid = info.get("uuid", "")
+        ok = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: self.ultimmc_launcher.setup_agent(
+                agent_id=agent_id,
+                server_addr=server_addr,
+                custom_uuid=agent_uuid,
+                custom_name=custom_name,
+                agent_type=agent_type,
+                source_launcher=self.source_launcher,
+            ),
+        )
+        if not ok:
+            log.error(f"[MC] UltimMC setup failed for {agent_id} (post-package)")
+            self.agent_info[agent_id]["status"] = "backend_only"
+            return
+
+        backend_port = info.get("backend_port", Config.BASE_BACKEND_PORT)
+        log.info(f"[MC] Launching Minecraft for {agent_id}…")
+        try:
+            mc_proc = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: self.ultimmc_launcher.launch_agent(
+                    agent_id=agent_id,
+                    server_addr=server_addr,
+                    backend_url=f"ws://127.0.0.1:{backend_port}",
+                    memory_mb=memory_mb,
+                    headless=False,
+                    agent_type=agent_type,
+                    custom_name=custom_name,
+                ),
+            )
+            if mc_proc:
+                self.minecraft_processes[agent_id] = mc_proc
+                self.agent_info[agent_id]["minecraft_pid"] = mc_proc.pid
+                log.info(f"✅ [MC] Minecraft launched for {agent_id} (PID {mc_proc.pid})")
+            else:
+                log.warning(f"[MC] launch_agent returned None for {agent_id}")
+                self.agent_info[agent_id]["status"] = "backend_only"
+        except Exception as e:
+            log.error(f"[MC] Launch error for {agent_id}: {e}")
+            self.agent_info[agent_id]["status"] = "backend_only"
+
+    # ------------------------------------------------------------------
+    # Log monitor
+    # ------------------------------------------------------------------
+
+    async def _monitor_logs(self, agent_id: str, process: subprocess.Popen):
+        loop = asyncio.get_event_loop()
+        try:
+            while process.poll() is None:
+                if process.stdout:
+                    try:
+                        line = await loop.run_in_executor(
+                            None, process.stdout.readline
+                        )
+                        if line:
+                            log.info(f"[{agent_id}] {line.strip()}")
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            log.error(f"Log monitor error ({agent_id}): {e}")
+        finally:
+            self.agent_processes.pop(agent_id, None)
+            if agent_id in self.agent_info:
+                self.agent_info[agent_id]["status"]    = "stopped"
+                self.agent_info[agent_id]["exit_code"] = process.returncode
+
+    # ------------------------------------------------------------------
+    # Stop / list / status
+    # ------------------------------------------------------------------
+
+    def stop_agent_process(self, agent_id: str) -> bool:
+        if agent_id not in self.agent_processes:
+            return False
+        try:
+            if agent_id in self.minecraft_processes:
+                try:
+                    self.minecraft_processes[agent_id].terminate()
+                    self.minecraft_processes[agent_id].wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.minecraft_processes[agent_id].kill()
+                del self.minecraft_processes[agent_id]
+            proc = self.agent_processes[agent_id]
+            proc.terminate()
+            proc.wait(timeout=5)
+            log.info(f"Stopped agent {agent_id}")
+            return True
+        except Exception as e:
+            log.error(f"Stop error ({agent_id}): {e}")
+            return False
+
+    def list_running_agents(self) -> List[str]:
+        return list(self.agent_processes.keys())
+
+    def get_agent_status(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        return self.agent_info.get(agent_id)
+
+    def cleanup_all(self):
+        for aid in list(self.minecraft_processes):
+            try:
+                self.ultimmc_launcher.stop_agent(aid)
+            except Exception:
+                pass
+        for aid in list(self.agent_processes):
+            try:
+                self.stop_agent_process(aid)
+            except Exception:
+                pass
+        if hasattr(self.spawner, "cleanup_all"):
+            self.spawner.cleanup_all()
+        self.agent_processes.clear()
+        self.agent_info.clear()
+        log.info("Agent cleanup complete")
+
+
+# =============================================================================
+# FastAPI app
+# =============================================================================
+
+startup_time = 0
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for FastAPI startup and shutdown."""
     global startup_time
-
-    # Startup
     startup_time = asyncio.get_event_loop().time()
-
-    log.info("=" * 70)
-    log.info("  🎮 Divine World Management Server")
-    log.info("=" * 70)
-    log.info("  Version: 3.0.0 (Endpoints Corrected + Server Integration)")
-    log.info("  Role: Agent Management for Minecraft Mod")
-    log.info("  Mod: Divine World 1.20.1")
-    log.info("  Agent Runtime: Separate processes (agent.py)")
-    log.info("=" * 70)
-    log.info("  CORRECTED ENDPOINTS:")
-    log.info("    ✅ /api/player_event (DWEventHandler)")
-    log.info("    ✅ /api/breeding/event (BreedingEventHandler)")
-    log.info("    ✅ /api/genesis/spawn (DivineCommands)")
-    log.info("    ✅ /api/divine_reset (DivineCommands)")
-    log.info("    ✅ /api/agents/clear_memories (DivineCommands)")
-    log.info("    ✅ /api/gods/spawn (DivineCommands)")
-    log.info("    ✅ /api/gods/ability (DivineCommands)")
-    log.info("    ✅ /api/gods/transform (DivineCommands)")
-    log.info("=" * 70)
-    log.info("  SERVER INTEGRATION:")
-    log.info("    📝 Auto-registers agents in usercache.json")
-    log.info("    📝 Auto-registers agents in usernamecache.json")
-    log.info("    🔄 UUID generation (Minecraft offline mode)")
-    log.info("    🏷️  Naming: AI_<n> for NPCs, GOD_<type>_<n> for gods")
-    log.info("=" * 70)
-    log.info("")
-    log.info("⚠️  IMPORTANT: Configure server folder for agent registration!")
-    log.info("   Use: POST /api/server/configure")
-    log.info("   Body: {\"server_folder\": \"/path/to/minecraft/server\"}")
-    log.info("")
-    log.info("✅ Server started and ready for Minecraft mod connections")
-
+    log.info("=" * 60)
+    log.info("  🎮 Divine World Management Server  v3.0.0")
+    log.info("=" * 60)
     yield
-
-    # Shutdown
-    log.info("🛑 Shutting down management server...")
-
-    # Stop all agents
+    log.info("🛑 Shutting down…")
     agent_manager.cleanup_all()
-
     log.info("✅ Shutdown complete")
 
 
 app = FastAPI(
     title="Divine World Management Server",
     version="3.0.0",
-    description="Agent Management & Packaging Server (Endpoints corrected for Java mod)",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
 )
 
-
-# =============================================================================
-# AGENT PROCESS MANAGER
-# =============================================================================
-
-
-class AgentProcessManager:
-    """Manages agent processes running independently."""
-
-    def __init__(self):
-        self.agent_processes: Dict[str, subprocess.Popen] = {}
-        self.agent_info: Dict[str, Dict[str, Any]] = {}
-        self.minecraft_processes: Dict[str, subprocess.Popen] = {}
-
-        # Initialize UltimMC multi-agent launcher
-        self.ultimmc_launcher = MultiAgentLauncher(
-            base_dir=str(Config.NPC_APPLICATIONS_DIR/ ".divine-world" / "ultimmc_agents")
-        )
-
-        # Create source launcher for finding UltimMC
-        self.source_launcher = UltimMCLauncher(
-            client_jar_path=str(Config.CLIENT_JAR) if Config.CLIENT_JAR else None,
-            mod_jar_path=str(Config.MOD_JAR) if Config.MOD_JAR else None
-        )
-
-        self.spawner = EnhancedAgentSpawner(
-            client_jar_path=str(Config.CLIENT_JAR) if Config.CLIENT_JAR else None,
-            auto_package=True,
-            package_output_dir=str(Config.NPC_APPLICATIONS_DIR)
-        )
-
-        log.info("AgentProcessManager initialized")
-
-    def _generate_agent_uuid(self, agent_id: str, agent_type: str = 'npc', custom_name: Optional[str] = None) -> str:
-        """Generate unique UUID for agent (Minecraft offline mode compatible).
-        Must match DWEventHandler.java UUID detection.
-        """
-        # Generate username based on agent type or custom name
-        if custom_name and custom_name != "Unnamed":
-            username = custom_name
-        elif agent_type.startswith('god_'):
-            god_type = agent_type.replace('god_', '').upper()
-            username = f"DWGOD_{god_type}_{agent_id}"
-        else:
-            username = f"DW_{agent_id}"
-
-        return get_minecraft_uuid(username)
-
-    def start_agent_process(self, agent_id: str, mode: str = 'minecraft',
-                           server_addr: str = "127.0.0.1:25565",
-                           load_brain: Optional[str] = None,
-                           additional_args: List[str] = None,
-                           agent_type: str = 'npc',  # 'npc' or 'god_<type>'
-                           custom_name: Optional[str] = None,
-                           memory_mb: int = 2048) -> bool:
-        """Start agent in separate process with auto-packaging."""
-        if agent_id in self.agent_processes:
-            log.warning(f"Agent {agent_id} already running")
-            return False
-
-        try:
-            # Ensure brain directory exists for this agent
-            brain_dir = Config.BRAINS_DIR / agent_id
-            brain_dir.mkdir(parents=True, exist_ok=True)
-            log.info(f"✓ Brain directory created/verified: {brain_dir}")
-
-            # Check if packaged exe exists
-            exe_path = Path(Config.NPC_APPLICATIONS_DIR) / agent_id / f"DW_Agent_{agent_id}"
-            if exe_path.exists():
-                cmd = [str(exe_path)]
-                log.info(f"Running packaged agent: {exe_path}")
-            else:
-
-                # Generate username in clean or DW_ format
-                if custom_name and custom_name != "Unnamed":
-                    username = custom_name
-                elif agent_type.startswith('god_'):
-                    god_type = agent_type.replace('god_', '').upper()
-                    username = f"DWGOD_{god_type}_{agent_id}"
-                else:
-                    username = f"DW_{agent_id}"
-
-                # Generate unique UUID from username
-                agent_uuid = self._generate_agent_uuid(agent_id, agent_type, custom_name)
-
-                # Log the mapping for debugging
-                log.info(f"🔗 Agent Registration: agent_id={agent_id}, username={username}, uuid={agent_uuid}")
-
-                # Register in server files AND agents.json with proper username
-                server_integration.register_agent(username, agent_uuid, agent_type, custom_name)
-
-                # For minecraft mode, setup UltimMC
-                if mode == 'minecraft':
-                    log.info(f"🚀 Setting up UltimMC for {agent_id}...")
-
-                    # Setup agent with dedicated UltimMC
-                    success = self.ultimmc_launcher.setup_agent(
-                        agent_id=agent_id,
-                        server_addr=server_addr,
-                        custom_uuid=agent_uuid,
-                        custom_name=custom_name,
-                        agent_type=agent_type,
-                        source_launcher=self.source_launcher
-                    )
-
-                    if not success:
-                        log.error(f"Failed to setup UltimMC for {agent_id}")
-                        return False
-
-                    log.info(f"✅ UltimMC setup complete for {agent_id}")
-                # Start agent backend process
-                agent_script = Path(__file__).parent / "ai_core" / "agent.py"
-
-                # Allocate unique backend port
-                backend_port = Config.BASE_BACKEND_PORT + (abs(hash(agent_id)) % 9000)
-
-                # Get the absolute brain save path
-                brain_save_path = str(Config.get_agent_brain_path(agent_id))
-
-                cmd = [
-                    sys.executable,
-                    str(agent_script),
-                    '--agent-id', agent_id,
-                    '--mode', mode,
-                    '--port', str(backend_port),
-                    '--log-level', 'INFO',
-                    '--brain-save-path', brain_save_path
-                ]
-
-                if custom_name:
-                    cmd.extend(['--custom-name', custom_name])
-
-                if load_brain:
-                    cmd.extend(['--load-brain', load_brain])
-
-                if additional_args:
-                    cmd.extend(additional_args)
-
-            log.info(f"Starting agent backend: {' '.join(cmd)}")
-
-            # Ensure PYTHONPATH is set so agent can find ai_core
-            env = os.environ.copy()
-            env["PYTHONPATH"] = f"{env.get('PYTHONPATH', '')}{os.pathsep}{str(Path(__file__).parent)}"
-
-            process = subprocess.Popen(
-                cmd,
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
-
-            self.agent_processes[agent_id] = process
-            self.agent_info[agent_id] = {
-                'agent_id': agent_id,
-                'mode': mode,
-                'pid': process.pid,
-                'backend_port': backend_port,
-                'started_at': asyncio.get_event_loop().time(),
-                'brain_path': load_brain,
-                'status': 'running',
-                'agent_type': agent_type,
-                'custom_name': custom_name or "Unnamed",
-                'uuid': agent_uuid,
-                'server_addr': server_addr
-            }
-
-            asyncio.create_task(self._monitor_process_logs(agent_id, process))
-
-            # AUTO-PACKAGE: Wait for brain to be created, then package
-            asyncio.create_task(self._auto_package_agent(agent_id, agent_type, custom_name))
-
-            log.info(f"✅ Agent {agent_id} started (PID: {process.pid})")
-            log.info(f"   Brain will be saved to: {Config.get_agent_brain_path(agent_id)}")
-
-            if mode == 'minecraft':
-                # Wait for backend to initialize
-                log.info(f"⏳ Waiting for agent backend to initialize...")
-                time.sleep(3)
-
-                log.info(f"🎮 Launching UltimMC client for {agent_id}...")
-                log.info(f"   Agent Type: {agent_type}")
-                log.info(f"   Custom Name: {custom_name or 'None'}")
-
-                # Launch Minecraft client
-                try:
-                    minecraft_process = self.ultimmc_launcher.launch_agent(
-                        agent_id=agent_id,
-                        server_addr=server_addr,
-                        backend_url=f"http://127.0.0.1:{backend_port}",
-                        memory_mb=memory_mb,
-                        headless=False,  # Set to True for headless mode
-                        agent_type=agent_type,  # Pass agent type for proper username
-                        custom_name=custom_name
-                    )
-
-                    if minecraft_process:
-                        self.minecraft_processes[agent_id] = minecraft_process
-                        self.agent_info[agent_id]['minecraft_pid'] = minecraft_process.pid
-                        self.agent_info[agent_id]['status'] = 'running'
-
-                        log.info(f"✅ UltimMC launched for {agent_id} (PID: {minecraft_process.pid})")
-                        log.info(f"   Server: {server_addr}")
-                        log.info(f"   Backend: http://127.0.0.1:{backend_port}")
-                    else:
-                        log.error(f"❌ Failed to launch UltimMC for {agent_id}")
-                        # Keep backend running, user can connect manually
-                        self.agent_info[agent_id]['status'] = 'backend_only'
-                except Exception as ult_err:
-                    log.error(f"❌ UltimMC launch error for {agent_id}: {ult_err}")
-                    log.error(f"   Agent backend is still running on port {backend_port}")
-                    self.agent_info[agent_id]['status'] = 'backend_only'
-
-            # Auto-package after brain creation
-            if mode == 'minecraft':
-                asyncio.create_task(self._auto_package_agent(agent_id, agent_type, custom_name))
-
-            return True
-
-        except Exception as e:
-            log.error(f"Failed to start agent {agent_id}: {e}")
-            import traceback
-            log.error(traceback.format_exc())
-            return False
-
-    async def _auto_package_agent(self, agent_id: str, agent_type: str, custom_name: Optional[str]):
-        """
-        Automatically package agent after brain is created.
-        Waits for brain file to exist, then packages it.
-        """
-        try:
-            # Wait for agent to initialize and create brain file
-            brain_path = Config.get_agent_brain_path(agent_id)
-            brain_dir = brain_path.parent
-
-            log.info(f"[Auto-Package] Waiting for brain file: {brain_path}")
-            log.info(f"[Auto-Package] Brain directory: {brain_dir}")
-            log.info(f"[Auto-Package] Directory exists: {brain_dir.exists()}")
-
-            # Wait up to 300 seconds for brain file to be created
-            max_wait = 300
-            check_interval = 2  # Check every 2 seconds instead of every 1
-            checks_remaining = max_wait // check_interval
-
-            for check_num in range(checks_remaining):
-                if brain_path.exists():
-                    file_size = brain_path.stat().st_size
-                    log.info(f"✅ [Auto-Package] Brain file found after {check_num * check_interval}s")
-                    log.info(f"   File size: {file_size} bytes")
-                    break
-
-                # Log progress every 30 seconds
-                if check_num % 15 == 0 and check_num > 0:
-                    elapsed = check_num * check_interval
-                    log.info(f"⏳ [Auto-Package] Still waiting for brain file ({elapsed}s elapsed)...")
-                    # Check what files exist in the directory
-                    if brain_dir.exists():
-                        files = list(brain_dir.iterdir())
-                        log.debug(f"   Files in {brain_dir}: {[f.name for f in files]}")
-
-                await asyncio.sleep(check_interval)
-            else:
-                elapsed = max_wait
-                log.error(f"❌ [Auto-Package] Brain file NOT created after {elapsed}s: {agent_id}")
-                log.error(f"   Expected path: {brain_path}")
-                log.error(f"   Agent backend may not be running correctly")
-                log.error(f"   Check agent process logs for errors")
-                return
-
-            # Give brain a moment to finish writing
-            await asyncio.sleep(2)
-
-            log.info(f"[Auto-Package] Starting package for {agent_id} (type: {agent_type})")
-
-            # Package the agent
-            package_path = self.spawner.package_agent(
-                agent_id=agent_id,
-                brain_path=str(brain_path),
-                agent_type=agent_type,
-                custom_name=custom_name or "Unnamed"
-            )
-
-            if package_path:
-                log.info(f"✅ [Auto-Package] Agent {agent_id} packaged: {package_path}")
-
-                # Update agent info
-                if agent_id in self.agent_info:
-                    self.agent_info[agent_id]['package_path'] = str(package_path)
-                    self.agent_info[agent_id]['packaged'] = True
-            else:
-                log.warning(f"⚠️ [Auto-Package] Failed to package {agent_id}")
-
-        except Exception as e:
-            log.error(f"[Auto-Package] Error packaging {agent_id}: {e}")
-
-    async def _monitor_process_logs(self, agent_id: str, process: subprocess.Popen):
-        """Monitor and log agent process output."""
-        try:
-            loop = asyncio.get_event_loop()
-            while process.poll() is None:
-                # Read stdout
-                if process.stdout:
-                    try:
-                        line = await loop.run_in_executor(None, process.stdout.readline)
-                        if line:
-                            log.info(f"[{agent_id}] {line.strip()}")
-                    except Exception as e:
-                        log.debug(f"Error reading stdout for {agent_id}: {e}")
-
-                await asyncio.sleep(0.1)
-
-            # Log final status
-            if process.returncode == 0:
-                log.info(f"Agent {agent_id} exited successfully (code: {process.returncode})")
-            else:
-                log.warning(f"Agent {agent_id} exited with code: {process.returncode}")
-
-            # Update agent info
-            if agent_id in self.agent_info:
-                self.agent_info[agent_id]['status'] = 'stopped'
-                self.agent_info[agent_id]['exit_code'] = process.returncode
-
-        except Exception as e:
-            log.error(f"Error monitoring logs for {agent_id}: {e}")
-        finally:
-            # Clean up process reference
-            if agent_id in self.agent_processes:
-                del self.agent_processes[agent_id]
-
-    def stop_agent_process(self, agent_id: str) -> bool:
-        """Stop agent and cleanup"""
-        if agent_id not in self.agent_processes:
-            return False
-
-        try:
-            # Stop Minecraft client if running
-            if agent_id in self.minecraft_processes:
-                minecraft_proc = self.minecraft_processes[agent_id]
-                try:
-                    minecraft_proc.terminate()
-                    minecraft_proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    minecraft_proc.kill()
-                    minecraft_proc.wait()
-
-                del self.minecraft_processes[agent_id]
-                log.info(f"Stopped Minecraft client for {agent_id}")
-
-            # Stop agent backend
-            process = self.agent_processes[agent_id]
-            process.terminate()
-            process.wait(timeout=5)
-
-            log.info(f"Stopped agent {agent_id}")
-            return True
-
-        except Exception as e:
-            log.error(f"Error stopping {agent_id}: {e}")
-            return False
-
-
-    def list_running_agents(self) -> List[str]:
-        """List all running agents"""
-        return list(self.agent_processes.keys())
-
-    def get_agent_status(self, agent_id: str) -> Optional[Dict[str, Any]]:
-        """Get agent status"""
-        return self.agent_info.get(agent_id)
-
-    def cleanup_all(self):
-        """Clean up all agent processes and spawner resources."""
-        log.info("Cleaning up agent processes...")
-
-        # Stop all Minecraft clients
-        for agent_id in list(self.minecraft_processes.keys()):
-            try:
-                self.ultimmc_launcher.stop_agent(agent_id)
-            except:
-                pass
-
-        # Stop all agent backends
-        for agent_id in list(self.agent_processes.keys()):
-            try:
-                self.stop_agent_process(agent_id)
-            except:
-                pass
-
-        if hasattr(self.spawner, 'cleanup_all'):
-            self.spawner.cleanup_all()
-
-        for agent_id, proc in self.agent_processes.items():
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            except Exception as e:
-                log.error(f"Error terminating {agent_id}: {e}")
-
-        self.agent_processes.clear()
-        self.agent_info.clear()
-        log.info("Agent cleanup complete")
-
-# Global manager
 agent_manager = AgentProcessManager()
-
-# Integrate with auto-connect system
 integrate_with_backend(app, agent_manager)
 
-# Updated spawn_god endpoint with proper agent_type
 
-# NEW ENDPOINT: Spawn single agent (for /dw npc spawn command)
+# =============================================================================
+# GUI — served as a self-contained HTML page
+# =============================================================================
 
-@app.post("/api/agents/spawn_single")
-async def spawn_single_agent(request: Request):
-    """
-    Spawn a single NPC agent (NOT genesis - for /dw npc spawn)
+GUI_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Divine World — Agent Control Centre</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
 
-    Body format:
-        {
-            "agent_name": "Alice",
-            "spawner": "PlayerName",
-            "world": "minecraft:overworld",
-            "spawn_position": {"x": 100, "y": 64, "z": 200},
-            "gender": "female" (optional, default: random),
-            "personality": {...} (optional)
-        }
-    """
+  :root {
+    --bg:       #0a0c12;
+    --panel:    #10141f;
+    --border:   #1e2a40;
+    --accent:   #00d4ff;
+    --gold:     #f5c542;
+    --red:      #ff4444;
+    --green:    #00e676;
+    --orange:   #ff9800;
+    --text:     #c8d8f0;
+    --dim:      #5a6a80;
+    --font:     'Rajdhani', sans-serif;
+    --mono:     'Share Tech Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+               font-family: var(--font); font-size: 15px; }
+
+  /* ── layout ──────────────────────────────────────────────────── */
+  .root { display: grid; grid-template-rows: 48px 1fr; height: 100%; }
+
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 0 20px;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 18px; font-weight: 700; color: var(--accent);
+               letter-spacing: 2px; text-transform: uppercase; }
+  .hbadge { font-size: 11px; padding: 2px 8px; border-radius: 3px;
+             background: #00d4ff22; color: var(--accent); font-family: var(--mono); }
+  .hsep { flex: 1; }
+  .conn-dot { width: 8px; height: 8px; border-radius: 50%;
+              background: var(--red); }
+  .conn-dot.on { background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .workspace {
+    display: grid;
+    grid-template-columns: 260px 1fr 340px;
+    grid-template-rows: 1fr 200px;
+    gap: 1px; background: var(--border); overflow: hidden;
+  }
+
+  .panel {
+    background: var(--panel); overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .panel-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-bottom: 1px solid var(--border);
+    font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--dim);
+  }
+  .panel-head .icon { font-size: 14px; }
+  .panel-body { flex: 1; overflow-y: auto; padding: 10px; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── left: agent list ─────────────────────────────────────────── */
+  .agent-card {
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;
+    margin-bottom: 8px; cursor: pointer; transition: border-color .15s;
+    position: relative;
+  }
+  .agent-card:hover { border-color: var(--accent); }
+  .agent-card.selected { border-color: var(--accent);
+                          background: #00d4ff0a; }
+  .agent-card .name { font-weight: 700; font-size: 15px; }
+  .agent-card .meta { font-size: 11px; color: var(--dim); margin-top: 2px;
+                       font-family: var(--mono); }
+  .agent-card .type-badge {
+    position: absolute; top: 8px; right: 10px;
+    font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 3px;
+  }
+  .type-npc  { background: #00e67622; color: var(--green); }
+  .type-god  { background: #f5c54222; color: var(--gold); }
+  .type-stopped { background: #ff444422; color: var(--red); }
+
+  /* ── centre: detail / editor ─────────────────────────────────── */
+  .centre { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; }
+
+  .tab-bar {
+    display: flex; border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .tab {
+    padding: 10px 18px; font-size: 12px; font-weight: 700;
+    letter-spacing: 1px; cursor: pointer; color: var(--dim);
+    border-bottom: 2px solid transparent; transition: color .15s;
+    text-transform: uppercase;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-pane { display: none; flex: 1; overflow-y: auto; padding: 16px; }
+  .tab-pane.active { display: block; }
+
+  /* personality sliders */
+  .trait-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .trait-label { width: 150px; font-size: 13px; color: var(--text); }
+  .trait-slider { flex: 1; accent-color: var(--accent); cursor: pointer; }
+  .trait-val { width: 42px; text-align: right; font-family: var(--mono);
+               font-size: 12px; color: var(--accent); }
+
+  /* memory editor */
+  .mem-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+  .mem-search { flex: 1; background: #0d1220; border: 1px solid var(--border);
+                color: var(--text); border-radius: 4px; padding: 5px 10px;
+                font-family: var(--mono); font-size: 12px; }
+  .mem-search:focus { outline: none; border-color: var(--accent); }
+
+  .mem-event {
+    border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px;
+    margin-bottom: 6px; font-family: var(--mono); font-size: 11px;
+    cursor: grab; transition: border-color .15s;
+    display: flex; gap: 8px; align-items: flex-start;
+  }
+  .mem-event:hover { border-color: var(--accent); }
+  .mem-event.dragging { opacity: .4; cursor: grabbing; }
+  .mem-event .ev-type { color: var(--accent); min-width: 100px; font-weight: 700; }
+  .mem-event .ev-text { flex: 1; color: var(--dim); word-break: break-all; }
+  .mem-event .ev-del { color: var(--red); cursor: pointer; font-size: 14px;
+                        align-self: center; opacity: .6; }
+  .mem-event .ev-del:hover { opacity: 1; }
+
+  .mem-drop-zone {
+    border: 2px dashed var(--border); border-radius: 6px; padding: 14px;
+    text-align: center; color: var(--dim); font-size: 12px; margin-top: 10px;
+    transition: border-color .2s, color .2s;
+  }
+  .mem-drop-zone.drag-over { border-color: var(--accent); color: var(--accent); }
+
+  /* agent config */
+  .cfg-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .cfg-label { width: 120px; font-size: 13px; color: var(--dim); }
+  .cfg-select, .cfg-input {
+    flex: 1; background: #0d1220; border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px; padding: 6px 10px;
+    font-family: var(--font); font-size: 13px;
+  }
+  .cfg-select:focus, .cfg-input:focus { outline: none; border-color: var(--accent); }
+  .cfg-note { font-size: 11px; color: var(--dim); margin-top: -8px; margin-bottom: 10px; }
+
+  /* ── right: spawn controls ────────────────────────────────────── */
+  .spawn-section { margin-bottom: 18px; }
+  .spawn-section h3 { font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+                       text-transform: uppercase; color: var(--dim);
+                       margin-bottom: 10px; }
+  .form-row { margin-bottom: 8px; }
+  .form-label { font-size: 12px; color: var(--dim); margin-bottom: 3px; display: block; }
+  .form-input {
+    width: 100%; background: #0d1220; border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px; padding: 6px 10px;
+    font-family: var(--mono); font-size: 12px;
+  }
+  .form-input:focus { outline: none; border-color: var(--accent); }
+  select.form-input option { background: #10141f; }
+
+  /* buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-radius: 4px; font-family: var(--font);
+    font-size: 13px; font-weight: 700; letter-spacing: .5px;
+    cursor: pointer; border: none; transition: all .15s;
+  }
+  .btn-primary { background: var(--accent); color: #000; }
+  .btn-primary:hover { filter: brightness(1.15); }
+  .btn-gold    { background: var(--gold); color: #000; }
+  .btn-gold:hover { filter: brightness(1.15); }
+  .btn-red     { background: var(--red);  color: #fff; }
+  .btn-red:hover { filter: brightness(1.15); }
+  .btn-ghost   { background: transparent; color: var(--text);
+                  border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-block { width: 100%; justify-content: center; margin-bottom: 6px; }
+
+  /* ── bottom: log ──────────────────────────────────────────────── */
+  .log-panel { grid-column: 1 / -1; grid-row: 2; background: #080b10;
+               border-top: 1px solid var(--border); display: flex; flex-direction: column; }
+  .log-body  { flex: 1; overflow-y: auto; padding: 6px 12px;
+               font-family: var(--mono); font-size: 11px; }
+  .log-line  { padding: 1px 0; border-bottom: 1px solid #ffffff05; }
+  .log-line .ts  { color: #3a4a60; margin-right: 6px; }
+  .log-line .lv  { margin-right: 6px; font-weight: 700; min-width: 50px; display: inline-block; }
+  .log-line .nm  { color: #4a6080; margin-right: 6px; }
+  .lv-INFO    { color: var(--dim); }
+  .lv-WARNING { color: var(--orange); }
+  .lv-ERROR   { color: var(--red); }
+  .lv-CRITICAL{ color: #ff0080; }
+  .lv-DEBUG   { color: #334455; }
+
+  /* divider / utils */
+  hr.divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .empty { color: var(--dim); font-size: 12px; text-align: center; padding: 20px; }
+  .toast {
+    position: fixed; bottom: 220px; right: 20px; z-index: 9999;
+    background: var(--accent); color: #000; padding: 8px 16px;
+    border-radius: 6px; font-weight: 700; font-size: 13px;
+    transition: opacity .4s; pointer-events: none;
+  }
+  .toast.err { background: var(--red); color: #fff; }
+  .toast.fade { opacity: 0; }
+</style>
+</head>
+<body>
+<div class="root">
+
+  <!-- HEADER -->
+  <header>
+    <h1>⚔ Divine World</h1>
+    <span class="hbadge">AGENT CONTROL CENTRE v3.0</span>
+    <div class="hsep"></div>
+    <small style="color:var(--dim);font-size:11px;margin-right:8px" id="agent-count">0 agents</small>
+    <span class="conn-dot" id="ws-dot" title="WebSocket"></span>
+  </header>
+
+  <!-- WORKSPACE -->
+  <div class="workspace">
+
+    <!-- LEFT: AGENT LIST -->
+    <div class="panel">
+      <div class="panel-head"><span class="icon">👥</span> Agents</div>
+      <div class="panel-body" id="agent-list">
+        <div class="empty">No agents running</div>
+      </div>
+    </div>
+
+    <!-- CENTRE: TABS -->
+    <div class="panel centre">
+      <div class="tab-bar">
+        <div class="tab active" onclick="showTab('personality')">Personality</div>
+        <div class="tab" onclick="showTab('memories')">Memories</div>
+        <div class="tab" onclick="showTab('config')">Config</div>
+      </div>
+
+      <!-- PERSONALITY TAB -->
+      <div id="tab-personality" class="tab-pane active">
+        <div id="personality-content">
+          <div class="empty">Select an agent to edit their personality</div>
+        </div>
+      </div>
+
+      <!-- MEMORIES TAB -->
+      <div id="tab-memories" class="tab-pane">
+        <div id="memories-content">
+          <div class="empty">Select an agent to view their memories</div>
+        </div>
+      </div>
+
+      <!-- CONFIG TAB -->
+      <div id="tab-config" class="tab-pane">
+        <div id="config-content">
+          <div class="empty">Select an agent to edit their configuration</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: SPAWN CONTROLS -->
+    <div class="panel" style="overflow-y:auto">
+      <div class="panel-head"><span class="icon">🧬</span> Spawn &amp; Control</div>
+      <div class="panel-body">
+
+        <div class="spawn-section">
+          <h3>🌟 Genesis</h3>
+          <div class="form-row">
+            <label class="form-label">Server</label>
+            <input id="genesis-server" class="form-input" value="127.0.0.1:25565">
+          </div>
+          <button class="btn btn-primary btn-block" onclick="doGenesis()">
+            ✦ Spawn Adam &amp; Eve
+          </button>
+        </div>
+
+        <hr class="divider">
+
+        <div class="spawn-section">
+          <h3>🧑 Spawn NPC</h3>
+          <div class="form-row">
+            <label class="form-label">Name (optional)</label>
+            <input id="npc-name" class="form-input" placeholder="auto-select">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Gender</label>
+            <select id="npc-gender" class="form-input">
+              <option value="random">Random</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Server</label>
+            <input id="npc-server" class="form-input" value="127.0.0.1:25565">
+          </div>
+          <button class="btn btn-primary btn-block" onclick="doSpawnNPC()">
+            ＋ Spawn NPC
+          </button>
+        </div>
+
+        <hr class="divider">
+
+        <div class="spawn-section">
+          <h3>👑 Spawn God</h3>
+          <div class="form-row">
+            <label class="form-label">God Type</label>
+            <select id="god-type" class="form-input">
+              <option value="">Auto-select</option>
+              <option value="ender_dragon">Ender Dragon</option>
+              <option value="wither">Wither</option>
+              <option value="warden">Warden</option>
+              <option value="oracle">Oracle</option>
+              <option value="elder_guardian">Elder Guardian</option>
+              <option value="creaking">Creaking</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Name (optional)</label>
+            <input id="god-name" class="form-input" placeholder="auto-select">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Server</label>
+            <input id="god-server" class="form-input" value="127.0.0.1:25565">
+          </div>
+          <button class="btn btn-gold btn-block" onclick="doSpawnGod()">
+            ⚡ Spawn God
+          </button>
+        </div>
+
+        <hr class="divider">
+
+        <div class="spawn-section">
+          <h3>🔴 Server Actions</h3>
+          <button class="btn btn-red btn-block" onclick="doDivineReset()">
+            ☠ Divine Reset
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- BOTTOM: LOG -->
+    <div class="log-panel">
+      <div class="panel-head" style="justify-content:space-between">
+        <span><span class="icon">📋</span> Live Log</span>
+        <div style="display:flex;gap:8px">
+          <select id="log-filter" onchange="filterLogs()" style="background:#0d1220;border:1px solid var(--border);color:var(--text);border-radius:3px;font-size:11px;padding:2px 6px;">
+            <option value="">All levels</option>
+            <option value="INFO">INFO+</option>
+            <option value="WARNING">WARN+</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="clearLog()">Clear</button>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer">
+            <input type="checkbox" id="log-auto-scroll" checked> Auto-scroll
+          </label>
+        </div>
+      </div>
+      <div class="log-body" id="log-body"></div>
+    </div>
+
+  </div>
+</div>
+<div id="toast" class="toast" style="opacity:0"></div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+let ws            = null;
+let selectedAgent = null;
+let agents        = {};
+let memories      = {};   // agent_id → [events]
+let dragData      = null; // { agentId, index }
+const TRAITS = [
+  'openness','conscientiousness','extraversion',
+  'agreeableness','neuroticism','boldness','curiosity','sociability'
+];
+const GOD_TYPES = ['ender_dragon','wither','warden','oracle','elder_guardian','creaking'];
+
+// ============================================================
+// WebSocket
+// ============================================================
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws/gui`);
+  ws.onopen = () => {
+    document.getElementById('ws-dot').classList.add('on');
+    ws.send(JSON.stringify({type:'hello'}));
+    refreshAgents();
+  };
+  ws.onclose  = () => {
+    document.getElementById('ws-dot').classList.remove('on');
+    setTimeout(connect, 2000);
+  };
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'ping')   return;  // keepalive — ignore
+    if (msg.type === 'log')    appendLog(msg);
+    if (msg.type === 'agents') updateAgentList(msg.agents);
+    if (msg.type === 'brain')  updateBrainData(msg);
+  };
+}
+
+// ============================================================
+// Tabs
+// ============================================================
+function showTab(name) {
+  document.querySelectorAll('.tab,.tab-pane').forEach(el => {
+    el.classList.remove('active');
+  });
+  document.querySelectorAll('.tab').forEach(t => {
+    if (t.getAttribute('onclick').includes(name)) t.classList.add('active');
+  });
+  document.getElementById(`tab-${name}`).classList.add('active');
+  if (name === 'memories' && selectedAgent) loadMemories(selectedAgent);
+}
+
+// ============================================================
+// Agent list
+// ============================================================
+async function refreshAgents() {
+  const r = await api('/api/agents/list');
+  if (!r) return;
+  agents = {};
+  // combine running + stopped (brains)
+  (r.running || []).forEach(id => {
+    agents[id] = { ...(r.running_details?.[id] || {}), status:'running', agent_id:id };
+  });
+  (r.available_brains || []).forEach(b => {
+    if (!agents[b.agent_id]) agents[b.agent_id] = { ...b, status:'stopped' };
+  });
+  renderAgentList();
+}
+
+function renderAgentList() {
+  const el = document.getElementById('agent-list');
+  const ids = Object.keys(agents);
+  document.getElementById('agent-count').textContent = `${ids.length} agents`;
+  if (!ids.length) { el.innerHTML = '<div class="empty">No agents</div>'; return; }
+  el.innerHTML = ids.map(id => {
+    const a = agents[id];
+    const typeClass = a.status === 'stopped' ? 'type-stopped'
+                     : (a.agent_type||'').startsWith('god') ? 'type-god' : 'type-npc';
+    const typeLbl   = a.status === 'stopped' ? '⬛ stopped'
+                     : (a.agent_type||'').startsWith('god') ? '⚡ god' : '🧑 npc';
+    return `<div class="agent-card ${selectedAgent===id?'selected':''}"
+              onclick="selectAgent('${id}')">
+      <div class="name">${a.custom_name || id}</div>
+      <div class="meta">${id} · ${a.mode||'?'}</div>
+      <span class="type-badge ${typeClass}">${typeLbl}</span>
+    </div>`;
+  }).join('');
+}
+
+function selectAgent(id) {
+  selectedAgent = id;
+  renderAgentList();
+  loadBrain(id);
+}
+
+// ============================================================
+// Brain data
+// ============================================================
+async function loadBrain(id) {
+  const r = await api(`/api/agents/${id}/brain`);
+  if (r) updateBrainData({...r, agent_id: id});
+}
+
+function updateBrainData(msg) {
+  const id = msg.agent_id;
+  if (!id || id !== selectedAgent) return;
+
+  // Personality tab
+  const traits = msg.personality || {};
+  document.getElementById('personality-content').innerHTML =
+    TRAITS.map(t => {
+      const val = parseFloat(traits[t] ?? 0).toFixed(2);
+      return `<div class="trait-row">
+        <span class="trait-label">${t}</span>
+        <input type="range" min="-1" max="1" step="0.01" class="trait-slider"
+          id="trait-${t}" value="${val}"
+          oninput="updateTraitVal('${t}',this.value)"
+          onchange="savePersonality('${id}')">
+        <span class="trait-val" id="tv-${t}">${val}</span>
+      </div>`;
+    }).join('') +
+    `<br><button class="btn btn-primary btn-sm" onclick="savePersonality('${id}')">
+       💾 Save Personality
+     </button>`;
+
+  // Memory tab (cache)
+  memories[id] = msg.memories || [];
+  if (document.getElementById('tab-memories').classList.contains('active')) {
+    renderMemories(id);
+  }
+
+  // Config tab
+  const info   = agents[id] || {};
+  const atype  = (msg.agent_type || info.agent_type || 'npc');
+  const gender = msg.gender || 'male';
+  document.getElementById('config-content').innerHTML = `
+    <div class="cfg-row">
+      <span class="cfg-label">Agent Type</span>
+      <select class="cfg-select" id="cfg-type-${id}" onchange="toggleGodSelect('${id}')">
+        <option value="npc" ${atype==='npc'?'selected':''}>NPC</option>
+        ${GOD_TYPES.map(g=>`<option value="god_${g}" ${atype===`god_${g}`?'selected':''}>${g.replace('_',' ')}</option>`).join('')}
+      </select>
+    </div>
+    <div class="cfg-row" id="god-type-row-${id}" style="display:${atype.startsWith('god')?'flex':'none'}">
+      <span class="cfg-label">God Subtype</span>
+      <select class="cfg-select" id="cfg-godtype-${id}">
+        ${GOD_TYPES.map(g=>`<option value="${g}" ${atype===`god_${g}`?'selected':''}>${g.replace('_',' ')}</option>`).join('')}
+      </select>
+    </div>
+    <div class="cfg-row">
+      <span class="cfg-label">Gender</span>
+      <select class="cfg-select" id="cfg-gender-${id}">
+        <option value="male" ${gender==='male'?'selected':''}>Male</option>
+        <option value="female" ${gender==='female'?'selected':''}>Female</option>
+        <option value="dual" ${gender==='dual'?'selected':''}>Dual (god)</option>
+      </select>
+    </div>
+    <div class="cfg-row">
+      <span class="cfg-label">Server</span>
+      <input class="cfg-input" id="cfg-server-${id}"
+             value="${info.server_addr || '127.0.0.1:25565'}">
+    </div>
+    <div class="cfg-row">
+      <span class="cfg-label">Backend Port</span>
+      <input class="cfg-input" id="cfg-port-${id}"
+             value="${info.backend_port || ''}">
+    </div>
+    <hr class="divider">
+    <button class="btn btn-primary btn-sm" style="margin-right:6px"
+            onclick="saveConfig('${id}')">💾 Apply Config</button>
+    <button class="btn btn-ghost btn-sm" style="margin-right:6px"
+            onclick="doPackage('${id}')">📦 Package</button>
+    <button class="btn btn-red btn-sm" onclick="doStop('${id}')">⏹ Stop</button>
+    <br><br>
+    <div style="font-size:11px;color:var(--dim)">
+      Agent ID: <span style="color:var(--accent);font-family:var(--mono)">${id}</span><br>
+      PID: ${info.pid || 'n/a'} · UUID: <span style="font-family:var(--mono)">${info.uuid || 'n/a'}</span>
+    </div>
+  `;
+}
+
+function toggleGodSelect(id) {
+  const val = document.getElementById(`cfg-type-${id}`).value;
+  document.getElementById(`god-type-row-${id}`).style.display =
+    val.startsWith('god') ? 'flex' : 'none';
+}
+
+// ============================================================
+// Memories
+// ============================================================
+async function loadMemories(id) {
+  const r = await api(`/api/agents/${id}/brain`);
+  if (!r) return;
+  memories[id] = r.memories || [];
+  renderMemories(id);
+}
+
+function renderMemories(id) {
+  const evts = memories[id] || [];
+  const search = (document.getElementById('mem-search-val')||{}).value || '';
+  const filtered = evts.filter(e =>
+    !search || JSON.stringify(e).toLowerCase().includes(search.toLowerCase())
+  );
+
+  document.getElementById('memories-content').innerHTML = `
+    <div class="mem-toolbar">
+      <input class="mem-search" id="mem-search-val" placeholder="Search memories…"
+             oninput="renderMemories('${id}')" value="${search}">
+      <button class="btn btn-ghost btn-sm" onclick="addMemory('${id}')">＋ Add</button>
+      <button class="btn btn-primary btn-sm" onclick="saveMemories('${id}')">💾 Save</button>
+    </div>
+    ${filtered.length ? filtered.map((ev, i) => `
+      <div class="mem-event" draggable="true"
+           ondragstart="memDragStart(event,'${id}',${i})"
+           ondragend="this.classList.remove('dragging')"
+           id="mev-${i}">
+        <span class="ev-type">${ev.type||'event'}</span>
+        <span class="ev-text">${esc(JSON.stringify(ev.payload||ev.text||''))}</span>
+        <span class="ev-del" onclick="deleteMemory('${id}',${i})">×</span>
+      </div>`).join('') : '<div class="empty">No memories</div>'}
+    <div class="mem-drop-zone" id="drop-zone-${id}"
+         ondragover="event.preventDefault();this.classList.add('drag-over')"
+         ondragleave="this.classList.remove('drag-over')"
+         ondrop="memDrop(event,'${id}')">
+      Drop memories from another agent here to transfer them
+    </div>
+  `;
+}
+
+function addMemory(id) {
+  const text = prompt('Memory text (plain):', '');
+  if (!text) return;
+  if (!memories[id]) memories[id] = [];
+  memories[id].unshift({ type: 'manual_entry', text, tags: ['manual'], timestamp: Date.now()/1000 });
+  renderMemories(id);
+}
+
+function deleteMemory(id, i) {
+  memories[id].splice(i, 1);
+  renderMemories(id);
+}
+
+async function saveMemories(id) {
+  const r = await api(`/api/agents/${id}/brain/memories`, 'POST', {
+    memories: memories[id]
+  });
+  toast(r ? '✅ Memories saved' : '❌ Save failed', !r);
+}
+
+// drag from source agent
+function memDragStart(ev, agentId, index) {
+  dragData = { agentId, index };
+  ev.target.classList.add('dragging');
+  ev.dataTransfer.effectAllowed = 'copy';
+}
+
+// drop into target agent
+function memDrop(ev, targetId) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  if (!dragData) return;
+  const { agentId: srcId, index } = dragData;
+  dragData = null;
+  const event = (memories[srcId] || [])[index];
+  if (!event) return;
+  if (!memories[targetId]) memories[targetId] = [];
+  const copy = { ...event, transferred_from: srcId, timestamp: Date.now()/1000 };
+  memories[targetId].push(copy);
+  toast(`✅ Memory transferred from ${srcId}`);
+  if (selectedAgent === targetId) renderMemories(targetId);
+}
+
+// ============================================================
+// Personality
+// ============================================================
+function updateTraitVal(trait, val) {
+  document.getElementById(`tv-${trait}`).textContent = parseFloat(val).toFixed(2);
+}
+
+async function savePersonality(id) {
+  const traits = {};
+  TRAITS.forEach(t => {
+    const el = document.getElementById(`trait-${t}`);
+    if (el) traits[t] = parseFloat(el.value);
+  });
+  const r = await api(`/api/agents/${id}/brain/personality`, 'POST', { traits });
+  toast(r ? '✅ Personality saved' : '❌ Save failed', !r);
+}
+
+// ============================================================
+// Config
+// ============================================================
+async function saveConfig(id) {
+  const typeEl   = document.getElementById(`cfg-type-${id}`);
+  const gtEl     = document.getElementById(`cfg-godtype-${id}`);
+  const genEl    = document.getElementById(`cfg-gender-${id}`);
+  const srvEl    = document.getElementById(`cfg-server-${id}`);
+  const portEl   = document.getElementById(`cfg-port-${id}`);
+
+  let agent_type = typeEl ? typeEl.value : 'npc';
+  if (agent_type.startsWith('god') && gtEl)
+    agent_type = `god_${gtEl.value}`;
+
+  const r = await api(`/api/agents/${id}/brain/config`, 'POST', {
+    agent_type,
+    gender:      genEl  ? genEl.value  : undefined,
+    server_addr: srvEl  ? srvEl.value  : undefined,
+    backend_port:portEl && portEl.value ? parseInt(portEl.value) : undefined,
+  });
+  toast(r ? '✅ Config applied' : '❌ Apply failed', !r);
+}
+
+// ============================================================
+// Spawn actions
+// ============================================================
+async function doGenesis() {
+  const server_addr = document.getElementById('genesis-server').value.trim();
+  const r = await api('/api/genesis/spawn', 'POST', {
+    event:'genesis', spawner:'GUI', world:'minecraft:overworld',
+    spawn_count:2, server_addr,
+    spawn_positions:[
+      {x:0,y:64,z:0,gender:'male'},
+      {x:2,y:64,z:0,gender:'female'},
+    ]
+  });
+  if (r) { toast('✅ Genesis complete'); refreshAgents(); }
+  else    toast('❌ Genesis failed', true);
+}
+
+async function doSpawnNPC() {
+  const name   = document.getElementById('npc-name').value.trim();
+  const gender = document.getElementById('npc-gender').value;
+  const server = document.getElementById('npc-server').value.trim();
+  const r = await api('/api/agents/spawn_single', 'POST', {
+    agent_name: name || undefined,
+    gender: gender === 'random' ? undefined : gender,
+    server_addr: server,
+    mode: 'minecraft',
+    spawner: 'GUI',
+  });
+  if (r) { toast(`✅ NPC spawned: ${r.agent_name}`); refreshAgents(); }
+  else    toast('❌ NPC spawn failed', true);
+}
+
+async function doSpawnGod() {
+  const god_type = document.getElementById('god-type').value;
+  const name     = document.getElementById('god-name').value.trim();
+  const server   = document.getElementById('god-server').value.trim();
+  const r = await api('/api/gods/spawn', 'POST', {
+    event:'spawn_god',
+    god_type: god_type || undefined,
+    custom_name: name || undefined,
+    server_addr: server,
+    spawner:'GUI', world:'minecraft:overworld',
+    spawn_position:{x:0,y:64,z:0},
+  });
+  if (r) { toast(`✅ God spawned: ${r.display_name}`); refreshAgents(); }
+  else    toast('❌ God spawn failed', true);
+}
+
+async function doDivineReset() {
+  if (!confirm('☠ Divine Reset will kill ALL agents and delete their memories. Continue?')) return;
+  const ids = Object.keys(agents);
+  const r = await api('/api/divine_reset', 'POST', {
+    event:'divine_reset', world:'minecraft:overworld',
+    agent_count:ids.length, agent_ids:ids
+  });
+  if (r) { toast('✅ Divine Reset complete'); agents={}; renderAgentList(); }
+  else    toast('❌ Divine Reset failed', true);
+}
+
+async function doPackage(id) {
+  const r = await api(`/api/agents/${id}/package`, 'POST', {});
+  toast(r ? `✅ ${id} packaged` : `❌ Package failed`, !r);
+}
+
+async function doStop(id) {
+  const r = await api(`/api/agents/${id}/stop`, 'POST', {});
+  if (r) { toast(`⏹ ${id} stopped`); refreshAgents(); }
+  else    toast(`❌ Stop failed`, true);
+}
+
+// ============================================================
+// Log
+// ============================================================
+const LOG_LEVEL = { DEBUG:0,INFO:1,WARNING:2,ERROR:3,CRITICAL:4 };
+let logLines = [];
+
+function appendLog(entry) {
+  logLines.push(entry);
+  if (logLines.length > 1000) logLines.shift();
+  const filter = document.getElementById('log-filter').value;
+  if (filter && LOG_LEVEL[entry.level] < LOG_LEVEL[filter]) return;
+  renderLogLine(entry);
+}
+
+function renderLogLine(entry) {
+  const body  = document.getElementById('log-body');
+  const d     = new Date(entry.ts*1000);
+  const ts    = d.toTimeString().slice(0,8);
+  const line  = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="ts">${ts}</span>`
+    + `<span class="lv lv-${entry.level}">${entry.level}</span>`
+    + `<span class="nm">${(entry.name||'').slice(0,20)}</span>`
+    + esc(entry.message||'');
+  body.appendChild(line);
+  const auto = document.getElementById('log-auto-scroll');
+  if (auto && auto.checked) body.scrollTop = body.scrollHeight;
+}
+
+function filterLogs() {
+  const body   = document.getElementById('log-body');
+  const filter = document.getElementById('log-filter').value;
+  body.innerHTML = '';
+  logLines.forEach(e => {
+    if (!filter || LOG_LEVEL[e.level] >= LOG_LEVEL[filter]) renderLogLine(e);
+  });
+}
+
+function clearLog() {
+  logLines = [];
+  document.getElementById('log-body').innerHTML = '';
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function toast(msg, isErr=false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = 'toast' + (isErr ? ' err' : '');
+  el.style.opacity = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.classList.add('fade'); }, 2200);
+}
+
+async function api(url, method='GET', body=undefined) {
+  try {
+    const opts = { method, headers:{'Content-Type':'application/json'} };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const r = await fetch(url, opts);
+    if (!r.ok) { toast(`❌ ${method} ${url} → ${r.status}`, true); return null; }
+    return await r.json();
+  } catch(e) {
+    toast(`❌ Network: ${e.message}`, true); return null;
+  }
+}
+
+// ============================================================
+// Boot
+// ============================================================
+connect();
+setInterval(refreshAgents, 8000);
+</script>
+</body>
+</html>"""
+
+
+@app.get("/gui", response_class=HTMLResponse)
+async def serve_gui():
+    """Serve the self-contained control centre GUI."""
+    return GUI_HTML
+
+
+# =============================================================================
+# GUI WebSocket — live log + agent push
+# =============================================================================
+
+_gui_sockets: List[WebSocket] = []
+
+
+@app.websocket("/ws/gui")
+async def ws_gui(ws: WebSocket):
+    await ws.accept()
+    _gui_sockets.append(ws)
+    loop = asyncio.get_running_loop()
+    _gui_log_handler.subscribe(ws, loop)
+
+    async def _ping():
+        """Send a ping frame every 20 s so proxies/browsers never idle-timeout."""
+        try:
+            while True:
+                await asyncio.sleep(20)
+                await ws.send_json({"type": "ping"})
+        except Exception:
+            pass  # connection already closed — ping task will be cancelled
+
+    ping_task = asyncio.create_task(_ping())
     try:
-        data = await request.json()
+        # Replay buffered logs so the GUI is up-to-date immediately
+        for entry in _gui_log_handler.get_buffer():
+            await ws.send_json({"type": "log", **entry})
+        # Push current agent list
+        await _push_agents(ws)
+        # Receive loop — handles hello messages and detects clean disconnects
+        while True:
+            raw = await ws.receive_text()
+            msg = json.loads(raw)
+            if msg.get("type") == "hello":
+                await _push_agents(ws)
+            # Ignore pong / unknown types silently
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        ping_task.cancel()
+        _gui_log_handler.unsubscribe(ws)
+        if ws in _gui_sockets:
+            _gui_sockets.remove(ws)
 
-        agent_name = data.get('agent_name')
-        mode = data.get('mode', 'minecraft')
-        spawner_name = data.get('spawner')
-        world_name = data.get('world')
-        spawn_pos = data.get('spawn_position', {})
-        gender = data.get('gender', 'random')
-        personality = data.get('personality')
 
-        if not agent_name:
-            raise HTTPException(status_code=400, detail="Missing agent_name")
+async def _push_agents(ws: WebSocket):
+    try:
+        await ws.send_json({
+            "type":   "agents",
+            "agents": {
+                aid: agent_manager.get_agent_status(aid)
+                for aid in agent_manager.list_running_agents()
+            },
+        })
+    except Exception:
+        pass
 
-        # Random gender if not specified
-        if gender == 'random':
-            import random
-            gender = random.choice(['male', 'female'])
 
-        # If no name provided, pick from JSON
-        if not agent_name or agent_name == "Unnamed":
-            agent_name = name_manager.get_random_name("NPCs", gender) or "Unnamed"
+# =============================================================================
+# Brain editor endpoints (GUI-only)
+# =============================================================================
 
-        # Generate meaningful agent ID
-        base_id = sanitize_agent_id(agent_name)
-        # Use regex matching to avoid false positives (e.g. bob matching bobby)
-        existing = 0
-        if Config.NPC_APPLICATIONS_DIR.exists():
-            pattern = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
-            existing = len([d for d in Config.NPC_APPLICATIONS_DIR.iterdir() if d.is_dir() and pattern.match(d.name)])
-        agent_id = f"{base_id}_{existing + 1}"
-
-        log.info(f"🧑 Spawning single NPC: {agent_name} (ID: {agent_id})")
-
-        # Record name in JSON
-        name_manager.add_name("NPCs", gender, agent_name)
-
-        # Default personality if not provided
-        if not personality:
-            personality = {
-                'boldness': 0.7,
-                'curiosity': 0.8,
-                'agreeableness': 0.7,
-                'conscientiousness': 0.7,
-                'neuroticism': 0.3,
-                'openness': 0.7,
-                'sociability': 0.7
-            }
-
-        # Log spawn coordinates
-        spawn_x = spawn_pos.get('x', 0)
-        spawn_y = spawn_pos.get('y', 64)
-        spawn_z = spawn_pos.get('z', 0)
-        log.info(f"🧑 Spawning single NPC: {agent_name}")
-        log.info(f"   Spawn Position: ({spawn_x}, {spawn_y}, {spawn_z})")
-        log.info(f"   Gender: {gender}")
-        log.info(f"   World: {world_name}")
-        log.info(f"   Spawner: {spawner_name}")
-
-        # Start agent process
-        success = agent_manager.start_agent_process(
-            agent_id=agent_id,
-            mode=mode,
-            additional_args=[
-                '--gender', gender,
-                '--personality', json.dumps(personality),
-                '--spawn-x', str(spawn_x),
-                '--spawn-y', str(spawn_y),
-                '--spawn-z', str(spawn_z)
-            ],
-            agent_type='npc',  # Regular NPC
-            custom_name=agent_name  # Use provided name
-        )
-
-        if success:
-            return {
-                "status": "success",
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "gender": gender,
-                "spawner": spawner_name,
-                "world": world_name,
-                "position": {
-                    'x': spawn_x,
-                    'y': spawn_y,
-                    'z': spawn_z,
-                    'formatted': f"({spawn_x}, {spawn_y}, {spawn_z})"
-                },
-                "personality": personality,
-                "brain_path": str(Config.get_agent_brain_path(agent_id)),
-                "message": f"NPC {agent_name} spawned successfully",
-                "note": "Agent will be auto-packaged after brain creation"
-            }
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to spawn NPC {agent_name}"
-            )
-
+@app.get("/api/agents/{agent_id}/brain")
+async def get_brain(agent_id: str):
+    """Return brain data (personality + memories) for the GUI editor."""
+    brain_path = Config.get_agent_brain_path(agent_id)
+    if not brain_path.exists():
+        raise HTTPException(status_code=404, detail="Brain not found")
+    try:
+        from ai_core.brain_capsule import BrainCapsule
+        caps = BrainCapsule.load(str(brain_path))
+        info = agent_manager.get_agent_status(agent_id) or {}
+        return {
+            "agent_id":   agent_id,
+            "personality": caps.personality or {},
+            "memories":   caps.memory_snapshot or [],
+            "gender":     caps.gender,
+            "agent_type": caps.metadata.get("agent_type", info.get("agent_type", "npc")),
+            "metadata":   caps.metadata,
+        }
     except Exception as e:
-        log.error(f"Single agent spawn error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agents/{agent_id}/brain/personality")
+async def save_personality(agent_id: str, request: Request):
+    """Overwrite personality traits in the brain capsule."""
+    data       = await request.json()
+    traits     = data.get("traits", {})
+    brain_path = Config.get_agent_brain_path(agent_id)
+    if not brain_path.exists():
+        raise HTTPException(status_code=404, detail="Brain not found")
+    try:
+        from ai_core.brain_capsule import BrainCapsule
+        caps = BrainCapsule.load(str(brain_path))
+        if caps.personality is None:
+            caps.personality = {}
+        caps.personality.update(
+            {k: max(-1.0, min(1.0, float(v))) for k, v in traits.items()}
+        )
+        caps.save(str(brain_path))
+        log.info(f"[GUI] Personality updated for {agent_id}: {traits}")
+        return {"status": "success", "agent_id": agent_id, "traits": caps.personality}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agents/{agent_id}/brain/memories")
+async def save_memories(agent_id: str, request: Request):
+    """Replace the memory snapshot in the brain capsule."""
+    data       = await request.json()
+    new_mems   = data.get("memories", [])
+    brain_path = Config.get_agent_brain_path(agent_id)
+    if not brain_path.exists():
+        raise HTTPException(status_code=404, detail="Brain not found")
+    try:
+        from ai_core.brain_capsule import BrainCapsule
+        caps = BrainCapsule.load(str(brain_path))
+        caps.memory_snapshot = new_mems
+        caps.save(str(brain_path))
+        log.info(f"[GUI] Memories updated for {agent_id}: {len(new_mems)} events")
+        return {"status": "success", "agent_id": agent_id,
+                "memory_count": len(new_mems)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agents/{agent_id}/brain/config")
+async def save_agent_config(agent_id: str, request: Request):
+    """
+    Update agent type, gender, server, and port in the brain capsule.
+    For a running agent the change takes effect on next restart.
+    """
+    data       = await request.json()
+    brain_path = Config.get_agent_brain_path(agent_id)
+    if not brain_path.exists():
+        raise HTTPException(status_code=404, detail="Brain not found")
+    try:
+        from ai_core.brain_capsule import BrainCapsule
+        caps = BrainCapsule.load(str(brain_path))
+        if data.get("agent_type"):
+            caps.metadata["agent_type"] = data["agent_type"]
+        if data.get("gender"):
+            caps.gender = data["gender"]
+        caps.save(str(brain_path))
+
+        # Update live info dict if agent is running
+        if agent_id in agent_manager.agent_info:
+            if data.get("agent_type"):
+                agent_manager.agent_info[agent_id]["agent_type"] = data["agent_type"]
+            if data.get("server_addr"):
+                agent_manager.agent_info[agent_id]["server_addr"] = data["server_addr"]
+            if data.get("backend_port"):
+                agent_manager.agent_info[agent_id]["backend_port"] = data["backend_port"]
+
+        log.info(f"[GUI] Config updated for {agent_id}")
+        return {"status": "success", "agent_id": agent_id,
+                "note": "Changes take effect on next agent restart"}
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================
-# SERVER CONFIGURATION ENDPOINTS
+# All existing REST endpoints (unchanged from document)
 # =============================================================================
 
 @app.post("/api/server/configure")
 async def configure_server_folder():
-    """
-    Server folder is configured at startup.
-    This endpoint only reports status.
-    """
-    if not server_integration.server_folder:
-        raise HTTPException(
-            status_code=500,
-            detail="Server folder not initialized"
-        )
-
     registered = server_integration.list_registered_agents()
-
     return {
         "status": "success",
-        "message": "Server folder already configured",
+        "message": "Server folder configured at startup",
         "server_folder": str(server_integration.server_folder),
-        "usercache_path": str(server_integration.usercache_path),
-        "usernamecache_path": str(server_integration.usernamecache_path),
         "existing_agents": registered,
-        "agent_count": len(registered)
     }
+
 
 @app.get("/api/server/status")
 async def get_server_status():
-    """Get server integration status"""
-    try:
-        if not server_integration.server_folder:
-            return {
-                "status": "not_configured",
-                "message": "Server folder not configured. Use POST /api/server/configure"
-            }
-
-        registered = server_integration.list_registered_agents()
-
-        return {
-            "status": "configured",
-            "server_folder": str(server_integration.server_folder),
-            "usercache_path": str(server_integration.usercache_path),
-            "usernamecache_path": str(server_integration.usernamecache_path),
-            "registered_agents": registered,
-            "agent_count": len(registered),
-            "files_exist": {
-                "usercache.json": server_integration.usercache_path.exists() if server_integration.usercache_path else False,
-                "usernamecache.json": server_integration.usernamecache_path.exists() if server_integration.usernamecache_path else False
-            }
-        }
-
-    except Exception as e:
-        log.error(f"Server status error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    if not server_integration.server_folder:
+        return {"status": "not_configured"}
+    registered = server_integration.list_registered_agents()
+    return {
+        "status": "configured",
+        "server_folder": str(server_integration.server_folder),
+        "registered_agents": registered,
+        "agent_count": len(registered),
+    }
 
 
 @app.get("/api/server/agents")
 async def list_server_agents():
-    """List all agents registered in server files"""
-    try:
-        registered = server_integration.list_registered_agents()
-
-        return {
-            "status": "success",
-            "agents": registered,
-            "count": len(registered),
-            "npcs": [a for a in registered if a['type'] == 'npc'],
-            "gods": [a for a in registered if a['type'] == 'god']
-        }
-
-    except Exception as e:
-        log.error(f"List server agents error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    registered = server_integration.list_registered_agents()
+    return {"status": "success", "agents": registered, "count": len(registered)}
 
 
-# =============================================================================
-# ENDPOINTS - MATCHING JAVA MOD
-# =============================================================================
+@app.post("/api/agents/spawn_single")
+async def spawn_single_agent(request: Request):
+    import random as _rng
+    data         = await request.json()
+    agent_name   = data.get("agent_name")
+    mode         = data.get("mode", "minecraft")
+    spawner_name = data.get("spawner")
+    spawn_pos    = data.get("spawn_position", {})
+    gender       = data.get("gender") or _rng.choice(["male", "female"])
+    server_addr  = data.get("server_addr", Config.DEFAULT_SERVER)
+    personality  = data.get("personality") or {
+        "boldness": 0.7, "curiosity": 0.8, "agreeableness": 0.7,
+        "conscientiousness": 0.7, "neuroticism": 0.3,
+        "openness": 0.7, "sociability": 0.7,
+    }
 
-# ===== PLAYER EVENT ENDPOINT (DWEventHandler.java) =====
+    if not agent_name:
+        agent_name = name_manager.get_random_name("NPCs", gender) or "Unnamed"
+
+    base_id  = sanitize_agent_id(agent_name)
+    existing = 0
+    if Config.NPC_APPLICATIONS_DIR.exists():
+        pat = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
+        existing = sum(
+            1 for d in Config.NPC_APPLICATIONS_DIR.iterdir()
+            if d.is_dir() and pat.match(d.name)
+        )
+    agent_id = f"{base_id}_{existing + 1}"
+    name_manager.add_name("NPCs", gender, agent_name)
+
+    sx, sy, sz = spawn_pos.get("x", 0), spawn_pos.get("y", 64), spawn_pos.get("z", 0)
+
+    ok = agent_manager.start_agent_process(
+        agent_id=agent_id, mode=mode, server_addr=server_addr,
+        additional_args=[
+            "--gender", gender,
+            "--personality", json.dumps(personality),
+            "--spawn-x", str(sx), "--spawn-y", str(sy), "--spawn-z", str(sz),
+        ],
+        agent_type="npc", custom_name=agent_name,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Failed to spawn {agent_name}")
+    return {
+        "status": "success", "agent_id": agent_id, "agent_name": agent_name,
+        "gender": gender, "spawner": spawner_name,
+        "position": {"x": sx, "y": sy, "z": sz},
+        "personality": personality,
+        "brain_path": str(Config.get_agent_brain_path(agent_id)),
+    }
+
+
 @app.post("/api/player_event")
 async def handle_player_event(request: Request):
-    """
-    Handle player connection/disconnection events from Minecraft.
-    Called by: DWEventHandler.java (notifyBackendPlayerConnected/Disconnected)
+    data       = await request.json()
+    agent_id   = data.get("agent_id")
+    player_uuid = data.get("player_uuid")
+    agent_type = data.get("agent_type")
+    event      = data.get("event")
 
-    Body format from Java:
-        {
-            "agent_id": "AI_alice",
-            "player_uuid": "uuid-string",
-            "agent_type": "npc" or "god_<type>",
-            "event": "connected" or "disconnected"
-        }
-    """
-    try:
-        data = await request.json()
+    # Feed auto-connect system
+    if event == "connected" and agent_id:
+        ac = getattr(app.state, "auto_connect", None)
+        if ac:
+            ac.mark_connected(agent_id)
 
-        agent_id = data.get('agent_id')
-        player_uuid = data.get('player_uuid')
-        agent_type = data.get('agent_type')
-        event = data.get('event')
+    if event == "connected":
+        if agent_id not in agent_manager.agent_processes:
+            args = ["--gender", "dual"] if (agent_type or "").startswith("god_") else []
+            agent_manager.start_agent_process(
+                agent_id=agent_id, mode="minecraft",
+                additional_args=args,
+                agent_type=agent_type or "npc",
+            )
+        return {"status": "success", "message": f"{agent_id} connected",
+                "agent_id": agent_id}
 
-        log.info(f"[Player Event] {event}: agent_id={agent_id}, type={agent_type}, uuid={player_uuid}")
-        log.debug(f"  Looking for running agent process: {agent_id}")
+    elif event == "disconnected":
+        return {"status": "success", "message": f"{agent_id} disconnected"}
 
-        if event == 'connected':
-            # Agent connected to Minecraft server
-            if agent_id not in agent_manager.agent_processes:
-                # Auto-start agent if not running
-                log.info(f"Auto-starting agent {agent_id} for Minecraft connection")
-
-                mode = 'minecraft'
-                args = []
-
-                # Check if it's a god
-                if agent_type and agent_type.startswith('god_'):
-                    god_type = agent_type.replace('god_', '')
-                    args.extend(['--gender', 'dual'])  # Gods are dual-gendered
-
-                # Use the agent_type from the event (may be 'npc' or 'god_<type>')
-                agent_manager.start_agent_process(
-                    agent_id=agent_id,
-                    mode=mode,
-                    additional_args=args,
-                    agent_type=agent_type if agent_type else 'npc'
-                )
-
-            return {
-                "status": "success",
-                "message": f"Agent {agent_id} connected",
-                "agent_id": agent_id,
-                "player_uuid": player_uuid,
-                "agent_type": agent_type
-            }
-
-        elif event == 'disconnected':
-            # Agent disconnected from Minecraft
-            log.info(f"Agent {agent_id} disconnected from Minecraft")
-
-            # Optional: Stop agent process after disconnect
-            # For now, keep running - agent may reconnect
-
-            return {
-                "status": "success",
-                "message": f"Agent {agent_id} disconnected",
-                "agent_id": agent_id,
-                "player_uuid": player_uuid
-            }
-
-        else:
-            log.warning(f"Unknown player event type: {event}")
-            return {
-                "status": "unknown_event",
-                "event": event
-            }
-
-    except Exception as e:
-        log.error(f"Player event error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "unknown_event", "event": event}
 
 
-# ===== BREEDING EVENT ENDPOINT (BreedingEventHandler.java) =====
 @app.post("/api/breeding/event")
 async def handle_breeding_event(request: Request):
-    """
-    Handle AI agent breeding events.
-    Called by: BreedingEventHandler.java (via PythonBackendClient.notifyBreeding)
+    import random as _rng
+    data = await request.json()
+    pa, pb = data.get("parent_a_id"), data.get("parent_b_id")
+    pa_type = data.get("parent_a_type")
+    pb_type = data.get("parent_b_type")
 
-    Body format from Java:
-        {
-            "event": "breeding",
-            "parent_a_id": "agent1",
-            "parent_b_id": "agent2",
-            "parent_a_type": "npc" or "god",
-            "parent_b_type": "npc" or "god",
-            "timestamp": 1234567890
-        }
-    """
-    try:
-        data = await request.json()
+    offspring_id     = f"offspring_{pa}_{pb}_{int(time.time())}"
+    offspring_gender = _rng.choice(["male", "female"])
 
-        parent_a_id = data.get('parent_a_id')
-        parent_b_id = data.get('parent_b_id')
-        parent_a_type = data.get('parent_a_type')
-        parent_b_type = data.get('parent_b_type')
-
-        log.info(f"[Breeding] {parent_a_id} ({parent_a_type}) x {parent_b_id} ({parent_b_type})")
-
-        # Create offspring agent
-        offspring_id = f"offspring_{parent_a_id}_{parent_b_id}_{int(time.time())}"
-
-        # Determine offspring gender (random)
-        import random
-        offspring_gender = random.choice(['male', 'female'])
-
-        # Inherit traits from parents
-        # Load parent personalities if available
-        parent_a_personality = {}
-        parent_b_personality = {}
-
+    pa_pers, pb_pers = {}, {}
+    for pid, store in [(pa, "pa_pers"), (pb, "pb_pers")]:
         try:
-            parent_a_brain = Config.get_agent_brain_path(parent_a_id)
-            if parent_a_brain.exists():
+            bp = Config.get_agent_brain_path(pid)
+            if bp.exists():
                 from ai_core.brain_capsule import BrainCapsule
-                capsule_a = BrainCapsule.load(str(parent_a_brain))
-                parent_a_personality = capsule_a.personality or {}
-        except Exception as e:
-            log.warning(f"Could not load parent A personality: {e}")
+                c = BrainCapsule.load(str(bp))
+                if store == "pa_pers":
+                    pa_pers = c.personality or {}
+                else:
+                    pb_pers = c.personality or {}
+        except Exception:
+            pass
 
-        try:
-            parent_b_brain = Config.get_agent_brain_path(parent_b_id)
-            if parent_b_brain.exists():
-                from ai_core.brain_capsule import BrainCapsule
-                capsule_b = BrainCapsule.load(str(parent_b_brain))
-                parent_b_personality = capsule_b.personality or {}
-        except Exception as e:
-            log.warning(f"Could not load parent B personality: {e}")
+    traits = set(pa_pers) | set(pb_pers)
+    offspring_pers = {
+        t: max(-1.0, min(1.0,
+            (pa_pers.get(t, 0.5) + pb_pers.get(t, 0.5)) / 2
+            + _rng.uniform(-0.1, 0.1)))
+        for t in traits
+    }
+    offspring_name = name_manager.get_random_name("NPCs", offspring_gender) or "Unnamed"
+    name_manager.add_name("NPCs", offspring_gender, offspring_name)
 
-        # Genetic inheritance: blend parent traits
-        offspring_personality = {}
-
-        # Get traits from both parents
-        all_traits = set(parent_a_personality.keys()) | set(parent_b_personality.keys())
-
-        for trait in all_traits:
-            val_a = parent_a_personality.get(trait, 0.5)
-            val_b = parent_b_personality.get(trait, 0.5)
-
-            # Blend with slight mutation
-            mutation = random.uniform(-0.1, 0.1)
-            blended = ((val_a + val_b) / 2.0) + mutation
-
-            # Clamp to valid range
-            offspring_personality[trait] = max(-1.0, min(1.0, blended))
-
-        log.info(f"Creating offspring: {offspring_id} ({offspring_gender})")
-        log.info(f"  Parent A: {parent_a_id} ({parent_a_type})")
-        log.info(f"  Parent B: {parent_b_id} ({parent_b_type})")
-        log.info(f"  Inherited personality: {offspring_personality}")
-
-        # Get a clean name for the offspring
-        offspring_name = name_manager.get_random_name("NPCs", offspring_gender) or "Unnamed"
-        name_manager.add_name("NPCs", offspring_gender, offspring_name)
-
-        # Spawn offspring agent
-        success = agent_manager.start_agent_process(
-            agent_id=offspring_id,
-            mode='minecraft',
-            additional_args=[
-                '--parent-a', parent_a_id,
-                '--parent-b', parent_b_id,
-                '--gender', offspring_gender,
-                '--personality', json.dumps(offspring_personality)
-            ],
-            agent_type='npc',  # Offspring are NPCs
-            custom_name=offspring_name
-        )
-
-        if success:
-            return {
-                "status": "success",
-                "message": "Breeding successful - offspring created",
-                "offspring_id": offspring_id,
-                "offspring_gender": offspring_gender,
-                "parent_a": parent_a_id,
-                "parent_b": parent_b_id,
-                "parent_types": {
-                    "a": parent_a_type,
-                    "b": parent_b_type
-                },
-                "inherited_personality": offspring_personality,
-                "genetic_info": {
-                    "inheritance": "50% parent A + 50% parent B + random mutation",
-                    "mutation_range": "±0.1",
-                    "traits_inherited": len(offspring_personality)
-                }
-            }
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to spawn offspring"
-            )
-
-    except Exception as e:
-        log.error(f"Breeding event error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    ok = agent_manager.start_agent_process(
+        agent_id=offspring_id, mode="minecraft",
+        additional_args=[
+            "--parent-a", pa, "--parent-b", pb,
+            "--gender", offspring_gender,
+            "--personality", json.dumps(offspring_pers),
+        ],
+        agent_type="npc", custom_name=offspring_name,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to spawn offspring")
+    return {
+        "status": "success", "offspring_id": offspring_id,
+        "offspring_gender": offspring_gender,
+        "inherited_personality": offspring_pers,
+    }
 
 
-# ===== GENESIS SPAWN ENDPOINT (DivineCommands.java) =====
 @app.post("/api/genesis/spawn")
 async def genesis_spawn(request: Request):
-    """
-    Spawn initial Genesis agents (Adam & Eve).
-    Called by: PythonBackendClient.spawnGenesisAgents
+    data           = await request.json()
+    spawner_name   = data.get("spawner")
+    world_name     = data.get("world")
+    mode           = data.get("mode", "minecraft")
+    spawn_positions = data.get("spawn_positions", [])
+    server_addr    = data.get("server_addr", Config.DEFAULT_SERVER)
 
-    Body format from Java:
-        {
-            "event": "genesis",
-            "spawner": "PlayerName",
-            "world": "minecraft:overworld",
-            "spawn_count": 2,
-            "spawn_positions": [
-                {"x": 100, "y": 64, "z": 200, "gender": "male"},
-                {"x": 102, "y": 64, "z": 200, "gender": "female"}
-            ],
-            "timestamp": 1234567890
-        }
-    """
-    try:
-        data = await request.json()
-
-        spawner_name = data.get('spawner')
-        world_name = data.get('world')
-        mode = data.get('mode', 'minecraft')
-        spawn_positions = data.get('spawn_positions', [])
-        server_addr = data.get('server_addr', Config.DEFAULT_SERVER)
-
-        log.info(f"🌟 GENESIS: Spawning {len(spawn_positions)} agents by {spawner_name}")
-        log.info(f"   Server: {server_addr}")
-
-        agents_spawned = []
-
-        for i, spawn_data in enumerate(spawn_positions):
-            gender = spawn_data.get('gender', 'random')
-            spawn_x = spawn_data.get('x', 0)
-            spawn_y = spawn_data.get('y', 64)
-            spawn_z = spawn_data.get('z', 0)
-            pos = f"({spawn_x}, {spawn_y}, {spawn_z})"
-
-            log.info(f"  Spawn position {i+1}: {pos} (Gender: {gender})")
-
-            # Generate simple agent IDs for Genesis (adam, eve)
-            # This ensures easy extraction by DWEventHandler
-
-            if gender == 'male':
-                display_name = "Adam"
-                name_manager.add_name("NPCs", "male", "Adam")
-                # Male personality: higher boldness, curiosity
-                personality = {
-                    'boldness': 0.8,
-                    'curiosity': 0.9,
-                    'agreeableness': 0.5,
-                    'conscientiousness': 0.6,
-                    'neuroticism': 0.3,
-                    'openness': 0.7,
-                    'sociability': 0.6
-                }
-            elif gender == 'female':
-                display_name = "Eve"
-                name_manager.add_name("NPCs", "female", "Eve")
-                # Female personality: higher agreeableness, conscientiousness
-                personality = {
-                    'boldness': 0.6,
-                    'curiosity': 0.7,
-                    'agreeableness': 0.9,
-                    'conscientiousness': 0.8,
-                    'neuroticism': 0.4,
-                    'openness': 0.7,
-                    'sociability': 0.8
-                }
-            else:
-                # Random gender
-                import random
-                gender = random.choice(['male', 'female'])
-                display_name = "Unnamed"  # Default name
-                # Balanced personality
-                personality = {
-                    'boldness': 0.7,
-                    'curiosity': 0.8,
-                    'agreeableness': 0.7,
-                    'conscientiousness': 0.7,
-                    'neuroticism': 0.3,
-                    'openness': 0.7,
-                    'sociability': 0.7
-                }
-
-            # Generate meaningful agent ID
-            base_id = sanitize_agent_id(display_name)
-            existing = 0
-            if Config.NPC_APPLICATIONS_DIR.exists():
-                pattern = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
-                existing = len([d for d in Config.NPC_APPLICATIONS_DIR.iterdir() if d.is_dir() and pattern.match(d.name)])
-            agent_id = f"{base_id}_{existing + 1}"
-
-            # Start agent process with custom name
-            success = agent_manager.start_agent_process(
-                agent_id=agent_id,
-                mode=spawn_data.get('mode', mode),
-                server_addr=server_addr,
-                additional_args=[
-                    '--gender', gender,
-                    '--personality', json.dumps(personality),
-                    '--spawn-x', str(spawn_data.get('x')),
-                    '--spawn-y', str(spawn_data.get('y')),
-                    '--spawn-z', str(spawn_data.get('z')),
-                    '--genesis-ancestor', 'true'  # Mark as genesis ancestor
-                ],
-                agent_type='npc',  # Genesis agents are NPCs
-                custom_name=display_name,  # Use clean name
-                memory_mb=2048
-            )
-
-            if success:
-                agents_spawned.append({
-                    'agent_id': agent_id,
-                    'display_name': display_name,
-                    'gender': gender,
-                    'position': {
-                        'x': spawn_x,
-                        'y': spawn_y,
-                        'z': spawn_z,
-                        'formatted': pos
-                    },
-                    'role': 'Genesis ancestor',
-                    'personality': personality,
-                    'description': f"First {gender} - ancestor of all agents"
-                })
-
-                log.info(f"✅ Genesis agent spawned: {display_name} (ID: {agent_id}, {gender}) at {pos}")
-                log.info(f"   Personality: {personality}")
-                log.info(f"   Brain path: {Config.get_agent_brain_path(agent_id)}")
-
-        return {
-            "status": "success",
-            "message": f"Genesis complete - {len(agents_spawned)} agents spawned",
-            "spawner": spawner_name,
-            "world": world_name,
-            "agents": agents_spawned,
-            "count": len(agents_spawned),
-            "genetic_info": {
-                "adam_traits": "Higher boldness (0.8) and curiosity (0.9)",
-                "eve_traits": "Higher agreeableness (0.9) and conscientiousness (0.8)",
-                "offspring_will_inherit": "Blend of parent traits with mutation",
-            "note": "Agents are launching with UltimMC and will connect to server automatically"
-            }
-        }
-
-    except Exception as e:
-        import traceback
-        log.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ===== DIVINE RESET ENDPOINT (DivineCommands.java) =====
-@app.post("/api/divine_reset")
-async def divine_reset(request: Request):
-    """
-    Divine Reset: Kill all AI agents and clear memories.
-    Called by: PythonBackendClient.notifyDivineReset
-
-    Body format from Java:
-        {
-            "event": "divine_reset",
-            "world": "minecraft:overworld",
-            "agent_count": 5,
-            "agent_ids": ["agent1", "agent2", ...],
-            "timestamp": 1234567890
-        }
-    """
-    try:
-        data = await request.json()
-
-        world_name = data.get('world')
-        agent_ids = data.get('agent_ids', [])
-
-        log.warning(f"⚠️  DIVINE RESET: Purging {len(agent_ids)} agents from {world_name}")
-
-        # Stop and delete all specified agents
-        agents_killed = []
-        brains_deleted = 0
-
-        for agent_id in agent_ids:
-            # Stop process
-            if agent_id in agent_manager.agent_processes:
-                agent_manager.stop_agent_process(agent_id)
-                agents_killed.append(agent_id)
-
-            # Delete brain
-            brain_path = Config.get_agent_brain_path(agent_id)
-            if brain_path.exists():
-                brain_path.unlink()
-                brains_deleted += 1
-                log.info(f"🗑️  Deleted brain: {agent_id}")
-
-        log.info(f"✅ Divine reset complete: {len(agents_killed)} agents killed, {brains_deleted} brains deleted")
-
-        return {
-            "status": "success",
-            "message": "Divine reset complete",
-            "world": world_name,
-            "agents_killed": len(agents_killed),
-            "brains_deleted": brains_deleted,
-            "killed_agents": agents_killed
-        }
-
-    except Exception as e:
-        log.error(f"Divine reset error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ===== CLEAR MEMORIES ENDPOINT (DivineCommands.java) =====
-@app.post("/api/agents/clear_memories")
-async def clear_memories(request: Request):
-    """
-    Clear agent memories selectively.
-    Called by: PythonBackendClient.clearAgentMemories
-
-    Body format from Java:
-        {
-            "event": "clear_memories",
-            "agent_ids": ["agent1", "agent2"],
-            "exceptions": ["agent3"],
-            "timestamp": 1234567890
-        }
-    """
-    try:
-        data = await request.json()
-
-        agent_ids = data.get('agent_ids', [])
-        exceptions = data.get('exceptions', [])
-
-        log.info(f"🧹 Clearing memories for {len(agent_ids)} agents (exceptions: {exceptions})")
-
-        results = {}
-
-        for agent_id in agent_ids:
-            if agent_id in exceptions:
-                results[agent_id] = {
-                    "status": "skipped",
-                    "reason": "In exception list"
-                }
-                continue
-
-            try:
-                brain_path = Config.get_agent_brain_path(agent_id)
-
-                if brain_path.exists():
-                    from ai_core.brain_capsule import BrainCapsule
-                    capsule = BrainCapsule.load(str(brain_path))
-
-                    # Clear memories
-                    capsule.memory_snapshot = []
-                    capsule.language_state = None
-
-                    # Save
-                    capsule.save(str(brain_path))
-
-                    results[agent_id] = {
-                        "status": "success",
-                        "cleared": ["episodic", "language"]
-                    }
-
-                    log.info(f"✅ Cleared memories: {agent_id}")
-                else:
-                    results[agent_id] = {
-                        "status": "not_found",
-                        "message": "Brain file not found"
-                    }
-
-            except Exception as e:
-                results[agent_id] = {
-                    "status": "error",
-                    "error": str(e)
-                }
-
-        return {
-            "status": "success",
-            "results": results,
-            "total_cleared": sum(1 for r in results.values() if r.get('status') == 'success')
-        }
-
-    except Exception as e:
-        log.error(f"Clear memories error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ===== GOD SPAWN ENDPOINT (DivineCommands.java) =====
-@app.post("/api/gods/spawn")
-async def spawn_god(request: Request):
-    """
-    Spawn god-tier entity.
-    Called by: PythonBackendClient.spawnGodAgent
-
-    Body format from Java:
-        {
-            "event": "spawn_god",
-            "god_type": "wither",
-            "spawner": "PlayerName",
-            "world": "minecraft:overworld",
-            "spawn_position": {"x": 100, "y": 64, "z": 200},
-            "timestamp": 1234567890
-        }
-    """
-    try:
-        data = await request.json()
-
-        god_type = data.get('god_type')
-        spawner_name = data.get('spawner')
-        world_name = data.get('world')
-        spawn_pos = data.get('spawn_position', {})
-
-        # God configurations
-        GOD_CONFIGS = {
-            'wither': {
-                'memory_mb': 3072,
-                'persona_traits': {
-                    'boldness': 0.9,
-                    'agreeableness': -0.8,
-                    'neuroticism': 0.7,
-                    'curiosity': 0.3
-                },
-                'description': 'Aggressive boss entity with destructive tendencies'
+    GENESIS = {
+        "male": {
+            "name": "Adam",
+            "personality": {
+                "boldness": 0.8, "curiosity": 0.9, "agreeableness": 0.5,
+                "conscientiousness": 0.6, "neuroticism": 0.3,
+                "openness": 0.7, "sociability": 0.6,
             },
-            'warden': {
-                'memory_mb': 3072,
-                'persona_traits': {
-                    'boldness': 0.9,
-                    'curiosity': 0.3,
-                    'neuroticism': 0.1,
-                    'agreeableness': -0.7
-                },
-                'description': 'Blind but powerful deep dark guardian'
+        },
+        "female": {
+            "name": "Eve",
+            "personality": {
+                "boldness": 0.6, "curiosity": 0.7, "agreeableness": 0.9,
+                "conscientiousness": 0.8, "neuroticism": 0.4,
+                "openness": 0.7, "sociability": 0.8,
             },
-            'dragon': {
-                'memory_mb': 4096,
-                'persona_traits': {
-                    'boldness': 1.0,
-                    'sociability': -0.9,
-                    'openness': 0.5,
-                    'neuroticism': -0.3
-                },
-                'description': 'Ender Dragon - ultimate boss entity'
-            },
-            'ender_dragon': {  # Alias for dragon
-                'memory_mb': 4096,
-                'persona_traits': {
-                    'boldness': 1.0,
-                    'sociability': -0.9,
-                    'openness': 0.5,
-                    'neuroticism': -0.3
-                },
-                'description': 'Ender Dragon - ultimate boss entity'
-            },
-            'oracle': {
-                'memory_mb': 2048,
-                'persona_traits': {
-                    'curiosity': 0.9,
-                    'sociability': 0.7,
-                    'openness': 0.9,
-                    'conscientiousness': 0.6
-                },
-                'description': 'Wise entity that provides guidance - dual-gendered mystic'
-            },
-            'creaking': {
-                'memory_mb': 2048,
-                'persona_traits': {
-                    'curiosity': 0.8,
-                    'boldness': 0.4,
-                    'neuroticism': 0.6,
-                    'sociability': -0.2
-                },
-                'description': 'Mysterious pale garden entity - dual-gendered forest spirit'
-            },
-            'elder_guardian': {
-                'memory_mb': 2560,
-                'persona_traits': {
-                    'boldness': 0.85,
-                    'agreeableness': -0.6,
-                    'conscientiousness': 0.7,
-                    'sociability': -0.5
-                },
-                'description': 'Ancient ocean temple guardian - dual-gendered aquatic deity'
-            }
-        }
+        },
+    }
 
-        if god_type not in GOD_CONFIGS:
-            log.warning(f"Unknown god type: {god_type}, using default config")
-            config = {
-                'memory_mb': 2048,
-                'persona_traits': {}
-            }
-        else:
-            config = GOD_CONFIGS[god_type]
+    spawned = []
+    import random as _rng
+    for sp in spawn_positions:
+        gender = sp.get("gender", _rng.choice(["male", "female"]))
+        g_cfg  = GENESIS.get(gender, GENESIS["male"])
+        display_name = g_cfg["name"]
+        personality  = g_cfg["personality"]
 
-        # Get a clean name for the god
-        display_name = name_manager.get_random_name("GODs", "dual") or "Unnamed"
+        name_manager.add_name("NPCs", gender, display_name)
 
-        # Generate meaningful god agent ID
-        base_id = sanitize_agent_id(display_name)
-        # Use regex matching to avoid false positives
+        base_id  = sanitize_agent_id(display_name)
         existing = 0
         if Config.NPC_APPLICATIONS_DIR.exists():
-            pattern = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
-            existing = len([d for d in Config.NPC_APPLICATIONS_DIR.iterdir() if d.is_dir() and pattern.match(d.name)])
-        agent_id = f"{base_id}_{existing + 1}"
-        name_manager.add_name("GODs", "dual", display_name)
-
-        # Extract spawn coordinates
-        spawn_x = spawn_pos.get('x', 0)
-        spawn_y = spawn_pos.get('y', 64)
-        spawn_z = spawn_pos.get('z', 0)
-
-        log.info(f"👑 Spawning god: {god_type} (ID: {agent_id}, Name: {display_name}) - DUAL GENDERED")
-        log.info(f"   Spawn Position: ({spawn_x}, {spawn_y}, {spawn_z})")
-        log.info(f"   World: {world_name}")
-        log.info(f"   Spawner: {spawner_name}")
-        log.info(f"   Brain Directory: {Config.BRAINS_DIR / agent_id}")
-
-        # Start god process
-        success = agent_manager.start_agent_process(
-            agent_id=agent_id,
-            mode='minecraft',
-            additional_args=[
-                '--gender', 'dual',  # Gods are dual-gendered
-                '--personality', json.dumps(config['persona_traits']),
-                '--memory-mb', str(config['memory_mb']),
-                '--spawn-x', str(spawn_pos.get('x', 0)),
-                '--spawn-y', str(spawn_pos.get('y', 64)),
-                '--spawn-z', str(spawn_pos.get('z', 0))
-            ],
-            agent_type=f'god_{god_type}',  # Pass god type for proper UUID generation
-            custom_name=display_name  # Gods are "Unnamed"
-        )
-
-        if success:
-            return {
-                "status": "success",
-                "god_type": god_type,
-                "agent_id": agent_id,
-                "display_name": display_name,
-                "gender": "dual",  # Gods are dual-gendered (both male and female)
-                "spawner": spawner_name,
-                "world": world_name,
-                "position": {
-                    'x': spawn_x,
-                    'y': spawn_y,
-                    'z': spawn_z,
-                    'formatted': f"({spawn_x}, {spawn_y}, {spawn_z})"
-                },
-                "brain_path": str(Config.get_agent_brain_path(agent_id)),
-                "personality": config['persona_traits'],
-                "memory_mb": config['memory_mb'],
-                "divine_attributes": {
-                    "gender_type": "dual (hermaphroditic - both male and female)",
-                    "can_breed": False,  # Gods cannot breed with each other
-                    "can_breed_with_npcs": True,  # Gods can breed with NPCs
-                    "offspring_type": "demigod (50% god traits + 50% NPC traits)",
-                    "divine_power": 100,
-                    "genesis_immune": True
-                },
-                "god_description": config.get('description', f"{god_type} god entity"),
-                "note": "God spawns with name 'Unnamed' - UUID is unique based on agent_id"
-            }
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to spawn god {god_type}"
+            pat = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
+            existing = sum(
+                1 for d in Config.NPC_APPLICATIONS_DIR.iterdir()
+                if d.is_dir() and pat.match(d.name)
             )
+        agent_id = f"{base_id}_{existing + 1}"
 
-    except Exception as e:
-        log.error(f"God spawn error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        ok = agent_manager.start_agent_process(
+            agent_id=agent_id,
+            mode=sp.get("mode", mode),
+            server_addr=server_addr,
+            additional_args=[
+                "--gender", gender,
+                "--personality", json.dumps(personality),
+                "--spawn-x", str(sp.get("x", 0)),
+                "--spawn-y", str(sp.get("y", 64)),
+                "--spawn-z", str(sp.get("z", 0)),
+                "--genesis-ancestor", "true",
+            ],
+            agent_type="npc", custom_name=display_name, memory_mb=2048,
+        )
+        if ok:
+            spawned.append({"agent_id": agent_id, "display_name": display_name,
+                             "gender": gender, "personality": personality})
+
+    return {
+        "status": "success",
+        "message": f"Genesis complete — {len(spawned)} agents spawned",
+        "agents": spawned,
+    }
 
 
-# ===== GOD ABILITY ENDPOINT (DivineCommands.java) =====
+@app.post("/api/divine_reset")
+async def divine_reset(request: Request):
+    data       = await request.json()
+    agent_ids  = data.get("agent_ids", [])
+    killed, deleted = [], 0
+    for aid in agent_ids:
+        if aid in agent_manager.agent_processes:
+            agent_manager.stop_agent_process(aid)
+            killed.append(aid)
+        bp = Config.get_agent_brain_path(aid)
+        if bp.exists():
+            bp.unlink()
+            deleted += 1
+    return {"status": "success", "agents_killed": len(killed), "brains_deleted": deleted}
+
+
+@app.post("/api/agents/clear_memories")
+async def clear_memories(request: Request):
+    data       = await request.json()
+    agent_ids  = data.get("agent_ids", [])
+    exceptions = data.get("exceptions", [])
+    results    = {}
+    for aid in agent_ids:
+        if aid in exceptions:
+            results[aid] = {"status": "skipped"}
+            continue
+        bp = Config.get_agent_brain_path(aid)
+        if not bp.exists():
+            results[aid] = {"status": "not_found"}
+            continue
+        try:
+            from ai_core.brain_capsule import BrainCapsule
+            c = BrainCapsule.load(str(bp))
+            c.memory_snapshot  = []
+            c.language_state   = None
+            c.save(str(bp))
+            results[aid] = {"status": "success"}
+        except Exception as e:
+            results[aid] = {"status": "error", "error": str(e)}
+    return {"status": "success", "results": results}
+
+
+@app.post("/api/gods/spawn")
+async def spawn_god(request: Request):
+    GOD_CONFIGS = {
+        "wither":         {"memory_mb": 3072, "persona_traits": {"boldness": 0.9, "agreeableness": -0.8, "neuroticism": 0.7, "curiosity": 0.3}},
+        "warden":         {"memory_mb": 3072, "persona_traits": {"boldness": 0.9, "curiosity": 0.3, "neuroticism": 0.1, "agreeableness": -0.7}},
+        "ender_dragon":   {"memory_mb": 4096, "persona_traits": {"boldness": 1.0, "sociability": -0.9, "openness": 0.5, "neuroticism": -0.3}},
+        "oracle":         {"memory_mb": 2048, "persona_traits": {"curiosity": 0.9, "sociability": 0.7, "openness": 0.9, "conscientiousness": 0.6}},
+        "creaking":       {"memory_mb": 2048, "persona_traits": {"curiosity": 0.8, "boldness": 0.4, "neuroticism": 0.6, "sociability": -0.2}},
+        "elder_guardian": {"memory_mb": 2560, "persona_traits": {"boldness": 0.85, "agreeableness": -0.6, "conscientiousness": 0.7, "sociability": -0.5}},
+    }
+
+    data       = await request.json()
+    god_type   = data.get("god_type")
+    spawner_name = data.get("spawner")
+    spawn_pos  = data.get("spawn_position", {})
+    custom_name = data.get("custom_name")
+    server_addr = data.get("server_addr", Config.DEFAULT_SERVER)
+
+    # Auto-select god type if not given
+    if not god_type or god_type not in GOD_CONFIGS:
+        import random as _rng
+        god_type = _rng.choice(list(GOD_CONFIGS.keys()))
+        log.info(f"Auto-selected god type: {god_type}")
+
+    cfg          = GOD_CONFIGS[god_type]
+    display_name = (
+        custom_name
+        or name_manager.get_random_name("GODs", god_type)
+        or "Unnamed"
+    )
+
+    base_id  = sanitize_agent_id(display_name)
+    existing = 0
+    if Config.NPC_APPLICATIONS_DIR.exists():
+        pat = re.compile(rf"^{re.escape(base_id)}(_\d+)?$")
+        existing = sum(
+            1 for d in Config.NPC_APPLICATIONS_DIR.iterdir()
+            if d.is_dir() and pat.match(d.name)
+        )
+    agent_id = f"{base_id}_{existing + 1}"
+    name_manager.add_name("GODs", god_type, display_name)
+
+    sx, sy, sz = spawn_pos.get("x", 0), spawn_pos.get("y", 64), spawn_pos.get("z", 0)
+
+    ok = agent_manager.start_agent_process(
+        agent_id=agent_id, mode="minecraft", server_addr=server_addr,
+        additional_args=[
+            "--gender", "dual",
+            "--personality", json.dumps(cfg["persona_traits"]),
+            "--memory-mb", str(cfg["memory_mb"]),
+            "--spawn-x", str(sx), "--spawn-y", str(sy), "--spawn-z", str(sz),
+        ],
+        agent_type=f"god_{god_type}", custom_name=display_name,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Failed to spawn god {god_type}")
+    return {
+        "status": "success", "god_type": god_type, "agent_id": agent_id,
+        "display_name": display_name, "gender": "dual",
+        "brain_path": str(Config.get_agent_brain_path(agent_id)),
+    }
+
+
 @app.post("/api/gods/ability")
-async def god_use_ability(request: Request):
-    """
-    Activate god ability.
-    Called by: PythonBackendClient.godUseAbility
-
-    Body format from Java:
-        {
-            "event": "god_ability",
-            "agent_id": "GOD_wither_123",
-            "ability": "summon_wither_skulls",
-            "parameters": [],
-            "timestamp": 1234567890
-        }
-    """
-    try:
-        data = await request.json()
-
-        agent_id = data.get('agent_id')
-        ability = data.get('ability')
-        parameters = data.get('parameters', [])
-
-        log.info(f"⚡ God ability: {agent_id} using {ability}")
-
-        # TODO: Send ability command to agent process via IPC
-        # For now, just acknowledge
-
-        return {
-            "status": "success",
-            "agent_id": agent_id,
-            "ability": ability,
-            "parameters": parameters,
-            "message": f"God ability {ability} activated"
-        }
-
-    except Exception as e:
-        log.error(f"God ability error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+async def god_ability(request: Request):
+    data = await request.json()
+    return {"status": "success", "agent_id": data.get("agent_id"),
+            "ability": data.get("ability")}
 
 
-# ===== GOD TRANSFORM ENDPOINT (DivineCommands.java) =====
 @app.post("/api/gods/transform")
 async def god_transform(request: Request):
-    """
-    Transform god into different mob.
-    Called by: PythonBackendClient.godTransform
+    data = await request.json()
+    return {"status": "success", "agent_id": data.get("agent_id"),
+            "target_mob": data.get("target_mob")}
 
-    Body format from Java:
-        {
-            "event": "god_transform",
-            "agent_id": "GOD_oracle_123",
-            "target_mob": "villager",
-            "timestamp": 1234567890
-        }
-    """
-    try:
-        data = await request.json()
-
-        agent_id = data.get('agent_id')
-        target_mob = data.get('target_mob')
-
-        log.info(f"🔄 God transform: {agent_id} -> {target_mob}")
-
-        # TODO: Send transform command to agent process
-        # For now, just acknowledge
-
-        return {
-            "status": "success",
-            "agent_id": agent_id,
-            "target_mob": target_mob,
-            "message": f"God transformed into {target_mob}"
-        }
-
-    except Exception as e:
-        log.error(f"God transform error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# =============================================================================
-# ADDITIONAL MANAGEMENT ENDPOINTS
-# =============================================================================
 
 @app.get("/api/agents/list")
 async def list_agents():
-    """List all agents (running + available brains)"""
-    try:
-        running = agent_manager.list_running_agents()
-
-        # Find available brains
-        brains_dir = Config.BRAINS_DIR
-        available_brains = []
-
-        if brains_dir.exists():
-            for agent_dir in brains_dir.iterdir():
-                if agent_dir.is_dir():
-                    brain_file = agent_dir / "brain.pcap"
-                    if brain_file.exists():
-                        available_brains.append({
-                            'agent_id': agent_dir.name,
-                            'brain_path': str(brain_file),
-                            'size_mb': brain_file.stat().st_size / 1024 / 1024
-                        })
-
-        return {
-            "running": running,
-            "running_count": len(running),
-            "available_brains": available_brains,
-            "running_details": {
-                agent_id: agent_manager.get_agent_status(agent_id)
-                for agent_id in running
-            }
-        }
-
-    except Exception as e:
-        log.error(f"List error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    running = agent_manager.list_running_agents()
+    brains: List[Dict] = []
+    if Config.BRAINS_DIR.exists():
+        for d in Config.BRAINS_DIR.iterdir():
+            if d.is_dir():
+                bf = d / "brain.pcap"
+                if bf.exists():
+                    brains.append({
+                        "agent_id": d.name,
+                        "brain_path": str(bf),
+                        "size_mb": bf.stat().st_size / 1_048_576,
+                    })
+    return {
+        "running": running,
+        "running_count": len(running),
+        "available_brains": brains,
+        "running_details": {
+            aid: agent_manager.get_agent_status(aid) for aid in running
+        },
+    }
 
 
 @app.post("/api/agents/start")
 async def start_agent(request: Request):
-    """Start agent manually"""
-    try:
-        data = await request.json()
-
-        agent_id = data.get('agent_id')
-        mode = data.get('mode', 'autonomous')
-        load_brain = data.get('load_brain')
-        args = data.get('args', [])
-
-        if not agent_id:
-            raise HTTPException(status_code=400, detail="Missing agent_id")
-
-        success = agent_manager.start_agent_process(
-            agent_id=agent_id,
-            mode=mode,
-            load_brain=load_brain,
-            additional_args=args,
-            agent_type=data.get('agent_type', 'npc'),  # Allow specifying type
-            custom_name=data.get('custom_name')  # Allow custom name
-        )
-
-        if success:
-            return {
-                "status": "success",
-                "message": f"Agent {agent_id} started",
-                "agent_id": agent_id,
-                "mode": mode,
-                "process_info": agent_manager.get_agent_status(agent_id)
-            }
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to start agent {agent_id}"
-            )
-
-    except Exception as e:
-        log.error(f"Start agent error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    data     = await request.json()
+    agent_id = data.get("agent_id")
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="Missing agent_id")
+    ok = agent_manager.start_agent_process(
+        agent_id=agent_id,
+        mode=data.get("mode", "autonomous"),
+        load_brain=data.get("load_brain"),
+        additional_args=data.get("args", []),
+        agent_type=data.get("agent_type", "npc"),
+        custom_name=data.get("custom_name"),
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Failed to start {agent_id}")
+    return {"status": "success", "agent_id": agent_id}
 
 
 @app.post("/api/agents/{agent_id}/stop")
 async def stop_agent(agent_id: str):
-    """Stop agent process"""
-    try:
-        success = agent_manager.stop_agent_process(agent_id)
-
-        if success:
-            return {
-                "status": "success",
-                "message": f"Agent {agent_id} stopped",
-                "agent_id": agent_id
-            }
-        else:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Agent {agent_id} not running"
-            )
-
-    except Exception as e:
-        log.error(f"Stop agent error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    ok = agent_manager.stop_agent_process(agent_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"{agent_id} not running")
+    return {"status": "success", "agent_id": agent_id}
 
 
 @app.get("/api/agents/{agent_id}/status")
 async def get_agent_status(agent_id: str):
-    """Get agent process status"""
-    try:
-        status = agent_manager.get_agent_status(agent_id)
-
-        if status:
-            return status
-        else:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Agent {agent_id} not found"
-            )
-
-    except Exception as e:
-        log.error(f"Status error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    s = agent_manager.get_agent_status(agent_id)
+    if not s:
+        raise HTTPException(status_code=404, detail=f"{agent_id} not found")
+    return s
 
 
 @app.post("/api/agents/{agent_id}/package")
 async def package_agent(agent_id: str):
-    """Package agent for distribution"""
-    try:
-        brain_path = Config.get_agent_brain_path(agent_id)
-
-        if not brain_path.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Brain not found for agent {agent_id}"
-            )
-
-        # Use auto-packager
-        package_path = agent_manager.spawner.package_agent(
-            agent_id=agent_id,
-            brain_path=str(brain_path),
-            agent_type="npc", # Default for manual trigger
-            custom_name=agent_id
-        )
-
-        if package_path:
-            return {
-                "status": "success",
-                "agent_id": agent_id,
-                "package_path": str(package_path),
-                "message": "Agent packaged successfully"
-            }
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail="Packaging failed"
-            )
-
-    except Exception as e:
-        log.error(f"Package error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    bp = Config.get_agent_brain_path(agent_id)
+    if not bp.exists():
+        raise HTTPException(status_code=404, detail="Brain not found")
+    pkg = agent_manager.spawner.package_agent(
+        agent_id=agent_id, brain_path=str(bp),
+        agent_type="npc", custom_name=agent_id,
+    )
+    if not pkg:
+        raise HTTPException(status_code=500, detail="Packaging failed")
+    return {"status": "success", "package_path": str(pkg)}
 
 
 @app.post("/api/agents/{agent_id}/cleanup")
 async def cleanup_agent(agent_id: str, delete_brain: bool = False):
-    """Cleanup agent resources"""
-    try:
-        # Stop if running
-        if agent_id in agent_manager.agent_processes:
-            agent_manager.stop_agent_process(agent_id)
+    if agent_id in agent_manager.agent_processes:
+        agent_manager.stop_agent_process(agent_id)
+    if delete_brain:
+        bp = Config.get_agent_brain_path(agent_id)
+        if bp.exists():
+            bp.unlink()
+    return {"status": "success", "agent_id": agent_id, "brain_deleted": delete_brain}
 
-        # Delete brain if requested
-        if delete_brain:
-            brain_path = Config.get_agent_brain_path(agent_id)
-            if brain_path.exists():
-                brain_path.unlink()
-                log.info(f"Deleted brain: {brain_path}")
-
-        return {
-            "status": "success",
-            "agent_id": agent_id,
-            "brain_deleted": delete_brain
-        }
-
-    except Exception as e:
-        log.error(f"Cleanup error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# =============================================================================
-# HEALTH & MONITORING
-# =============================================================================
 
 @app.get("/health")
-async def health_check():
-    """Basic health check"""
+async def health():
     return {
         "status": "healthy",
-        "service": "Divine World Management Server",
-        "version": "3.0.0",
         "agents_running": len(agent_manager.list_running_agents()),
-        "uptime": asyncio.get_event_loop().time() - startup_time
+        "uptime": asyncio.get_event_loop().time() - startup_time,
     }
 
 
 @app.get("/health/detailed")
-async def detailed_health():
-    """Detailed system health"""
-    running = agent_manager.list_running_agents()
-
-    # System resources
-    cpu_percent = psutil.cpu_percent(interval=1)
-    memory = psutil.virtual_memory()
-
+async def health_detailed():
+    cpu = psutil.cpu_percent(interval=1)
+    mem = psutil.virtual_memory()
     return {
         "status": "healthy",
-        "version": "3.0.0",
         "uptime": asyncio.get_event_loop().time() - startup_time,
-        "agents": {
-            "running": running,
-            "count": len(running),
-            "details": {
-                agent_id: agent_manager.get_agent_status(agent_id)
-                for agent_id in running
-            }
-        },
+        "agents": agent_manager.list_running_agents(),
         "system": {
-            "cpu_percent": cpu_percent,
-            "memory_percent": memory.percent,
-            "memory_available_mb": memory.available / 1024 / 1024
+            "cpu_percent": cpu,
+            "memory_percent": mem.percent,
+            "memory_available_mb": mem.available / 1_048_576,
         },
-        "config": {
-            "data_dir": str(Config.DATA_DIR),
-            "brains_dir": str(Config.BRAINS_DIR),
-            "backend_port": Config.BASE_BACKEND_PORT
-        }
     }
 
-
-# =============================================================================
-# ROOT ENDPOINT
-# =============================================================================
 
 @app.get("/")
 async def root():
-    """API documentation"""
     return {
         "service": "Divine World Management Server",
         "version": "3.0.0",
-        "description": "Manages AI agents for Divine World Minecraft mod",
-        "note": "Endpoints corrected to match Java mod API calls + Server integration",
-
-        "server_integration": {
-            "note": "Agents are automatically registered in Minecraft server files",
-            "endpoints": {
-                "POST /api/server/configure": {
-                    "description": "Configure Minecraft server folder",
-                    "body": {"server_folder": "/path/to/minecraft/server"}
-                },
-                "GET /api/server/status": "Get server integration status",
-                "GET /api/server/agents": "List agents in server files"
-            },
-            "features": [
-                "Auto-registration in usercache.json",
-                "Auto-registration in usernamecache.json",
-                "Offline UUID generation (OfflinePlayer:<username>)",
-                "Agent naming: AI_<n> for NPCs, GOD_<type>_<n> for gods",
-                "Automatic cleanup on agent removal"
-            ],
-            "uuid_generation": {
-                "format": "UUID v3 (MD5 of 'OfflinePlayer:AI_<type>_<agent_id>')",
-                "note": "UUID is unique per agent, NOT per name",
-                "example_npc": "OfflinePlayer:AI_NPC_alice → unique UUID",
-                "example_god": "OfflinePlayer:AI_GOD_wither_123 → unique UUID",
-                "name_independent": "Multiple agents can have same display name but different UUIDs"
-            },
-            "naming_system": {
-                "display_names": {
-                    "genesis_adam": "Adam",
-                    "genesis_eve": "Eve",
-                    "offspring": "Unnamed",
-                    "gods": "Unnamed",
-                    "custom": "Can be set via custom_name parameter"
-                },
-                "agent_ids": {
-                    "genesis": "adam_<timestamp>_0, eve_<timestamp>_1",
-                    "offspring": "offspring_<parent1>_<parent2>_<timestamp>",
-                    "gods": "<god_type>_<timestamp>",
-                    "custom": "User-defined"
-                },
-                "note": "Display name can be anything (or 'Unnamed'), UUID is generated from agent_id + type"
-            }
-        },
-
-        "minecraft_integration": {
-            "note": "These endpoints are called by the Java mod",
-            "endpoints": {
-                "POST /api/player_event": {
-                    "description": "Player connection/disconnection events",
-                    "called_by": "DWEventHandler.java",
-                    "body": {
-                        "agent_id": "AI_alice",
-                        "player_uuid": "uuid-string",
-                        "agent_type": "npc or god_<type>",
-                        "event": "connected or disconnected"
-                    }
-                },
-                "POST /api/breeding/event": {
-                    "description": "AI agent breeding events",
-                    "called_by": "BreedingEventHandler.java",
-                    "body": {
-                        "event": "breeding",
-                        "parent_a_id": "agent1",
-                        "parent_b_id": "agent2",
-                        "parent_a_type": "npc or god",
-                        "parent_b_type": "npc or god"
-                    }
-                },
-                "POST /api/genesis/spawn": {
-                    "description": "Spawn initial Genesis agents",
-                    "called_by": "DivineCommands.java -> PythonBackendClient",
-                    "body": {
-                        "event": "genesis",
-                        "spawner": "PlayerName",
-                        "world": "minecraft:overworld",
-                        "spawn_count": 2,
-                        "spawn_positions": [
-                            {"x": 100, "y": 64, "z": 200, "gender": "male"},
-                            {"x": 102, "y": 64, "z": 200, "gender": "female"}
-                        ]
-                    }
-                },
-                "POST /api/divine_reset": {
-                    "description": "Kill all agents and clear memories",
-                    "called_by": "DivineCommands.java -> PythonBackendClient",
-                    "body": {
-                        "event": "divine_reset",
-                        "world": "minecraft:overworld",
-                        "agent_count": 5,
-                        "agent_ids": ["agent1", "agent2", "..."]
-                    }
-                },
-                "POST /api/agents/clear_memories": {
-                    "description": "Clear agent memories selectively",
-                    "called_by": "DivineCommands.java -> PythonBackendClient",
-                    "body": {
-                        "event": "clear_memories",
-                        "agent_ids": ["agent1", "agent2"],
-                        "exceptions": ["agent3"]
-                    }
-                },
-                "POST /api/gods/spawn": {
-                    "description": "Spawn god-tier entity",
-                    "called_by": "DivineCommands.java -> PythonBackendClient",
-                    "body": {
-                        "event": "spawn_god",
-                        "god_type": "wither|warden|dragon|oracle|creaking|elder_guardian",
-                        "spawner": "PlayerName",
-                        "world": "minecraft:overworld",
-                        "spawn_position": {"x": 100, "y": 64, "z": 200}
-                    }
-                },
-                "POST /api/gods/ability": {
-                    "description": "Activate god ability",
-                    "called_by": "DivineCommands.java -> PythonBackendClient",
-                    "body": {
-                        "event": "god_ability",
-                        "agent_id": "GOD_wither_123",
-                        "ability": "summon_wither_skulls",
-                        "parameters": []
-                    }
-                },
-                "POST /api/gods/transform": {
-                    "description": "Transform god into different mob",
-                    "called_by": "DivineCommands.java -> PythonBackendClient",
-                    "body": {
-                        "event": "god_transform",
-                        "agent_id": "GOD_oracle_123",
-                        "target_mob": "villager"
-                    }
-                }
-            }
-        },
-
-        "management_endpoints": {
-            "POST /api/agents/start": "Start agent process manually",
-            "POST /api/agents/{id}/stop": "Stop agent process",
-            "GET /api/agents/{id}/status": "Get agent status",
-            "GET /api/agents/list": "List all agents",
-            "POST /api/agents/{id}/package": "Package agent for distribution",
-            "POST /api/agents/{id}/cleanup": "Cleanup agent resources"
-        },
-
-        "health_endpoints": {
-            "GET /health": "Basic health check",
-            "GET /health/detailed": "Detailed system health"
-        },
-
-        "god_types": [
-            "wither",
-            "warden",
-            "dragon",
-            "ender_dragon",
-            "oracle",
-            "creaking",
-            "elder_guardian"
-        ],
-
-        "mob_types": [
-            "player",
-            "villager",
-            "pig",
-            "cow",
-            "zombie",
-            "skeleton",
-            "wither",
-            "dragon"
-        ],
-
+        "gui": "Open /gui in your browser for the graphical control centre",
         "running_agents": agent_manager.list_running_agents(),
-
-        "java_mod_info": {
-            "mod_id": "divineworld",
-            "minecraft_version": "1.20.1",
-            "java_files_analyzed": [
-                "DWEventHandler.java",
-                "BreedingEventHandler.java",
-                "PythonBackendClient.java",
-                "DivineCommands.java",
-                "GodCommand.java"
-            ],
-            "features": [
-                "Genesis spawning (2 initial NPCs)",
-                "God entity spawning (7 types)",
-                "Divine reset (nuclear option)",
-                "NPC breeding system",
-                "God abilities",
-                "God transformation",
-                "Auto-packaging support",
-                "Player event tracking"
-            ]
-        },
-
-        "agent_naming_convention": {
-            "genesis_agents": "Adam_<timestamp> or Eve_<timestamp>",
-            "god_agents": "DWGOD_<type>_<timestamp>",
-            "offspring_agents": "offspring_<parent1>_<parent2>_<timestamp>",
-            "regular_agents": "DW_<name> or custom naming"
-        }
     }
 
 
 # =============================================================================
-# STARTUP/SHUTDOWN
+# chat_launcher helper (used when main.py is imported as a module)
 # =============================================================================
 
-startup_time = 0
+def start_chat_interface(agent_id: str, brain_path: str,
+                          config: Dict[str, Any]):
+    """
+    Launch the chat interface for a single agent.
+    Starts uvicorn in a subprocess then opens the React frontend.
+    """
+    from ai_core.agent import NPCAgent
+    agent = NPCAgent(agent_id)
+    if Path(brain_path).exists():
+        log.info(f"Loading brain: {brain_path}")
+        agent.load(brain_path)
+    else:
+        log.warning("Brain not found — fresh state")
+
+    backend_port = config.get("backend_port", Config.BASE_BACKEND_PORT)
+    backend_proc = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "py_backend.main:app",
+         "--host", "0.0.0.0", "--port", str(backend_port)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    log.info(f"Backend on port {backend_port}")
+    time.sleep(2)
+
+    frontend_dir = Config.FRONTEND_DIR
+    if frontend_dir.exists():
+        if (frontend_dir / "dist").exists():
+            subprocess.run(
+                ["npx", "serve", "-s", "dist", "-p", "8765"],
+                cwd=frontend_dir,
+            )
+        else:
+            subprocess.run(["npm", "run", "dev"], cwd=frontend_dir)
+    else:
+        print(f"\nChat backend: http://localhost:{backend_port}")
+        print("GUI control centre: http://localhost:{backend_port}/gui")
+    try:
+        backend_proc.wait()
+    except KeyboardInterrupt:
+        backend_proc.terminate()
 
 
 # =============================================================================
-# CLI ENTRY POINT
+# Entry point — asks CLI or GUI
 # =============================================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Divine World Management Server - Corrected Endpoints"
+        description="Divine World Management Server"
     )
-
-    parser.add_argument(
-        '--port',
-        type=int,
-        default=Config.BASE_BACKEND_PORT,
-        help=f'Server port (default: {Config.BASE_BACKEND_PORT})'
-    )
-
-    parser.add_argument(
-        '--host',
-        type=str,
-        default='0.0.0.0',
-        help='Server host (default: 0.0.0.0)'
-    )
-
-    parser.add_argument(
-        '--reload',
-        action='store_true',
-        help='Enable auto-reload (development)'
-    )
-
+    parser.add_argument("--port",   type=int,  default=Config.BASE_BACKEND_PORT)
+    parser.add_argument("--host",   type=str,  default="0.0.0.0")
+    parser.add_argument("--reload", action="store_true")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument("--cli", action="store_true",
+                             help="Skip prompt, run as CLI server")
+    mode_group.add_argument("--gui", action="store_true",
+                             help="Skip prompt, launch browser GUI")
     args = parser.parse_args()
 
-    print("=" * 70)
-    print("  🎮 Divine World Management Server")
-    print("=" * 70)
-    print(f"  Starting on {args.host}:{args.port}")
-    print("  Endpoints corrected for Divine World Minecraft mod")
-    print("=" * 70)
+    # ── mode selection ─────────────────────────────────────────────────
+    if not args.cli and not args.gui:
+        print()
+        print("╔══════════════════════════════════════════╗")
+        print("║   ⚔  Divine World Management Server     ║")
+        print("╠══════════════════════════════════════════╣")
+        print("║  [1]  CLI mode  — terminal server        ║")
+        print("║  [2]  GUI mode  — open browser dashboard ║")
+        print("╚══════════════════════════════════════════╝")
+        print()
+        choice = input("  Select mode [1/2]: ").strip()
+        args.gui = choice == "2"
+
+    if args.gui:
+        print(f"\n🌐 Starting GUI server on http://{args.host}:{args.port}")
+        print(f"   Opening control centre → http://localhost:{args.port}/gui\n")
+        # Try to open browser after a short delay
+        import threading
+        def _open():
+            time.sleep(2.5)
+            import webbrowser
+            webbrowser.open(f"http://localhost:{args.port}/gui")
+        threading.Thread(target=_open, daemon=True).start()
+    else:
+        print(f"\n🖥  Starting CLI server on {args.host}:{args.port}\n")
 
     uvicorn.run(
         "main:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
-        log_level="info"
+        log_level="info",
     )

@@ -1,10 +1,20 @@
-# py_backend/auto_packager.py - FIXED VERSION
+# py_backend/auto_packager.py
 """
-Enhanced Auto-Packager with:
-- Longer brain file wait time (30s)
-- Better file stability detection
-- Multi-agent frontend support (unique ports per agent)
-- Proper synchronization
+Auto-Packager with synchronised brain file handling.
+=====================================================
+Provides:
+  AutoPackagingSystem — background + sync packaging of agent .exe files
+  EnhancedAgentSpawner — extends AgentSpawner with auto-packaging and
+                         optional UltimMC automation
+
+Design notes
+------------
+EnhancedAgentSpawner is defined HERE, not in agent_spawner.py.
+breeding_system.py imports from auto_packager to get the spawner,
+not from agent_spawner, so the class is never circular.
+
+Port allocation uses a deterministic hash of agent_id so ports are
+consistent across restarts for the same agent.
 """
 
 import os
@@ -12,12 +22,12 @@ import json
 import logging
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from queue import Queue, Empty
 import time
 
-from ai_core.agent_spawner import AgentSpawner, EnhancedAgentSpawner
 from ai_core.agent import NPCAgent
+from ai_core.agent_spawner import AgentSpawner       # base class only
 from packager import AgentPackager
 from py_backend.config import Config
 
@@ -25,9 +35,18 @@ log = logging.getLogger("auto_packager")
 log.setLevel(logging.INFO)
 
 
+# ---------------------------------------------------------------------------
+# AutoPackagingSystem
+# ---------------------------------------------------------------------------
+
 class AutoPackagingSystem:
     """
-    Enhanced auto-packaging with proper synchronization.
+    Manages agent packaging — converts an agent + brain capsule into a
+    self-contained .exe package.
+
+    Two entry points:
+      queue_agent_for_packaging()  — async, background thread
+      package_agent_sync()         — blocking, waits for brain file to stabilise
     """
 
     def __init__(self, output_dir: str = None):
@@ -36,423 +55,365 @@ class AutoPackagingSystem:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.packager = AgentPackager(output_dir=str(self.output_dir))
-        self.packaging_queue = Queue()
-        self.packaged_agents: dict[str, dict[str, str]] = {}
+        self.packager         = AgentPackager(output_dir=str(self.output_dir))
+        self.packaging_queue  = Queue()
+        self.packaged_agents: dict = {}
 
-        # Background worker thread
-        self._stop_event = threading.Event()
+        self._stop_event    = threading.Event()
         self._worker_thread = threading.Thread(
-            target=self._packaging_worker,
-            daemon=True
+            target=self._packaging_worker, daemon=True
         )
         self._worker_thread.start()
+        log.info(f"AutoPackaging initialised (output: {self.output_dir})")
 
-        log.info(f"AutoPackaging system initialized (output: {self.output_dir})")
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
-    def queue_agent_for_packaging(self, agent: NPCAgent,
-                                   brain_capsule_path: str,
-                                   metadata: Optional[dict[str, any]] = None):
-        """Queue an agent for packaging"""
-        package_request = {
-            'agent': agent,
+    def queue_agent_for_packaging(
+        self,
+        agent: NPCAgent,
+        brain_capsule_path: str,
+        metadata: Optional[dict] = None,
+    ):
+        """Enqueue for async background packaging."""
+        self.packaging_queue.put({
+            'agent':      agent,
             'brain_path': brain_capsule_path,
-            'metadata': metadata or {}
-        }
+            'metadata':   metadata or {},
+        })
+        log.info(f"Queued {agent.agent_id} for packaging")
 
-        self.packaging_queue.put(package_request)
-        log.info(f"✅ Queued {agent.agent_id} for packaging")
-
-    def package_agent_sync(self, agent: NPCAgent, brain_capsule_path: str, metadata: Optional[dict[str, any]] = None):
-        """Package agent synchronously"""
-        log.info(f"📦 Sync packaging {agent.agent_id}...")
-
+    def package_agent_sync(
+        self,
+        agent: NPCAgent,
+        brain_capsule_path: str,
+        metadata: Optional[dict] = None,
+    ):
+        """Package synchronously — blocks until done."""
+        log.info(f"Sync packaging {agent.agent_id}…")
         brain_file = Path(brain_capsule_path)
-        max_wait = 30
-        elapsed = 0
+        brain_file  = self._wait_for_stable_brain(brain_file)
+        if brain_file is None:
+            return
+        self._run_packager(agent, str(brain_file), metadata or {})
 
-        log.info(f"⏳ Waiting for brain file: {brain_capsule_path}")
+    # ------------------------------------------------------------------
+    # Brain file helpers
+    # ------------------------------------------------------------------
 
+    def _wait_for_stable_brain(
+        self,
+        brain_file: Path,
+        max_wait: float = Config.MAX_BRAIN_SAVE_WAIT_SECONDS,
+        check_interval: float = Config.BRAIN_STABILITY_WAIT_SECONDS,
+        stable_needed: int = Config.MAX_BRAIN_STABILITY_CHECKS,
+    ) -> Optional[Path]:
+        """
+        Wait for brain file to appear and stop growing.
+        Returns the Path when stable, or None on timeout.
+        """
+        elapsed = 0.0
         while not brain_file.exists() and elapsed < max_wait:
-            time.sleep(0.5)
-            elapsed += 0.5
+            time.sleep(check_interval)
+            elapsed += check_interval
 
         if not brain_file.exists():
-            log.error(f"Brain file not found: {brain_capsule_path}")
-            return
+            log.error(f"Brain file not found after {max_wait}s: {brain_file}")
+            return None
 
-        # Stability check
-        log.info(f"✅ Brain file found, verifying stability...")
-
-        prev_size = -1
-        current_size = brain_file.stat().st_size
-        stable_checks = 0
-
-        while stable_checks < 3 and elapsed < max_wait:
-            time.sleep(0.5)
-            elapsed += 0.5
-            new_size = brain_file.stat().st_size
-            if new_size == current_size:
-                stable_checks += 1
+        # Size stability check
+        prev_size     = -1
+        stable_count  = 0
+        while stable_count < stable_needed and elapsed < max_wait:
+            current_size = brain_file.stat().st_size
+            if current_size == prev_size:
+                stable_count += 1
             else:
-                current_size = new_size
-                stable_checks = 0
+                stable_count = 0
+                prev_size    = current_size
+            time.sleep(check_interval)
+            elapsed += check_interval
 
-        log.info(f"✅ Brain file stable: {brain_capsule_path} ({current_size:,} bytes)")
+        log.info(f"Brain stable: {brain_file} ({brain_file.stat().st_size:,} bytes)")
+        return brain_file
 
-        # Package
+    # ------------------------------------------------------------------
+    # Core packaging
+    # ------------------------------------------------------------------
+
+    def _run_packager(self, agent: NPCAgent, brain_path: str, metadata: dict):
+        """Call AgentPackager and register result."""
         try:
+            port   = self._allocate_port(agent.agent_id)
             result = self.packager.package_agent(
-                agent_id=agent.agent_id,
-                brain_capsule_path=brain_capsule_path,
-                gender=agent.personality.gender if hasattr(agent, 'personality') else "neutral",
-                agent_type=agent.agent_type if hasattr(agent, 'agent_type') else "npc",
-                backend_port=self._allocate_port(agent.agent_id)
+                agent_id           = agent.agent_id,
+                brain_capsule_path = brain_path,
+                agent_name         = getattr(agent, 'custom_name', None),
+                gender             = agent.personality.gender if hasattr(agent, 'personality') else 'neutral',
+                agent_type         = getattr(agent, 'agent_type', 'npc'),
+                include_frontend   = True,
+                include_mod        = True,
+                include_client_jar = True,
+                backend_port       = port,
             )
+            result['metadata']     = metadata
+            result['backend_port'] = port
+            result['frontend_port']= port + 1
+
             self.packaged_agents[agent.agent_id] = result
             self._save_package_registry()
-            log.info(f"✅ Sync packaged {agent.agent_id}: {result['exe_path']}")
+            log.info(f"✅ Packaged {agent.agent_id} → {result['exe_path']} (port {port})")
         except Exception as e:
-            log.error(f"❌ Sync packaging failed for {agent.agent_id}: {e}")
+            log.error(f"Packaging failed for {agent.agent_id}: {e}", exc_info=True)
 
     def _packaging_worker(self):
-        """Enhanced background worker with better synchronization"""
-        log.info("📦 Packaging worker started")
-
+        """Background packaging thread."""
+        log.info("Packaging worker started")
         while not self._stop_event.is_set():
             try:
-                # Wait for packaging request
-                request = self.packaging_queue.get(timeout=1.0)
+                req = self.packaging_queue.get(timeout=1.0)
+                agent      = req['agent']
+                brain_path = req['brain_path']
+                metadata   = req['metadata']
 
-                agent = request['agent']
-                brain_path = request['brain_path']
-                metadata = request['metadata']
-
-                log.info(f"📦 Packaging {agent.agent_id}...")
-
-                # ENHANCED: Wait for brain file with better detection
-                brain_file = Path(brain_path)
-                max_wait = 30  # INCREASED from 10 to 30 seconds
-                wait_interval = 0.5
-                elapsed = 0
-
-                log.info(f"⏳ Waiting for brain file: {brain_path}")
-
-                while not brain_file.exists() and elapsed < max_wait:
-                    log.debug(f"   Waiting... ({elapsed:.1f}s / {max_wait}s)")
-                    time.sleep(wait_interval)
-                    elapsed += wait_interval
-
-                if not brain_file.exists():
-                    log.error(f"❌ Brain file timeout after {max_wait}s: {brain_path}")
-                    log.error(f"   Expected location: {brain_file.absolute()}")
-
-                    # List what's actually in the directory
-                    brain_dir = brain_file.parent
-                    if brain_dir.exists():
-                        files = list(brain_dir.iterdir())
-                        log.error(f"   Directory contents ({len(files)} files):")
-                        for f in files[:10]:
-                            log.error(f"     - {f.name} ({f.stat().st_size} bytes)")
-
+                brain_file = self._wait_for_stable_brain(Path(brain_path), max_wait=3000)
+                if brain_file is None:
                     continue
-
-                # ENHANCED: Wait for file size to stabilize (ensure write is complete)
-                log.info(f"✅ Brain file found, verifying stability...")
-
-                prev_size = -1
-                current_size = brain_file.stat().st_size
-                stable_checks = 0
-
-                while stable_checks < 3 and elapsed < max_wait:
-                    if prev_size == current_size:
-                        stable_checks += 1
-                    else:
-                        stable_checks = 0
-
-                    prev_size = current_size
-                    time.sleep(0.3)
-                    elapsed += 0.3
-
-                    if brain_file.exists():
-                        current_size = brain_file.stat().st_size
-
-                log.info(f"✅ Brain file stable: {brain_path} ({current_size:,} bytes)")
-
-                try:
-                    # Generate unique backend port for this agent
-                    backend_port = self._allocate_port(agent.agent_id)
-
-                    # Generate .exe
-                    result = self.packager.package_agent(
-                        agent_id=agent.agent_id,
-                        brain_capsule_path=brain_path,
-                        agent_name=agent.custom_name if hasattr(agent, 'custom_name') else None,
-                        gender=agent.personality.gender if hasattr(agent, 'personality') else "neutral",
-                        agent_type=agent.agent_type if hasattr(agent, 'agent_type') else "npc",
-                        icon_path=None,
-                        include_frontend=True,
-                        include_mod=True,
-                        include_client_jar=True,
-                        backend_port=backend_port
-                    )
-
-                    # Store metadata
-                    result['metadata'] = metadata
-                    result['agent_type'] = agent.agent_type if hasattr(agent, 'agent_type') else "npc"
-                    result['personality'] = agent.personality.to_dict() if hasattr(agent, 'personality') else {}
-                    result['backend_port'] = backend_port
-                    result['frontend_port'] = backend_port + 1
-
-                    # Save package info
-                    self.packaged_agents[agent.agent_id] = result
-                    self._save_package_registry()
-
-                    log.info(f"✅ Successfully packaged {agent.agent_id}")
-                    log.info(f"   Executable: {result['exe_path']}")
-                    log.info(f"   Package: {result['package_path']}")
-                    log.info(f"   Backend Port: {backend_port}")
-                    log.info(f"   Frontend Port: {backend_port + 1}")
-
-                except Exception as e:
-                    log.error(f"❌ Failed to package {agent.agent_id}: {e}")
-                    import traceback
-                    log.error(traceback.format_exc())
+                self._run_packager(agent, str(brain_file), metadata)
 
             except Empty:
                 continue
             except Exception as e:
-                log.error(f"Worker error: {e}")
-                import traceback
-                log.error(traceback.format_exc())
-
+                log.error(f"Worker error: {e}", exc_info=True)
         log.info("Packaging worker stopped")
 
-    def _allocate_port(self, agent_id: str, base_port: int = 11400) -> int:
-        """
-        Allocate unique port for agent.
-        Uses hash to ensure consistency across runs.
-        """
-        # Use hash of agent_id to get consistent offset
-        port_offset = abs(hash(agent_id)) % 9000  # Avoid system ports
-        port = base_port + port_offset
+    # ------------------------------------------------------------------
+    # Port allocation
+    # ------------------------------------------------------------------
 
-        # Ensure not already in use by another packaged agent
-        used_ports = {
+    def _allocate_port(self, agent_id: str, base_port: int = Config.BASE_BACKEND_PORT) -> int:
+        """
+        Deterministic port from agent_id hash so the same agent always
+        gets the same port across restarts.
+        """
+        offset = abs(hash(agent_id)) % 9000
+        port   = base_port + offset
+        used   = {
             info['backend_port']
             for info in self.packaged_agents.values()
             if 'backend_port' in info
         }
-
-        while port in used_ports:
+        while port in used:
             port += 1
-
         return port
 
-    def _save_package_registry(self):
-        """Save registry of packaged agents"""
-        registry_path = self.output_dir / "package_registry.json"
+    # ------------------------------------------------------------------
+    # Registry
+    # ------------------------------------------------------------------
 
-        with open(registry_path, 'w') as f:
+    def _save_package_registry(self):
+        registry = self.output_dir / "package_registry.json"
+        with open(registry, 'w') as f:
             json.dump(self.packaged_agents, f, indent=2)
 
-    def get_package_info(self, agent_id: str) -> Optional[dict[str, any]]:
-        """Get package information for an agent"""
+    def get_package_info(self, agent_id: str) -> Optional[dict]:
         return self.packaged_agents.get(agent_id)
 
-    def list_packaged_agents(self) -> list:
-        """List all packaged agents"""
+    def list_packaged_agents(self) -> List[str]:
         return list(self.packaged_agents.keys())
 
     def cleanup_build_artifacts(self):
-        """Clean up temporary build files"""
         self.packager.cleanup_build_artifacts()
 
     def shutdown(self):
-        """Shutdown the packaging system"""
-        log.info("Shutting down auto-packaging system...")
+        log.info("Shutting down AutoPackaging…")
         self._stop_event.set()
         self._worker_thread.join(timeout=5.0)
-        log.info("Auto-packaging system stopped")
+        log.info("AutoPackaging stopped")
 
+
+# ---------------------------------------------------------------------------
+# EnhancedAgentSpawner
+# ---------------------------------------------------------------------------
 
 class EnhancedAgentSpawner(AgentSpawner):
     """
-    Enhanced spawner with:
-    - Multi-agent port allocation
-    - Auto-packaging system
-    - UltimMC automation for Minecraft setup
+    AgentSpawner extended with:
+      - Auto-packaging (produces .exe after each spawn)
+      - Optional UltimMC automation for Minecraft client setup
+      - BreedingSystem attachment to every spawned agent
 
-    Handles complete lifecycle of agent spawn → setup → package
+    This is the spawner used everywhere in py_backend.
+    breeding_system.py receives an instance of this class.
     """
 
-    def __init__(self, client_jar_path: Optional[str] = "dwclient-1.0.0.jar",
-                 auto_package: bool = True,
-                 package_output_dir: Optional[str] = None,
-                 use_ultimmc: bool = None):
-        """
-        Initialize enhanced spawner.
+    def __init__(
+        self,
+        client_jar_path:   Optional[str] = None,
+        auto_package:      bool = True,
+        package_output_dir:Optional[str] = None,
+        use_ultimmc:       Optional[bool] = None,
+    ):
+        if client_jar_path is None and Config.CLIENT_JAR:
+            client_jar_path = str(Config.CLIENT_JAR)
 
-        Args:
-            client_jar_path: Path to dwclient-1.0.0.jar
-            auto_package: Enable auto-packaging
-            package_output_dir: Output directory for packages
-            use_ultimmc: Use UltimMC for automation (auto-detect if None)
-        """
         super().__init__(client_jar_path)
 
-        self.auto_package = auto_package
-        self.packager = None
-        self.use_ultimmc = use_ultimmc
+        self.auto_package   = auto_package
+        self.packager: Optional[AutoPackagingSystem] = None
 
         if auto_package:
-            if package_output_dir is None:
-                package_output_dir = str(Config.NPC_APPLICATIONS_DIR)
-            self.packager = AutoPackagingSystem(output_dir=package_output_dir)
-            log.info(f"Auto-packaging enabled (output: {package_output_dir})")
+            self.packager = AutoPackagingSystem(
+                output_dir=package_output_dir or str(Config.NPC_APPLICATIONS_DIR)
+            )
 
-        # Setup UltimMC if requested or available
+        # UltimMC — auto-detect if not specified
         if use_ultimmc is None:
-            # Auto-detect: try to use UltimMC if available
-            from py_backend.config import Config
-            self.use_ultimmc = Config.USE_ULTIMMC
+            use_ultimmc = Config.USE_ULTIMMC
+        self.use_ultimmc = use_ultimmc
 
+        self._ultimmc_spawner = None
         if self.use_ultimmc:
             try:
-                from ai_core.agent_spawner import EnhancedAgentSpawner as UltimMCSpawner
-                # Create a wrapper that combines both
-                self._ultimmc_spawner = UltimMCSpawner(client_jar_path=client_jar_path)
+                # UltimMC spawner is a separate implementation in agent_spawner
+                from ai_core.agent_spawner import UltimMCAgentSpawner
+                self._ultimmc_spawner = UltimMCAgentSpawner(client_jar_path=client_jar_path)
                 log.info("✅ UltimMC automation available")
-            except Exception as e:
+            except (ImportError, Exception) as e:
                 log.warning(f"UltimMC not available: {e}")
                 self.use_ultimmc = False
-                self._ultimmc_spawner = None
 
-    def spawn_npc(self, agent_id: str, server_addr: str = "127.0.0.1:25565",
-                  persona_traits: Optional[dict[str, float]] = None,
-                  memory_mb: int = 2048,
-                  gender: Optional[str] = None) -> NPCAgent:
-        """Spawn NPC with UltimMC automation if available"""
+        # Will be set externally by the breeding system after init
+        self._breeding_system = None
 
-        # Try UltimMC path first
-        if self.use_ultimmc and self._ultimmc_spawner:
-            try:
-                log.info(f"Spawning {agent_id} with UltimMC automation...")
-                agent = self._ultimmc_spawner.spawn_npc(
-                    agent_id=agent_id,
-                    server_addr=server_addr,
-                    persona_traits=persona_traits,
-                    memory_mb=memory_mb,
-                    gender=gender
-                )
-            except Exception as e:
-                log.warning(f"UltimMC spawn failed, falling back: {e}")
-                agent = super().spawn_npc(agent_id, server_addr, persona_traits, memory_mb, gender)
-        else:
-            # Regular spawn
-            agent = super().spawn_npc(agent_id, server_addr, persona_traits, memory_mb, gender)
+    # ------------------------------------------------------------------
+    # Spawn helpers
+    # ------------------------------------------------------------------
 
-        # Queue for packaging
-        from py_backend.config import Config
-        brain_path = Path(Config.BRAINS_DIR) / agent.agent_id / "brain.pcap"
+    def _post_spawn(self, agent: NPCAgent, server_addr: str, extra_meta: dict):
+        """
+        Common post-spawn steps:
+          1. Verify brain file exists
+          2. Attach breeding system (if registered)
+          3. Queue for packaging
+        """
+        brain_path = Config.get_agent_brain_path(agent.agent_id)
 
         if not brain_path.exists():
-            log.error(f"Brain not found after spawn: {brain_path}")
-            raise RuntimeError(f"Brain file missing: {brain_path}")
-
-        if self.auto_package and self.packager:
-            import time
-            metadata = {
-                'spawned_at': agent.client_process.started_at if agent.client_process else time.time(),
-                'server': server_addr,
-                'memory_mb': memory_mb,
-                'spawn_type': 'command',
-                'ultimmc_used': self.use_ultimmc and self._ultimmc_spawner is not None,
-            }
-
-            self.packager.package_agent_sync(
-                agent=agent,
-                brain_capsule_path=str(brain_path),
-                metadata=metadata
+            log.warning(
+                f"Brain not found at {brain_path} — "
+                f"agent may not have saved yet"
             )
+
+        # Attach breeding system so the agent can serialise pregnancy state
+        if self._breeding_system is not None:
+            self._breeding_system.attach_to_agent(agent)
+
+        if self.auto_package and self.packager and brain_path.exists():
+            meta = {
+                'server':     server_addr,
+                'spawn_time': time.time(),
+                **extra_meta,
+            }
+            self.packager.queue_agent_for_packaging(agent, str(brain_path), meta)
 
         return agent
 
-    def spawn_god(self, god_type: str, server_addr: str = "127.0.0.1:25565",
-                  custom_traits: Optional[dict[str, float]] = None) -> NPCAgent:
-        """Spawn god entity with UltimMC automation if available"""
-
-        # Try UltimMC path first
+    def spawn_npc(
+        self,
+        agent_id:      str,
+        server_addr:   str = Config.DEFAULT_SERVER,
+        persona_traits:Optional[dict] = None,
+        memory_mb:     int = Config.CLIENT_MEMORY_MB,
+        gender:        Optional[str] = None,
+    ) -> NPCAgent:
+        """Spawn NPC, attach breeding, queue packaging."""
         if self.use_ultimmc and self._ultimmc_spawner:
             try:
-                log.info(f"Spawning god {god_type} with UltimMC automation...")
+                agent = self._ultimmc_spawner.spawn_npc(
+                    agent_id, server_addr, persona_traits, memory_mb, gender
+                )
+            except Exception as e:
+                log.warning(f"UltimMC spawn failed, using base spawner: {e}")
+                agent = super().spawn_npc(agent_id, server_addr, persona_traits, memory_mb, gender)
+        else:
+            agent = super().spawn_npc(agent_id, server_addr, persona_traits, memory_mb, gender)
+
+        return self._post_spawn(agent, server_addr, {'spawn_type': 'npc'})
+
+    def spawn_god(
+        self,
+        god_type:     str,
+        server_addr:  str = Config.DEFAULT_SERVER,
+        custom_traits:Optional[dict] = None,
+    ) -> NPCAgent:
+        """Spawn god agent, attach breeding, queue packaging."""
+        if self.use_ultimmc and self._ultimmc_spawner:
+            try:
                 agent = self._ultimmc_spawner.spawn_god(god_type, server_addr, custom_traits)
             except Exception as e:
-                log.warning(f"UltimMC god spawn failed, falling back: {e}")
+                log.warning(f"UltimMC god spawn failed, using base spawner: {e}")
                 agent = super().spawn_god(god_type, server_addr, custom_traits)
         else:
             agent = super().spawn_god(god_type, server_addr, custom_traits)
 
-        from py_backend.config import Config
-        brain_path = Path(Config.BRAINS_DIR) / agent.agent_id / "brain.pcap"
+        return self._post_spawn(agent, server_addr, {'spawn_type': 'god', 'god_type': god_type})
 
-        if not brain_path.exists():
-            log.error(f"Brain not found after spawn: {brain_path}")
-            raise RuntimeError(f"Brain file missing: {brain_path}")
+    # ------------------------------------------------------------------
+    # Manual packaging trigger (called from main.py)
+    # ------------------------------------------------------------------
 
-        if self.auto_package and self.packager:
-            import time
-            metadata = {
-                'spawned_at': agent.client_process.started_at if agent.client_process else time.time(),
-                'server': server_addr,
-                'god_type': god_type,
-                'spawn_type': 'command',
-                'ultimmc_used': self.use_ultimmc and self._ultimmc_spawner is not None,
-            }
-
-            self.packager.package_agent_sync(
-                agent=agent,
-                brain_capsule_path=str(brain_path),
-                metadata=metadata
-            )
-
-        return agent
-
-    def cleanup_all(self):
-        """Enhanced cleanup"""
-        super().cleanup_all()
-
-        if self.packager:
-            self.packager.shutdown()
-
-    def package_agent(self, agent_id: str, brain_path: str, agent_type: str, custom_name: str) -> Optional[Path]:
-        """
-        Manually trigger packaging for an agent.
-        Matches the call signature in main.py.
-        """
+    def package_agent(
+        self,
+        agent_id:   str,
+        brain_path: str,
+        agent_type: str,
+        custom_name:str,
+        gender:     str = "neutral",
+    ) -> Optional[Path]:
+        """Manually trigger packaging for an already-spawned agent."""
         if not self.packager:
             return None
-
         try:
-            # Allocate port
-            port = self.packager._allocate_port(agent_id)
+            # If no gender was passed by the caller, try to read it from the
+            # brain capsule directly so we never stamp "neutral" into the
+            # brain.pcap.json sidecar when the agent actually has a real gender.
+            resolved_gender = gender
+            if resolved_gender == "neutral":
+                try:
+                    from ai_core.brain_capsule import BrainCapsule
+                    caps = BrainCapsule.load(brain_path)
+                    if caps.gender and caps.gender != "neutral":
+                        resolved_gender = caps.gender
+                        log.info(f"Gender from brain capsule: {resolved_gender}")
+                    elif caps.personality and caps.personality.get("gender"):
+                        resolved_gender = caps.personality["gender"]
+                        log.info(f"Gender from personality: {resolved_gender}")
+                except Exception as eg:
+                    log.debug(f"Could not read gender from brain: {eg}")
 
-            # Use the low-level packager
+            port   = self.packager._allocate_port(agent_id)
             result = self.packager.packager.package_agent(
-                agent_id=agent_id,
-                brain_capsule_path=brain_path,
-                agent_name=custom_name,
-                agent_type=agent_type,
-                backend_port=port
+                agent_id           = agent_id,
+                brain_capsule_path = brain_path,
+                agent_name         = custom_name,
+                agent_type         = agent_type,
+                gender             = resolved_gender,
+                backend_port       = port,
             )
-
-            # Store in registry
             self.packager.packaged_agents[agent_id] = result
             self.packager._save_package_registry()
-
-            # Return the package directory path
             return Path(result['package_path'])
-
         except Exception as e:
             log.error(f"Manual packaging failed for {agent_id}: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def cleanup_all(self):
+        super().cleanup_all()
+        if self.packager:
+            self.packager.shutdown()

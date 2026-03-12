@@ -1,7 +1,8 @@
 {
-    "python-envs.pythonProjects": [],
     "java.compile.nullAnalysis.mode": "automatic",
     "python.analysis.extraPaths": [
         "./py_backend"
-    ]
+    ],
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "python-envs.defaultEnvManager": "ms-python.python:venv"
 }

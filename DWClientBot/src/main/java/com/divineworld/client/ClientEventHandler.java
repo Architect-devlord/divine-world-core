@@ -1,23 +1,41 @@
 package com.divineworld.client;
 
-import com.divineworld.client.network.WebSocketManager;
 import com.divineworld.client.entity.GodEntityManager;
+import com.divineworld.client.network.TCPServer;
+import com.divineworld.client.network.WebSocketManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
-import com.divineworld.client.network.TCPServer;
-/**
- * Client Event Handler - FIXED VERSION
- */
 
+/**
+ * Client Event Handler
+ *
+ * Handles the client-side lifecycle events: first world join, respawn, logout.
+ * On first join it starts the TCP server (primary action channel) and the
+ * WebSocket connection (perception + fallback actions).
+ *
+ * Fix Bug G — NPE on respawn:
+ *   onPlayerRespawn previously called initializeGodEntity() without checking
+ *   mc.level.  During respawn Minecraft replaces the level reference; if the
+ *   event fires before the new level is assigned, GodEntityManager constructors
+ *   (AIEnderDragon, AIWither, …) receive null and crash with NullPointerException.
+ *
+ *   Fix: guard both player and level non-null before calling initializeGodEntity().
+ *   This mirrors the existing guard in onClientTick (line: mc.player != null &&
+ *   mc.level != null) and is the correct pattern for all client entity creation.
+ */
 @Mod.EventBusSubscriber(modid = DWClientMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class ClientEventHandler {
 
-    private static boolean initialized = false;
-    private static int tickCounter = 0;
+    private static boolean initialized  = false;
+    private static int     tickCounter  = 0;
+
+    // -------------------------------------------------------------------------
+    // Client tick — one-time init + periodic status logging
+    // -------------------------------------------------------------------------
 
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
@@ -25,7 +43,7 @@ public class ClientEventHandler {
 
         Minecraft mc = Minecraft.getInstance();
 
-        // FIXED: Initialize once player exists
+        // Initialize once when both player and level are available
         if (!initialized && mc.player != null && mc.level != null) {
             onPlayerJoinedWorld(mc.player);
             initialized = true;
@@ -33,56 +51,52 @@ public class ClientEventHandler {
 
         tickCounter++;
 
-        // Periodic updates
         if (tickCounter % 20 == 0) {
             performPeriodicUpdates();
         }
     }
 
     private static void onPlayerJoinedWorld(LocalPlayer player) {
-        DWClientMod.LOGGER.info("Player joined world: {}", player.getName().getString());
+        DWClientMod.LOGGER.info("[ClientEventHandler] Player joined world: {}",
+                player.getName().getString());
 
-        // ADDED: Start TCP Server (primary)
+        // Start TCP server (primary low-latency action channel)
         TCPServer.start(8765);
 
-        // EXISTING: Initialize WebSocket (fallback)
+        // Initialize WebSocket (perception loop + fallback action channel)
         try {
             WebSocketManager.initialize(
                     DWClientMod.getBackendUrl(),
                     DWClientMod.getBackendPort(),
-                    DWClientMod.getAgentId()
-            );
+                    DWClientMod.getAgentId());
         } catch (Exception e) {
-            DWClientMod.LOGGER.error("Failed to initialize WebSocket", e);
+            DWClientMod.LOGGER.error("[ClientEventHandler] Failed to initialize WebSocket", e);
         }
 
-        // Initialize god entity if needed
+        // Spawn client-side god entity if this is a god agent
         if (DWClientMod.isGodAgent()) {
             initializeGodEntity(player);
         }
     }
+
     private static void initializeGodEntity(LocalPlayer player) {
         String godType = DWClientMod.getGodType();
-        DWClientMod.LOGGER.info("Initializing god entity: {}", godType);
-
+        DWClientMod.LOGGER.info("[ClientEventHandler] Initializing god entity: {}", godType);
         try {
             GodEntityManager.initializeGodEntity(godType);
         } catch (Exception e) {
-            DWClientMod.LOGGER.error("Failed to initialize god entity", e);
+            DWClientMod.LOGGER.error("[ClientEventHandler] Failed to initialize god entity", e);
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Periodic status logging
+    // -------------------------------------------------------------------------
+
     private static void performPeriodicUpdates() {
         Minecraft mc = Minecraft.getInstance();
-
         if (mc.player == null) return;
 
-        // Check WebSocket connection
-        if (!WebSocketManager.isConnected()) {
-            // Reconnection handled automatically
-        }
-
-        // Log status every 5 seconds
         if (tickCounter % 100 == 0) {
             logAgentStatus();
         }
@@ -90,39 +104,66 @@ public class ClientEventHandler {
 
     private static void logAgentStatus() {
         Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
 
-        if (mc.player != null) {
-            LocalPlayer player = mc.player;
-
-            DWClientMod.LOGGER.debug("Agent Status:");
-            DWClientMod.LOGGER.debug("  Position: {}, {}, {}",
-                    player.getX(), player.getY(), player.getZ());
-            DWClientMod.LOGGER.debug("  Health: {}/{}",
-                    player.getHealth(), player.getMaxHealth());
-            DWClientMod.LOGGER.debug("  WebSocket: {}",
-                    WebSocketManager.isConnected() ? "Connected" : "Disconnected");
-
-            if (DWClientMod.isGodAgent()) {
-                DWClientMod.LOGGER.debug("  God Type: {}", DWClientMod.getGodType());
-            }
+        LocalPlayer player = mc.player;
+        DWClientMod.LOGGER.debug("[ClientEventHandler] Agent Status:");
+        DWClientMod.LOGGER.debug("  Position: {}, {}, {}",
+                player.getX(), player.getY(), player.getZ());
+        DWClientMod.LOGGER.debug("  Health: {}/{}", player.getHealth(), player.getMaxHealth());
+        DWClientMod.LOGGER.debug("  TCP:       {}",
+                com.divineworld.client.network.TCPServer.isConnected() ? "Connected" : "Disconnected");
+        DWClientMod.LOGGER.debug("  WebSocket: {}",
+                WebSocketManager.isConnected() ? "Connected" : "Disconnected");
+        if (DWClientMod.isGodAgent()) {
+            DWClientMod.LOGGER.debug("  God Type: {}", DWClientMod.getGodType());
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Respawn
+    // -------------------------------------------------------------------------
+
+    /**
+     * Re-initialize the god entity after a respawn.
+     *
+     * FIX Bug G: During respawn the client level is temporarily null while
+     * Minecraft swaps the level reference.  All god entity constructors
+     * (AIEnderDragon, AIWither, etc.) call new Entity(level) — passing null
+     * crashes with NPE inside Minecraft internals.
+     *
+     * Guard: only proceed when BOTH mc.player and mc.level are non-null.
+     * This is the same guard used in onClientTick for the initial join.
+     */
     @SubscribeEvent
     public static void onPlayerRespawn(PlayerEvent.PlayerRespawnEvent event) {
-        if (event.getEntity() instanceof LocalPlayer) {
-            DWClientMod.LOGGER.info("Player respawned");
+        if (!(event.getEntity() instanceof LocalPlayer)) return;
 
-            if (DWClientMod.isGodAgent()) {
-                LocalPlayer player = (LocalPlayer) event.getEntity();
-                initializeGodEntity(player);
+        DWClientMod.LOGGER.info("[ClientEventHandler] Player respawned");
+
+        if (DWClientMod.isGodAgent()) {
+            Minecraft mc = Minecraft.getInstance();
+            // FIX Bug G: guard both player and level before god entity construction
+            if (mc.player != null && mc.level != null) {
+                initializeGodEntity((LocalPlayer) event.getEntity());
+            } else {
+                DWClientMod.LOGGER.warn(
+                        "[ClientEventHandler] Respawn: mc.level is null — " +
+                        "deferring god entity init to next tick");
+                // Cleared initialized flag so onClientTick will retry on the
+                // next tick when mc.level is non-null again.
+                initialized = false;
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Logout
+    // -------------------------------------------------------------------------
 
     @SubscribeEvent
     public static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
-        DWClientMod.LOGGER.info("Player logged out");
+        DWClientMod.LOGGER.info("[ClientEventHandler] Player logged out");
         initialized = false;
         WebSocketManager.shutdown();
     }

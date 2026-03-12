@@ -35,9 +35,12 @@ pillow>=10.0.0
 scipy>=1.16.2
 psutil>=5.9.0
 tqdm>=4.65.0
+playwright>=1.30.0  # For web automation
+
+# then use playwright install chromium
 
 # Optional: GUI
-PyQt5>=5.15.0  # For utils/gui.py
+PyQt5>=5.15.0  use# For utils/gui.py
 
 # Optional: Audio
 sounddevice>=0.4.6  # For microphone input

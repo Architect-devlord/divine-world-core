@@ -156,8 +156,8 @@ curl -X POST http://localhost:11400/api/breeding/event \
   -H "Content-Type: application/json" \
   -d '{
     "event": "breeding",
-    "parent_a_id": "adam",
-    "parent_b_id": "eve",
+    "parent_a_id": "alice",
+    "parent_b_id": "ali",
     "parent_a_type": "npc",
     "parent_b_type": "npc",
     "timestamp": 1234567890
@@ -201,7 +201,7 @@ curl -X POST http://localhost:11400/api/gods/transform \
   -H "Content-Type: application/json" \
   -d '{
     "event": "god_transform",
-    "agent_id": "god1",
+    "agent_id": "Draconosis",
     "target_mob": "villager"
   }'
 ```

@@ -1,49 +1,49 @@
-# ------------------------------------------------------------------------------
-# ai_core/emotion.py - Emotion system (no circular deps)
-# ------------------------------------------------------------------------------
+# ai_core/emotion.py
 import numpy as np
 from typing import Dict
-from collections import defaultdict
 
 class EmotionSystem:
-    """
-    Multi-dimensional emotion state with decay.
-    Based on Plutchik's wheel + custom gaming emotions.
-    """
-    def __init__(self):
-        self.emotions = {
-            'joy': 0.0,
-            'sadness': 0.0,
-            'anger': 0.0,
-            'fear': 0.0,
-            'trust': 0.0,
-            'surprise': 0.0,
-            'anticipation': 0.0,
-            'disgust': 0.0,
-        }
-        self.decay_rate = 0.95  # Per step
-    
+    EMOTIONS = ['joy','sadness','anger','fear','trust','surprise','anticipation','disgust']
+
+    def __init__(self, decay_rate: float = 0.95):
+        self.emotions: Dict[str, float] = {e: 0.0 for e in self.EMOTIONS}
+        self.decay_rate = decay_rate
+
     def add(self, emotion: str, value: float):
-        """Add emotional intensity"""
         if emotion in self.emotions:
-            self.emotions[emotion] = np.clip(
-                self.emotions[emotion] + value,
-                -1.0, 1.0
-            )
-    
+            self.emotions[emotion] = float(np.clip(self.emotions[emotion] + value, -1.0, 1.0))
+
+    def set(self, emotion: str, value: float):
+        if emotion in self.emotions:
+            self.emotions[emotion] = float(np.clip(value, -1.0, 1.0))
+
     def decay(self):
-        """Emotions naturally decay toward neutral"""
-        for key in self.emotions:
-            self.emotions[key] *= self.decay_rate
-    
+        for k in self.emotions: self.emotions[k] *= self.decay_rate
+
+    def reset(self):
+        for k in self.emotions: self.emotions[k] = 0.0
+
     def snapshot(self) -> Dict[str, float]:
-        """Get current emotion state"""
         return self.emotions.copy()
-    
+
     def as_array(self) -> np.ndarray:
-        """Convert to array for neural network"""
-        return np.array(list(self.emotions.values()), dtype=np.float32)
-    
+        return np.array([self.emotions[e] for e in self.EMOTIONS], dtype=np.float32)
+
     def dominant_emotion(self) -> str:
-        """Get strongest current emotion"""
         return max(self.emotions.items(), key=lambda x: abs(x[1]))[0]
+
+    def intensity(self) -> float:
+        """Overall arousal — max absolute value across all emotions."""
+        return float(max(abs(v) for v in self.emotions.values()))
+
+    def valence(self) -> float:
+        """Net positive/negative tone."""
+        pos = self.emotions['joy'] + self.emotions['trust'] + self.emotions['anticipation']
+        neg = self.emotions['sadness'] + self.emotions['anger'] + self.emotions['fear'] + self.emotions['disgust']
+        return float(np.clip((pos - neg) / 3.0, -1.0, 1.0))
+
+    def is_calm(self, threshold: float = 0.1) -> bool:
+        return self.intensity() < threshold
+
+    def __repr__(self):
+        return f"EmotionSystem(dominant={self.dominant_emotion()}, intensity={self.intensity():.2f})"

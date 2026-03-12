@@ -1,876 +1,826 @@
-import subprocess
+# py_backend/minecraft_launcher.py
+"""
+UltimMC automation layer for Minecraft client setup and launching.
+===================================================================
+Provides:
+
+  UltimMCLauncher    — wraps a single UltimMC installation.
+                       Handles account creation, instance creation,
+                       mod installation, and per-agent process launch.
+
+  MultiAgentLauncher — manages N agents simultaneously by giving each
+                       agent its own UltimMC folder copy (bypasses the
+                       single-instance lock).  This is the object that
+                       agent_spawner.UltimMCAgentSpawner uses directly.
+
+Design notes
+------------
+- Each agent's UltimMC copy lives at npc_applications/<agent_id>/UltimMC/
+- JVM args (-Ddw.agent.id, -Ddw.backend.url, -Ddw.backend.port, -Ddw.server)
+  are injected via the INST_JAVA environment variable that UltimMC forwards
+  to Java.  Property names match DWClientMod.loadConfiguration() exactly.
+- headless=True wraps the command with xvfb-run -a (requires Xvfb).
+- _find_ultimmc() uses the same multi-location search as packager.py so
+  both code paths find UltimMC regardless of installation style.
+"""
+
 import json
-import os
 import logging
+import os
 import shutil
+import subprocess
 import time
+import uuid as _uuid_mod
 from pathlib import Path
-from typing import Optional, Dict, Any, List
-import uuid
-import platform
+from typing import Any, Dict, List, Optional
+
+from py_backend.config import Config
 from py_backend.utils.mc_uuid import get_minecraft_uuid
 
 log = logging.getLogger("minecraft_launcher")
 log.setLevel(logging.INFO)
 
 
+# ---------------------------------------------------------------------------
+# UltimMCLauncher
+# ---------------------------------------------------------------------------
+
 class UltimMCLauncher:
-    """
-    UltimMC automation layer for Minecraft setup and launching.
-    
-    MULTI-INSTANCE SUPPORT:
-    Creates separate UltimMC folder copies for each agent to bypass single-instance lock.
-    Uses UltimMC's built-in --launch, --profile, --server flags.
-    """
-    
-    # Configuration
-    MINECRAFT_VERSION = "1.20.1"
-    FORGE_VERSION = "47.4.10"
-    
-    def __init__(self, ultimmc_path: Optional[str] = None,
-                 client_jar_path: Optional[str] = None,
-                 mod_jar_path: Optional[str] = None,
+    """Wraps a single UltimMC installation."""
+
+    MINECRAFT_VERSION = Config.MINECRAFT_VERSION
+    FORGE_VERSION     = Config.FORGE_VERSION
+
+    def __init__(self,
+                 ultimmc_path:       Optional[str]  = None,
+                 client_jar_path:    Optional[str]  = None,
+                 mod_jar_path:       Optional[str]  = None,
                  custom_ultimmc_dir: Optional[Path] = None):
-        """
-        Initialize UltimMC launcher.
-        
-        Args:
-            ultimmc_path: Path to UltimMC executable (source to copy from)
-            client_jar_path: Path to dwclient-1.0.0.jar
-            mod_jar_path: Path to divineworld-1.0.0-all.jar
-            custom_ultimmc_dir: Custom UltimMC directory (if already copied)
-        """
         self.source_ultimmc_path = self._find_ultimmc(ultimmc_path)
-        self.client_jar = self._find_file(client_jar_path, "dwclient-1.0.0.jar")
-        self.mod_jar = self._find_file(mod_jar_path, "divineworld-1.0.0-all.jar")
-        
-        # For custom instances, we'll set these per-agent
-        self.ultimmc_dir = custom_ultimmc_dir
-        self.ultimmc_executable = None
-        
+        self.client_jar          = self._find_jar(client_jar_path, "dwclient-1.0.0.jar")
+        self.mod_jar             = self._find_jar(mod_jar_path,    "divineworld-1.0.0-all.jar")
+
+        self.ultimmc_dir:        Optional[Path] = custom_ultimmc_dir
+        self.ultimmc_executable: Optional[Path] = None
+
         if self.ultimmc_dir:
-            self._find_executable_in_dir()
-        
+            self._locate_executable()
+
         if self.source_ultimmc_path:
-            log.info(f"✅ Source UltimMC found at: {self.source_ultimmc_path}")
+            log.info(f"✅ UltimMC source: {self.source_ultimmc_path}")
         else:
-            log.warning("⚠️ UltimMC not found - install from https://github.com/UltimMC/Launcher or https://github.com/Architect-devlord/Launcher")
-        
-        if self.client_jar:
-            log.info(f"✅ dwclient-1.0.0.jar found at: {self.client_jar}")
-        else:
-            log.warning("⚠️ dwclient-1.0.0.jar not found")
-        
-        if self.mod_jar:
-            log.info(f"✅ divineworld-1.0.0-all.jar found at: {self.mod_jar}")
-        else:
-            log.warning("⚠️ divineworld-1.0.0-all.jar not found")
-    
-    def _find_executable_in_dir(self):
-        """Find UltimMC executable in the custom directory"""
-        if not self.ultimmc_dir:
-            return
-        
-        # Look for executable
-        candidates = [
-            # Prefer the bundled binary under `bin/` when duplicates exist
-            self.ultimmc_dir / "bin" / "UltimMC",
-            self.ultimmc_dir / "UltimMC",
-            self.ultimmc_dir / "ultimmc",
-        ]
-        
-        for candidate in candidates:
-            if candidate.exists() and os.access(candidate, os.X_OK):
-                self.ultimmc_executable = candidate
-                log.info(f"Found UltimMC executable: {candidate}")
-                return
-        
-        log.warning(f"No executable found in {self.ultimmc_dir}")
-    
-    def _find_ultimmc(self, explicit_path: Optional[str]) -> Optional[Path]:
-        """Find UltimMC executable or installation directory"""
-        # If explicit path provided, validate it
-        if explicit_path:
-            p = Path(os.path.expanduser(explicit_path))
+            log.warning(
+                "⚠️  UltimMC not found. "
+                "Install from https://github.com/UltimMC/Launcher "
+                "or set DW_ULTIMMC_PATH."
+            )
+        for jar, label in [(self.client_jar, "dwclient"), (self.mod_jar, "divineworld")]:
+            if jar:
+                log.info(f"✅ {label}: {jar}")
+            else:
+                log.warning(f"⚠️  {label} jar not found")
+
+    # ------------------------------------------------------------------
+    # Path discovery
+    # ------------------------------------------------------------------
+
+    def _find_ultimmc(self, explicit: Optional[str]) -> Optional[Path]:
+        """
+        Search for UltimMC in priority order:
+          1. Explicit path (env var / constructor arg)
+          2. Project-relative (workspace root / UltimMC)
+          3. Standard user-home locations
+          4. Linux system prefixes
+          5. PATH (handles symlinked / system-installed builds)
+          6. macOS app bundle
+        """
+        if explicit:
+            p = Path(os.path.expanduser(explicit))
             if p.exists():
                 return p
-            else:
-                log.warning(f"Provided UltimMC path does not exist: {p}")
+            log.warning(f"Provided UltimMC path not found: {p}")
 
-        # Try common installation paths
-        common_paths = [
-            Path.home() / ".local" / "bin" / "ultimmc",
+        cwd  = Path.cwd()
+        root = cwd.parent if cwd.name == "py_backend" else cwd
+
+        candidates = [
+            # Project-relative
+            root / "UltimMC",
+            # User home
+            Path.home() / "UltimMC",
+            Path.home() / ".ultimmc",
+            Path.home() / ".local" / "share" / "ultimmc",
             Path.home() / ".local" / "bin" / "UltimMC",
+            Path.home() / ".local" / "bin" / "ultimmc",
+            # System prefixes
             Path("/opt/ultimmc"),
             Path("/opt/UltimMC"),
             Path("/usr/local/bin/ultimmc"),
             Path("/usr/local/bin/UltimMC"),
         ]
-        
-        for path in common_paths:
-            if path.exists():
-                log.info(f"Found UltimMC at: {path}")
-                return path
-        
-        # Also try checking in workspace for UltimMC folder
-        cwd = Path.cwd()
-        if cwd.name == "py_backend":
-            workspace_root = cwd.parent
-        else:
-            workspace_root = cwd
-        
-        ultimmc_folder = workspace_root / "UltimMC"
-        if ultimmc_folder.exists() and (ultimmc_folder / "bin" / "UltimMC").exists():
-            log.info(f"Found UltimMC folder at: {ultimmc_folder}")
-            return ultimmc_folder / "bin" / "UltimMC"
 
-        # No UltimMC found - don't prompt user, just log warning
-        log.info("UltimMC executable not found in common paths; skipping automated UltimMC actions.")
-        log.info("To use UltimMC, set DW_ULTIMMC_PATH environment variable or install to ~/.local/bin/")
+        for path in candidates:
+            if path.exists():
+                # Accept either install root (has bin/UltimMC) or direct binary
+                if (path / "bin" / "UltimMC").exists() or path.is_file():
+                    log.info(f"Found UltimMC: {path}")
+                    return path
+
+        # PATH fallback — handles symlinked builds
+        exe = shutil.which("ultimmc") or shutil.which("UltimMC")
+        if exe:
+            exe_path     = Path(exe)
+            install_root = exe_path.parent.parent if exe_path.parent.name == "bin" else exe_path.parent
+            log.info(f"Found UltimMC in PATH: {install_root}")
+            return install_root
+
+        # macOS bundle
+        mac = Path("/Applications/UltimMC.app")
+        if mac.exists():
+            return mac
+
+        log.info(
+            "UltimMC not found — set DW_ULTIMMC_PATH or install to ~/UltimMC"
+        )
         return None
-    
-    def _find_file(self, explicit_path: Optional[str], filename: str) -> Optional[Path]:
-        """Find a jar file"""
-        if explicit_path:
-            p = Path(explicit_path)
+
+    def _find_jar(self, explicit: Optional[str], filename: str) -> Optional[Path]:
+        """Find a jar by explicit path or recursive search."""
+        if explicit:
+            p = Path(explicit)
             if p.exists():
                 return p
-        
+
         search_dirs = [
             Path.cwd(),
             Path.cwd() / "py_backend",
             Path.cwd() / "divine-world",
             Path("/opt/divine-world"),
         ]
-        
-        for search_dir in search_dirs:
-            if search_dir.exists():
-                found = list(search_dir.glob(f"**/{filename}"))
-                if found:
-                    return found[0]
-        
+        for d in search_dirs:
+            if d.exists():
+                hits = list(d.glob(f"**/{filename}"))
+                if hits:
+                    return hits[0]
         return None
-    
-    def copy_ultimmc_installation(self, dest_dir: Path) -> bool:
+
+    def _locate_executable(self):
         """
-        Copy the entire UltimMC installation to a new directory.
-        
-        Args:
-            dest_dir: Destination directory for the copy
-            
-        Returns:
-            True if successful
-        """
-        if not self.source_ultimmc_path:
-            log.error("Source UltimMC not found - cannot copy")
-            return False
-        
-        # Find the UltimMC installation root
-        source_root = self.source_ultimmc_path.parent
-        if source_root.name == "bin":
-            source_root = source_root.parent
-        
-        log.info(f"Copying UltimMC from {source_root} to {dest_dir}")
-        
-        try:
-            if dest_dir.exists():
-                log.info(f"Destination already exists, skipping copy: {dest_dir}")
-                self.ultimmc_dir = dest_dir
-                self._find_executable_in_dir()
-                return True
-            
-            shutil.copytree(source_root, dest_dir, symlinks=True)
-            log.info(f"✅ Copied UltimMC installation to {dest_dir}")
-            
-            self.ultimmc_dir = dest_dir
-            self._find_executable_in_dir()
-            
-            # Make executable if needed
-            if self.ultimmc_executable:
-                os.chmod(self.ultimmc_executable, 0o755)
-            
-            return True
-        except Exception as e:
-            log.error(f"❌ Failed to copy UltimMC: {e}")
-            return False
-    
-    def create_account(self, username: str, make_active: bool = True, 
-                      custom_uuid: Optional[str] = None) -> bool:
-        """
-        Create a local Minecraft account (offline mode) in UltimMC's accounts.json.
-        
-        Args:
-            username: Account username
-            make_active: Whether to set this account as the active account
-            custom_uuid: Custom UUID to use (if None, generates offline UUID)
-            
-        Returns:
-            True if successful
+        Find the UltimMC binary inside self.ultimmc_dir.
+
+        We always prefer <ultimmc_dir>/bin/UltimMC so that:
+          • accounts.json lives at <ultimmc_dir>/bin/accounts.json  (correct)
+          • "-d <ultimmc_dir>" passed to UltimMC resolves data paths correctly
+        The flat-layout fallbacks are kept only for unusual build layouts but
+        they should never be reached for a normal UltimMC installation.
         """
         if not self.ultimmc_dir:
-            log.error("UltimMC directory not set - cannot create account")
+            return
+        # Primary: standard layout — binary is inside bin/
+        primary = self.ultimmc_dir / "bin" / "UltimMC"
+        if primary.exists() and os.access(primary, os.X_OK):
+            self.ultimmc_executable = primary
+            log.info(f"UltimMC executable: {primary}")
+            return
+        # Fallbacks for non-standard builds
+        for candidate in [
+            self.ultimmc_dir / "UltimMC",
+            self.ultimmc_dir / "ultimmc",
+        ]:
+            if candidate.exists() and os.access(candidate, os.X_OK):
+                self.ultimmc_executable = candidate
+                log.warning(
+                    f"UltimMC executable found in non-standard location: {candidate}. "
+                    f"accounts.json should still be at {self.ultimmc_dir}/bin/accounts.json"
+                )
+                return
+        log.warning(f"No executable found in {self.ultimmc_dir}")
+
+    # ------------------------------------------------------------------
+    # Installation copy
+    # ------------------------------------------------------------------
+
+    def copy_ultimmc_installation(self, dest_dir: Path) -> bool:
+        """
+        Copy the entire UltimMC installation tree to dest_dir.
+
+        source_root resolution rules (in order):
+          1. If source path is a file (bare binary) → walk up to parent.
+          2. If that parent is named "bin"          → walk up again to
+             the install root (so we copy the whole tree, not just bin/).
+             BUT only do this when the grandparent actually looks like a
+             real UltimMC root (contains a bin/ subdirectory) — otherwise
+             a system binary at /usr/local/bin/ultimmc would cause us to
+             copy /usr/local/ into the agent folder.
+          3. If source path is already a directory   → use as-is.
+        """
+        if not self.source_ultimmc_path:
+            log.error("Source UltimMC not found — cannot copy")
             return False
-        
-        log.info(f"Creating local account: {username}")
-        
-        accounts_file = self.ultimmc_dir / "bin" / "accounts.json"
-        
+
+        source_root = self.source_ultimmc_path.resolve()
+
+        # Step 1: unwrap bare binary
+        if source_root.is_file():
+            source_root = source_root.parent
+
+        # Step 2: unwrap bin/ sub-folder only when parent is a real install root
+        if source_root.name == "bin":
+            candidate_root = source_root.parent
+            # A real UltimMC root has bin/UltimMC inside it
+            if (candidate_root / "bin" / "UltimMC").exists():
+                source_root = candidate_root
+            else:
+                log.warning(
+                    f"Source is inside a 'bin' dir but parent does not look "
+                    f"like a UltimMC install root ({candidate_root}). "
+                    f"Using bin/ directory directly: {source_root}"
+                )
+
+        if dest_dir.exists():
+            log.info(f"UltimMC copy already exists: {dest_dir}")
+            self.ultimmc_dir = dest_dir
+            self._locate_executable()
+            # Verify the expected binary is present in the copy
+            if not self.ultimmc_executable:
+                log.error(
+                    f"Existing copy at {dest_dir} has no executable — "
+                    f"delete it and retry to force a fresh copy"
+                )
+                return False
+            return True
+
+        log.info(f"Copying UltimMC: {source_root} → {dest_dir}")
+        try:
+            shutil.copytree(source_root, dest_dir, symlinks=True)
+            self.ultimmc_dir = dest_dir
+            self._locate_executable()
+            if not self.ultimmc_executable:
+                log.error(
+                    f"Copy succeeded but no executable found in {dest_dir}. "
+                    f"Source tree may not contain bin/UltimMC."
+                )
+                return False
+            os.chmod(self.ultimmc_executable, 0o755)
+            log.info(f"✅ UltimMC copied to {dest_dir} "
+                     f"(executable: {self.ultimmc_executable})")
+            return True
+        except Exception as e:
+            log.error(f"❌ Copy failed: {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Account management
+    # ------------------------------------------------------------------
+
+    def create_account(self, username: str, make_active: bool = True,
+                       custom_uuid: Optional[str] = None) -> bool:
+        """
+        Create an offline-mode Minecraft account in UltimMC's accounts.json.
+
+        accounts.json lives at <ultimmc_dir>/bin/accounts.json — inside the
+        bin/ subdirectory, next to the UltimMC executable.  UltimMC reads it
+        from there when launched with -d <ultimmc_dir>.
+        """
+        if not self.ultimmc_dir:
+            log.error("ultimmc_dir not set")
+            return False
+
+        # Ensure bin/ exists (it should after copy, but be defensive)
+        bin_dir = self.ultimmc_dir / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        accounts_file = bin_dir / "accounts.json"
         if accounts_file.exists():
             try:
                 data = json.loads(accounts_file.read_text())
                 if "accounts" not in data:
                     data = {"accounts": [], "formatVersion": 3}
             except json.JSONDecodeError:
-                log.warning("Corrupted accounts.json, creating new one")
+                log.warning("Corrupted accounts.json — resetting")
                 data = {"accounts": [], "formatVersion": 3}
         else:
             data = {"accounts": [], "formatVersion": 3}
-        
-        if custom_uuid:
-            account_uuid = custom_uuid
-            log.info(f"Using custom UUID: {account_uuid}")
-        else:
-            account_uuid = self._generate_offline_uuid(username)
-            log.info(f"Generated offline UUID: {account_uuid}")
-        
-        client_token = str(uuid.uuid4()).replace("-", "")
-        current_time = int(time.time())
-        
-        new_account = {
+
+        account_uuid = custom_uuid or self._offline_uuid(username)
+        log.info(f"Creating account: {username} ({account_uuid})")
+
+        new_account: Dict[str, Any] = {
             "type": "Local",
             "profile": {
-                "id": account_uuid.replace("-", ""),
-                "name": username,
-                "skin": {
-                    "id": "",
-                    "url": "",
-                    "variant": ""
-                },
-                "capes": []
+                "id":     account_uuid.replace("-", ""),
+                "name":   username,
+                "skin":   {"id": "", "url": "", "variant": ""},
+                "capes":  [],
             },
             "entitlement": {
                 "canPlayMinecraft": True,
-                "ownsMinecraft": True
+                "ownsMinecraft":    True,
             },
             "ygg": {
                 "extra": {
-                    "clientToken": client_token,
-                    "userName": username
+                    "clientToken": _uuid_mod.uuid4().hex,
+                    "userName":    username,
                 },
-                "iat": current_time
-            }
+                "iat": int(time.time()),
+            },
         }
-        
+
         if make_active:
-            for account in data["accounts"]:
-                account.pop("active", None)
+            for acc in data["accounts"]:
+                acc.pop("active", None)
             new_account["active"] = True
-        
-        existing_index = None
-        for i, account in enumerate(data["accounts"]):
-            if account.get("profile", {}).get("name") == username:
-                existing_index = i
+
+        # Update or append
+        for i, acc in enumerate(data["accounts"]):
+            if acc.get("profile", {}).get("name") == username:
+                data["accounts"][i] = new_account
                 break
-        
-        if existing_index is not None:
-            log.info(f"Account {username} already exists, updating it")
-            data["accounts"][existing_index] = new_account
         else:
             data["accounts"].append(new_account)
-        
+
         try:
             accounts_file.write_text(json.dumps(data, indent=4))
-            log.info(f"✅ Account created/updated: {username}")
-            log.info(f"   UUID: {account_uuid}")
-            log.info(f"   Active: {make_active}")
+            log.info(f"✅ Account saved: {username}")
             return True
         except Exception as e:
-            log.error(f"❌ Failed to write accounts.json: {e}")
+            log.error(f"❌ accounts.json write failed: {e}")
             return False
-    
+
+    @staticmethod
+    def _offline_uuid(username: str) -> str:
+        """Generate Minecraft-standard offline UUID."""
+        namespace = _uuid_mod.UUID("00000000-0000-0000-0000-000000000000")
+        return str(_uuid_mod.uuid3(namespace, f"OfflinePlayer:{username}"))
+
+    # ------------------------------------------------------------------
+    # Instance management
+    # ------------------------------------------------------------------
+
     def create_instance(self, instance_name: str, forge_install: bool = True) -> bool:
-        """Create a Minecraft instance with Forge."""
+        """Create a Minecraft Forge instance in UltimMC."""
         if not self.ultimmc_dir:
-            log.error("UltimMC directory not set - cannot create instance")
+            log.error("ultimmc_dir not set")
             return False
-        
-        instances_dir = self.ultimmc_dir / "instances"
-        instances_dir.mkdir(parents=True, exist_ok=True)
-        
-        instance_dir = instances_dir / instance_name
+
+        instance_dir = self.ultimmc_dir / "instances" / instance_name
         instance_dir.mkdir(parents=True, exist_ok=True)
-        
-        log.info(f"Creating Minecraft instance: {instance_name}")
-        
-        instance_cfg = instance_dir / "instance.cfg"
-        cfg_content = f"""InstanceType=OneSix
-name={instance_name}
-iconKey=default
-notes=Divine World Agent Instance
-lastLaunchTime=0
-totalTimePlayed=0
-OverrideCommands=false
-OverrideConsole=false
-OverrideGameTime=false
-OverrideJavaArgs=true
-OverrideJavaLocation=false
-OverrideMCLaunchMethod=false
-OverrideMemory=true
-OverrideNativeWorkarounds=false
-OverridePerformance=false
-OverrideWindow=false
-ShowConsole=false
-MaxMemAlloc=2048
-MinMemAlloc=512
-WrapperCommand=
-"""
-        instance_cfg.write_text(cfg_content.strip())
-        
-        mmc_pack = instance_dir / "mmc-pack.json"
-        pack_content = {
-            "components": [
-                {
-                    "cachedName": "LWJGL 3",
-                    "cachedVersion": "3.3.1",
-                    "cachedVolatile": True,
-                    "dependencyOnly": True,
-                    "uid": "org.lwjgl3",
-                    "version": "3.3.1"
-                },
-                {
-                    "cachedName": "Minecraft",
-                    "cachedRequires": [{"uid": "org.lwjgl3"}],
-                    "cachedVersion": self.MINECRAFT_VERSION,
-                    "important": True,
-                    "uid": "net.minecraft",
-                    "version": self.MINECRAFT_VERSION
-                }
-            ],
-            "formatVersion": 1
-        }
-        
+
+        # instance.cfg
+        (instance_dir / "instance.cfg").write_text(
+            f"InstanceType=OneSix\n"
+            f"name={instance_name}\n"
+            f"iconKey=default\n"
+            f"notes=Divine World Agent Instance\n"
+            f"OverrideJavaArgs=true\n"
+            f"OverrideMemory=true\n"
+            f"MaxMemAlloc=2048\n"
+            f"MinMemAlloc=512\n"
+            f"ShowConsole=false\n"
+        )
+
+        # mmc-pack.json
+        components = [
+            {
+                "cachedName": "LWJGL 3", "cachedVersion": "3.3.1",
+                "cachedVolatile": True, "dependencyOnly": True,
+                "uid": "org.lwjgl3", "version": "3.3.1",
+            },
+            {
+                "cachedName": "Minecraft",
+                "cachedRequires": [{"uid": "org.lwjgl3"}],
+                "cachedVersion": self.MINECRAFT_VERSION,
+                "important": True,
+                "uid": "net.minecraft",
+                "version": self.MINECRAFT_VERSION,
+            },
+        ]
         if forge_install:
-            pack_content["components"].append({
+            components.append({
                 "cachedName": "Forge",
                 "cachedVersion": self.FORGE_VERSION,
                 "uid": "net.minecraftforge",
-                "version": self.FORGE_VERSION
+                "version": self.FORGE_VERSION,
             })
-        
-        mmc_pack.write_text(json.dumps(pack_content, indent=2))
-        
+
+        (instance_dir / "mmc-pack.json").write_text(
+            json.dumps({"components": components, "formatVersion": 1}, indent=2)
+        )
+
         log.info(f"✅ Instance created: {instance_name}")
         return True
-    
+
     def install_mods(self, instance_name: str) -> bool:
-        """Copy DivineWorld and DWClientBot mods to instance."""
+        """Install DivineWorld + DWClientBot mods into instance."""
         if not self.ultimmc_dir:
-            log.error("UltimMC directory not set")
+            log.error("ultimmc_dir not set")
             return False
-        
-        instance_dir = self.ultimmc_dir / "instances" / instance_name
-        minecraft_dir = instance_dir / ".minecraft"
-        minecraft_dir.mkdir(parents=True, exist_ok=True)
-        
-        mods_dir = minecraft_dir / "mods"
+
+        mods_dir = (
+            self.ultimmc_dir / "instances" / instance_name / ".minecraft" / "mods"
+        )
         mods_dir.mkdir(parents=True, exist_ok=True)
-        
-        success = True
-        
-        if self.mod_jar:
+
+        ok = True
+        for jar, label in [(self.mod_jar, "DivineWorld"), (self.client_jar, "DWClientBot")]:
+            if not jar:
+                continue
             try:
-                shutil.copy(self.mod_jar, mods_dir / self.mod_jar.name)
-                log.info(f"✅ Installed DivineWorld mod: {self.mod_jar.name}")
+                shutil.copy(jar, mods_dir / jar.name)
+                log.info(f"✅ Installed {label}: {jar.name}")
             except Exception as e:
-                log.error(f"❌ Failed to install DivineWorld mod: {e}")
-                success = False
-        
-        if self.client_jar:
-            try:
-                shutil.copy(self.client_jar, mods_dir / self.client_jar.name)
-                log.info(f"✅ Installed DWClientBot mod: {self.client_jar.name}")
-            except Exception as e:
-                log.error(f"❌ Failed to install DWClientBot mod: {e}")
-                success = False
-        
-        return success
-    
-    def launch_instance(self, instance_name: str, 
-                       server_addr: Optional[str] = None,
-                       profile_name: Optional[str] = None,
-                       offline: bool = True,
-                       offline_name: Optional[str] = None,
-                       agent_id: Optional[str] = None,
-                       backend_url: Optional[str] = None,
-                       memory_mb: int = 2048,
-                       extra_jvm_args: Optional[List[str]] = None,
-                       headless: bool = False) -> Optional[subprocess.Popen]:
+                log.error(f"❌ Failed to install {label}: {e}")
+                ok = False
+        return ok
+
+    # ------------------------------------------------------------------
+    # Launch
+    # ------------------------------------------------------------------
+
+    def launch_instance(self, instance_name: str,
+                        server_addr:     Optional[str]       = None,
+                        profile_name:    Optional[str]       = None,
+                        offline:         bool                 = True,
+                        offline_name:    Optional[str]       = None,
+                        agent_id:        Optional[str]       = None,
+                        backend_url:     Optional[str]       = None,
+                        memory_mb:       int                  = Config.CLIENT_MEMORY_MB,
+                        extra_jvm_args:  Optional[List[str]] = None,
+                        headless:        bool                 = False) -> Optional[subprocess.Popen]:
         """
-        Launch a Minecraft instance via UltimMC using built-in flags.
-        
-        Args:
-            instance_name: Instance to launch
-            server_addr: Server address (e.g., "127.0.0.1:25565")
-            profile_name: Account profile name to use
-            offline: Launch in offline mode
-            offline_name: Username for offline mode
-            agent_id: Agent ID for system property
-            backend_url: Backend URL for system property
-            memory_mb: Memory allocation
-            extra_jvm_args: Additional JVM arguments
-            headless: Run with xvfb-run (headless)
-            
-        Returns:
-            Process handle or None
+        Launch a Minecraft instance via UltimMC's built-in flags.
+        JVM system properties are passed via the INST_JAVA env var.
         """
         if not self.ultimmc_executable:
-            log.error("UltimMC executable not available - cannot launch")
+            log.error("No UltimMC executable — cannot launch")
             return None
-        
-        # Build UltimMC command using built-in flags
+
+        # Resolve to absolute so cwd doesn't interfere
+        exe = self.ultimmc_executable.resolve()
+
+        # Safety check: reject root-level shell scripts.
+        # The real binary lives at <ultimmc_dir>/bin/UltimMC.
+        # A UltimMC shell wrapper at the install root has the same name but
+        # is NOT the binary — running it from the wrong cwd fails silently.
+        if exe.parent.name != "bin":
+            # Try to find the real binary one level deeper before giving up
+            real_bin = exe.parent / "bin" / "UltimMC"
+            if real_bin.exists() and os.access(real_bin, os.X_OK):
+                log.warning(
+                    f"ultimmc_executable points at install root ({exe}), "
+                    f"correcting to real binary: {real_bin}"
+                )
+                exe = real_bin.resolve()
+                self.ultimmc_executable = real_bin
+                # Also fix ultimmc_dir to the folder that contains bin/
+                self.ultimmc_dir = real_bin.parent.parent
+            else:
+                log.error(
+                    f"ultimmc_executable ({exe}) is not inside a bin/ directory "
+                    f"and no bin/UltimMC found alongside it. "
+                    f"Expected: {exe.parent / 'bin' / 'UltimMC'}"
+                )
+                return None
+
+        if not exe.exists():
+            log.error(f"UltimMC binary not found: {exe}")
+            return None
+        if not os.access(exe, os.X_OK):
+            log.warning(f"UltimMC binary not executable — fixing permissions: {exe}")
+            os.chmod(exe, 0o755)
+
         cmd = []
-        
-        # Add xvfb-run for headless operation
         if headless:
             cmd.extend(["xvfb-run", "-a"])
-        
-        cmd.append(str(self.ultimmc_executable))
-        
-        # Use current directory as data dir (. = current)
-        cmd.extend(["-d", "."])
-        
-        # Launch instance
-        cmd.extend(["-l", instance_name])
-        
-        # Server address
+
+        # Use the validated absolute binary and derive the data dir from it.
+        # ultimmc_dir must be the folder that CONTAINS bin/ (not bin/ itself),
+        # so that -d <dir> makes UltimMC find accounts.json at <dir>/bin/accounts.json
+        # and instances/ at <dir>/instances/.
+        data_dir = exe.parent.parent   # .../UltimMC/bin/UltimMC → .../UltimMC/
+        cmd += [
+            str(exe),
+            "-d", str(data_dir / "bin"), # Executive live along side accounts.json and the -d flag of UltimMC should point to the bin containing the accounts.json and the UltimMC executable.
+            "--alive",
+            "-l", instance_name,
+        ]
+
         if server_addr:
-            cmd.extend(["-s", server_addr])
-        
-        # Profile
-        if profile_name:
-            cmd.extend(["-a", profile_name])
-        
-        # Offline mode
+            cmd += ["-s", server_addr]
+
+        # Always pass -a so UltimMC selects exactly the right pre-configured
+        # account from accounts.json.  Without -a UltimMC picks whichever
+        # account is marked active=true, which may be wrong if the per-agent
+        # copy has multiple entries.  profile_name takes precedence over
+        # offline_name since it's the explicit caller override.
+        _account_name = profile_name or offline_name
+        if _account_name:
+            cmd += ["-a", _account_name]
+
         if offline:
             cmd.append("-o")
             if offline_name:
-                cmd.extend(["-n", offline_name])
-        
-        # Set up environment for JVM args
-        env = os.environ.copy()
-        
-        java_args = [
-            f"-Xmx{memory_mb}M",
-            f"-Xms{memory_mb}M",
-        ]
-        
+                cmd += ["-n", offline_name]
+
+        jvm = [f"-Xmx{memory_mb}M", f"-Xms{memory_mb}M"]
         if agent_id:
-            java_args.append(f"-Ddw.agentId={agent_id}")
+            # DWClientMod.loadConfiguration() reads dw.agent.id (not dw.agentId)
+            jvm.append(f"-Ddw.agent.id={agent_id}")
         if backend_url:
-            java_args.append(f"-Ddw.backend={backend_url}")
+            # DWClientMod reads dw.backend.url and dw.backend.port separately.
+            # backend_url arrives as "ws://127.0.0.1:<port>" — split it so the
+            # client gets the right WebSocket host and the correct agent port.
+            # WebSocketManager builds:  dw.backend.url + ":" + dw.backend.port + "/ws/agent"
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(backend_url)
+                ws_host = f"{parsed.scheme}://{parsed.hostname}"
+                ws_port = parsed.port or 11400
+            except Exception:
+                ws_host = "ws://127.0.0.1"
+                ws_port = 11400
+            jvm.append(f"-Ddw.backend.url={ws_host}")
+            jvm.append(f"-Ddw.backend.port={ws_port}")
         if server_addr:
-            java_args.append(f"-Ddw.server={server_addr}")
-        
+            jvm.append(f"-Ddw.server={server_addr}")
         if extra_jvm_args:
-            java_args.extend(extra_jvm_args)
-        
-        env["INST_JAVA"] = " ".join(java_args)
-        
-        log.info(f"Launching UltimMC instance: {instance_name}")
-        log.info(f"  Working directory: {self.ultimmc_dir}")
-        log.info(f"  Server: {server_addr}")
-        log.info(f"  Profile: {profile_name}")
-        log.info(f"  Offline: {offline} (name: {offline_name})")
-        log.info(f"  Agent ID: {agent_id}")
-        log.info(f"  Backend: {backend_url}")
-        log.info(f"  Memory: {memory_mb}MB")
-        log.info(f"  Headless: {headless}")
-        log.info(f"  Command: {' '.join(cmd)}")
-        
+            jvm.extend(extra_jvm_args)
+
+        env              = os.environ.copy()
+        env["INST_JAVA"] = " ".join(jvm)
+
+        log.info(
+            f"Launching UltimMC: instance={instance_name} "
+            f"executable={exe} "
+            f"data_dir={data_dir} "
+            f"accounts={data_dir / 'bin' / 'accounts.json'} "
+            f"server={server_addr} offline_name={offline_name} "
+            f"ws_backend={backend_url} headless={headless}"
+        )
         try:
             process = subprocess.Popen(
-                cmd,
-                cwd=str(self.ultimmc_dir),
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+                cmd, cwd=str(data_dir), env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
-            
-            log.info(f"✅ UltimMC launched with PID: {process.pid}")
+            log.info(f"✅ Launched PID {process.pid}")
             return process
         except Exception as e:
-            log.error(f"❌ Failed to launch UltimMC: {e}")
+            log.error(f"❌ Launch failed: {e}")
             return None
-    
-    @staticmethod
-    def _generate_offline_uuid(username: str) -> str:
-        """Generate offline mode UUID for account (Minecraft standard)"""
-        namespace = uuid.UUID("00000000-0000-0000-0000-000000000000")
-        name = f"OfflinePlayer:{username}"
-        return str(uuid.uuid3(namespace, name))
 
+
+# ---------------------------------------------------------------------------
+# MultiAgentLauncher
+# ---------------------------------------------------------------------------
 
 class MultiAgentLauncher:
     """
-    Manager for launching multiple agents simultaneously.
-    
-    Creates separate UltimMC folder copies for each agent.
+    Manages N independent agents by giving each its own UltimMC folder copy.
+    This is the object UltimMCAgentSpawner in agent_spawner.py uses directly.
     """
-    
+
     def __init__(self, base_dir: Optional[Path] = None):
-        """
-        Initialize multi-agent launcher.
-        
-        Args:
-            base_dir: Base directory for agent UltimMC copies
-        """
-        if base_dir:
-            self.base_dir = Path(base_dir)
-        else:
-            self.base_dir = Path.home() / ".divine-world" / "ultimmc_agents"
-        
+        # base_dir is only used as a fallback when the packaged UltimMC copy
+        # doesn't exist yet.  We default to NPC_APPLICATIONS_DIR so any
+        # fallback clones land alongside the agent folders.
+        self.base_dir = Path(base_dir) if base_dir else Path(Config.NPC_APPLICATIONS_DIR)
         self.base_dir.mkdir(parents=True, exist_ok=True)
+
         self.launchers: Dict[str, UltimMCLauncher] = {}
         self.processes: Dict[str, subprocess.Popen] = {}
-        
-        log.info(f"Multi-agent launcher initialized at: {self.base_dir}")
-    
-    def create_launcher_for_agent(self, agent_id: str, 
-                                 source_launcher: Optional[UltimMCLauncher] = None) -> UltimMCLauncher:
+        log.info(f"MultiAgentLauncher base: {self.base_dir}")
+
+    # ------------------------------------------------------------------
+    # Per-agent setup
+    # ------------------------------------------------------------------
+
+    def create_launcher_for_agent(
+        self, agent_id: str,
+        source_launcher: Optional[UltimMCLauncher] = None,
+    ) -> Optional[UltimMCLauncher]:
         """
-        Create a dedicated UltimMC copy for an agent.
-        
-        Args:
-            agent_id: Agent identifier
-            source_launcher: Source launcher to copy from (or creates new one)
-            
-        Returns:
-            UltimMCLauncher instance for this agent
+        Return a UltimMCLauncher for this agent.
+
+        The canonical path is:
+            npc_applications/<agent_id>/UltimMC/bin/UltimMC
+
+        packager._setup_ultimmc() copies the UltimMC tree to
+        npc_applications/<agent_id>/UltimMC/, so:
+            ultimmc_dir        = npc_applications/<agent_id>/UltimMC/
+            ultimmc_executable = npc_applications/<agent_id>/UltimMC/bin/UltimMC
+            accounts.json      = npc_applications/<agent_id>/UltimMC/bin/accounts.json
+
+        If that copy doesn't exist yet (agent not packaged), we fall back to
+        cloning the system UltimMC into base_dir/<agent_id>/UltimMC/.
         """
-        agent_ultimmc_dir = self.base_dir / agent_id
-        
-        # Create launcher with source paths
-        if source_launcher:
-            launcher = UltimMCLauncher(
-                ultimmc_path=str(source_launcher.source_ultimmc_path) if source_launcher.source_ultimmc_path else None,
-                client_jar_path=str(source_launcher.client_jar) if source_launcher.client_jar else None,
-                mod_jar_path=str(source_launcher.mod_jar) if source_launcher.mod_jar else None
+        # ── Option 1: use the packaged per-agent UltimMC (correct path) ───────
+        # packager copies to:  npc_applications/<id>/UltimMC/
+        # executable lives at: npc_applications/<id>/UltimMC/bin/UltimMC
+        packaged_dir  = Config.NPC_APPLICATIONS_DIR / agent_id / "UltimMC"
+        packaged_exe  = packaged_dir / "bin" / "UltimMC"
+        if packaged_exe.exists() and os.access(packaged_exe, os.X_OK):
+            log.info(f"Using packaged UltimMC for {agent_id}: {packaged_dir}")
+            launcher = UltimMCLauncher.__new__(UltimMCLauncher)
+            launcher.source_ultimmc_path = packaged_dir
+            launcher.client_jar          = source_launcher.client_jar if source_launcher else None
+            launcher.mod_jar             = source_launcher.mod_jar    if source_launcher else None
+            launcher.ultimmc_dir         = packaged_dir          # -d <dir> arg
+            launcher.ultimmc_executable  = packaged_exe
+            os.chmod(packaged_exe, 0o755)
+            log.info(
+                f"✅ Agent {agent_id} → "
+                f"executable: {packaged_exe} | "
+                f"accounts:   {packaged_dir / 'bin' / 'accounts.json'}"
             )
-        else:
-            launcher = UltimMCLauncher()
-        
-        # Copy UltimMC installation
-        if not launcher.copy_ultimmc_installation(agent_ultimmc_dir):
-            log.error(f"Failed to create UltimMC copy for {agent_id}")
+            self.launchers[agent_id] = launcher
+            return launcher
+
+        # ── Option 2: fall back to cloning the system UltimMC ────────────────
+        log.info(
+            f"Packaged UltimMC not found for {agent_id} at {packaged_exe} "
+            f"— falling back to per-agent clone in {self.base_dir}"
+        )
+        dest = self.base_dir / agent_id / "UltimMC"
+        launcher = UltimMCLauncher(
+            ultimmc_path    = str(source_launcher.source_ultimmc_path) if (source_launcher and source_launcher.source_ultimmc_path) else None,
+            client_jar_path = str(source_launcher.client_jar)          if (source_launcher and source_launcher.client_jar)          else None,
+            mod_jar_path    = str(source_launcher.mod_jar)             if (source_launcher and source_launcher.mod_jar)             else None,
+        )
+        if not launcher.copy_ultimmc_installation(dest):
+            log.error(f"Failed to copy UltimMC for {agent_id}")
             return None
-        
+
+        # Sanity-check: executable must point inside dest
+        if launcher.ultimmc_executable:
+            try:
+                launcher.ultimmc_executable.relative_to(dest)
+            except ValueError:
+                log.error(
+                    f"BUG: ultimmc_executable {launcher.ultimmc_executable} "
+                    f"is outside {dest} — aborting"
+                )
+                return None
+            log.info(
+                f"✅ Agent {agent_id} (fallback clone) → "
+                f"executable: {launcher.ultimmc_executable} | "
+                f"accounts:   {dest / 'bin' / 'accounts.json'}"
+            )
+
         self.launchers[agent_id] = launcher
-        log.info(f"Created launcher for {agent_id} at: {agent_ultimmc_dir}")
-        
         return launcher
-    
-    def setup_agent(self, agent_id: str, server_addr: str = "127.0.0.1:25565",
-                   custom_uuid: Optional[str] = None,
-                   agent_type: str = 'npc',
-                   custom_name: Optional[str] = None,
-                   source_launcher: Optional[UltimMCLauncher] = None) -> bool:
+
+    def setup_agent(self, agent_id: str,
+                    server_addr:     str  = Config.DEFAULT_SERVER,
+                    custom_uuid:     Optional[str]             = None,
+                    agent_type:      str  = 'npc',
+                    custom_name:     Optional[str]             = None,
+                    source_launcher: Optional[UltimMCLauncher] = None) -> bool:
         """
-        Setup an agent with its own UltimMC copy.
-        
-        Args:
-            agent_id: Agent identifier
-            server_addr: Server address
-            custom_uuid: Custom UUID for the agent
-            agent_type: 'npc' or 'god_<type>' - determines username format
-            source_launcher: Source launcher to copy from
-            
-        Returns:
-            True if setup successful
+        Full per-agent setup: copy UltimMC, create account,
+        create Forge instance, install mods.
         """
         launcher = self.create_launcher_for_agent(agent_id, source_launcher)
-        if not launcher:
+        if launcher is None:
             return False
-        
-        instance_name = f"agent_{agent_id}"
-        
-        # Generate username in clean or DW_ format (matches DWEventHandler.java Pattern 1)
+
+        # Determine Minecraft username
         if custom_name and custom_name != "Unnamed":
             username = custom_name
-        elif agent_type and agent_type.startswith('god_'):
-            god_type = agent_type.replace('god_', '').upper()
-            username = f"DWGOD_{god_type}_{agent_id}"
+        elif agent_type.startswith("god_"):
+            username = f"DWGOD_{agent_type.replace('god_','').upper()}_{agent_id}"
         else:
             username = f"DW_{agent_id}"
-        
-        # Use proper Minecraft offline UUID if not provided
+
         if not custom_uuid:
             custom_uuid = get_minecraft_uuid(username)
 
-        # Create account with proper username format
+        instance_name = f"agent_{agent_id}"
+
         if not launcher.create_account(username, make_active=True, custom_uuid=custom_uuid):
-            log.error(f"Failed to create account {username} for {agent_id}")
+            log.error(f"Account creation failed for {agent_id}")
             return False
-        
-        # Create instance
         if not launcher.create_instance(instance_name, forge_install=True):
             return False
-        
-        # Install mods
         if not launcher.install_mods(instance_name):
-            log.warning(f"Some mods failed to install for {agent_id}")
-        
-        log.info(f"✅ Agent {agent_id} configured with username: {username}")
+            log.warning(f"Some mods failed for {agent_id}")
+
+        log.info(f"✅ Agent {agent_id} set up as {username!r}")
         return True
-    
+
+    # ------------------------------------------------------------------
+    # Launch
+    # ------------------------------------------------------------------
+
     def launch_agent(self, agent_id: str, server_addr: str,
-                    backend_url: str, memory_mb: int = 2048,
-                    extra_jvm_args: Optional[List[str]] = None,
-                    headless: bool = False,
-                    agent_type: str = 'npc',
-                    custom_name: Optional[str] = None) -> Optional[subprocess.Popen]:
-        """
-        Launch an agent.
-        
-        Args:
-            agent_id: Agent identifier
-            server_addr: Server address
-            backend_url: Backend URL
-            memory_mb: Memory allocation
-            extra_jvm_args: Extra JVM arguments
-            headless: Run headless with xvfb-run
-            agent_type: 'npc' or 'god_<type>' - determines offline username
-            
-        Returns:
-            Process handle or None
-        """
+                     backend_url: str,
+                     memory_mb:       int  = Config.CLIENT_MEMORY_MB,
+                     extra_jvm_args:  Optional[List[str]] = None,
+                     headless:        bool = False,
+                     agent_type:      str  = 'npc',
+                     custom_name:     Optional[str] = None) -> Optional[subprocess.Popen]:
+        """Launch a single agent's Minecraft client."""
         if agent_id not in self.launchers:
-            log.error(f"Launcher not found for {agent_id}. Run setup_agent() first.")
+            log.error(f"No launcher for {agent_id} — call setup_agent() first")
             return None
-        
-        launcher = self.launchers[agent_id]
+
+        launcher      = self.launchers[agent_id]
         instance_name = f"agent_{agent_id}"
-        
-        # Generate offline username (matches setup_agent)
+
         if custom_name and custom_name != "Unnamed":
-            offline_username = custom_name
-        elif agent_type and agent_type.startswith('god_'):
-            god_type = agent_type.replace('god_', '').upper()
-            offline_username = f"DWGOD_{god_type}_{agent_id}"
+            offline_name = custom_name
+        elif agent_type.startswith("god_"):
+            offline_name = f"DWGOD_{agent_type.replace('god_','').upper()}_{agent_id}"
         else:
-            offline_username = f"DW_{agent_id}"
-        
+            offline_name = f"DW_{agent_id}"
+
         process = launcher.launch_instance(
             instance_name=instance_name,
             server_addr=server_addr,
-            offline=True,
-            offline_name=offline_username,  # Use properly formatted username
-            agent_id=agent_id,
-            backend_url=backend_url,
-            memory_mb=memory_mb,
-            extra_jvm_args=extra_jvm_args,
-            headless=headless
+            # Pass profile_name = offline_name so UltimMC's -a flag selects
+            # exactly this agent's pre-configured account.  Without this the
+            # account selection depends on which entry has active=true in
+            # accounts.json, which is fragile across multiple agents.
+            profile_name=offline_name,
+            offline=True, offline_name=offline_name,
+            agent_id=agent_id, backend_url=backend_url,
+            memory_mb=memory_mb, extra_jvm_args=extra_jvm_args,
+            headless=headless,
         )
-        
         if process:
             self.processes[agent_id] = process
-        
         return process
-    
-    def launch_multiple_agents(self, agent_configs: List[Dict[str, Any]],
-                              delay_between_launches: float = 2.0,
-                              source_launcher: Optional[UltimMCLauncher] = None,
-                              headless: bool = False) -> Dict[str, subprocess.Popen]:
-        """
-        Launch multiple agents with configurable delay.
-        
-        Args:
-            agent_configs: List of agent configurations
-            delay_between_launches: Seconds to wait between launches
-            source_launcher: Source launcher for copying
-            headless: Run all agents headless
-            
-        Returns:
-            Dictionary of agent_id -> process
-        """
-        launched = {}
-        
-        for i, config in enumerate(agent_configs):
-            agent_id = config["id"]
-            log.info(f"Launching agent {i+1}/{len(agent_configs)}: {agent_id}")
-            
-            # Setup if not already done
-            if agent_id not in self.launchers:
-                success = self.setup_agent(
-                    agent_id=agent_id,
-                    server_addr=config.get("server", "127.0.0.1:25565"),
-                    custom_uuid=config.get("uuid"),
-                    agent_type=config.get("agent_type", "npc"),  # Pass agent_type
-                    source_launcher=source_launcher
+
+    def launch_multiple_agents(
+        self,
+        agent_configs:          List[Dict[str, Any]],
+        delay_between_launches: float = 2.0,
+        source_launcher:        Optional[UltimMCLauncher] = None,
+        headless:               bool = False,
+    ) -> Dict[str, subprocess.Popen]:
+        """Launch a fleet of agents with a configurable inter-launch delay."""
+        launched: Dict[str, subprocess.Popen] = {}
+
+        for i, cfg in enumerate(agent_configs):
+            aid = cfg["id"]
+            log.info(f"Launching agent {i+1}/{len(agent_configs)}: {aid}")
+
+            if aid not in self.launchers:
+                ok = self.setup_agent(
+                    agent_id=aid,
+                    server_addr=cfg.get("server", Config.DEFAULT_SERVER),
+                    custom_uuid=cfg.get("uuid"),
+                    agent_type=cfg.get("agent_type", "npc"),
+                    source_launcher=source_launcher,
                 )
-                if not success:
-                    log.error(f"Failed to setup {agent_id}")
+                if not ok:
+                    log.error(f"Setup failed: {aid}")
                     continue
-            
-            # Launch
+
             process = self.launch_agent(
-                agent_id=agent_id,
-                server_addr=config.get("server", "127.0.0.1:25565"),
-                backend_url=config.get("backend", "http://127.0.0.1:11400"),
-                memory_mb=config.get("memory", 2048),
-                extra_jvm_args=config.get("extra_jvm_args"),
-                headless=config.get("headless", headless),
-                agent_type=config.get("agent_type", "npc")  # Pass agent_type
+                agent_id=aid,
+                server_addr=cfg.get("server",  Config.DEFAULT_SERVER),
+                backend_url=cfg.get("backend", f"http://127.0.0.1:{Config.BASE_BACKEND_PORT}"),
+                memory_mb=cfg.get("memory",    Config.CLIENT_MEMORY_MB),
+                extra_jvm_args=cfg.get("extra_jvm_args"),
+                headless=cfg.get("headless", headless),
+                agent_type=cfg.get("agent_type", "npc"),
             )
-            
             if process:
-                launched[agent_id] = process
-                log.info(f"✅ Launched {agent_id}")
+                launched[aid] = process
+                log.info(f"✅ Launched {aid}")
             else:
-                log.error(f"❌ Failed to launch {agent_id}")
-            
-            # Wait before launching next agent
+                log.error(f"❌ Failed to launch {aid}")
+
             if i < len(agent_configs) - 1:
-                log.info(f"Waiting {delay_between_launches}s before next launch...")
+                log.info(f"Waiting {delay_between_launches}s…")
                 time.sleep(delay_between_launches)
-        
-        log.info(f"Launched {len(launched)}/{len(agent_configs)} agents successfully")
+
+        log.info(f"Launched {len(launched)}/{len(agent_configs)} agents")
         return launched
-    
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
     def stop_agent(self, agent_id: str, timeout: int = 10) -> bool:
-        """Stop a running agent."""
-        if agent_id not in self.processes:
-            log.warning(f"No running process found for {agent_id}")
+        process = self.processes.get(agent_id)
+        if process is None:
+            log.warning(f"No running process for {agent_id}")
             return False
-        
-        process = self.processes[agent_id]
         try:
             process.terminate()
             process.wait(timeout=timeout)
-            log.info(f"✅ Stopped {agent_id}")
-            del self.processes[agent_id]
-            return True
         except subprocess.TimeoutExpired:
-            log.warning(f"Process {agent_id} didn't terminate, killing...")
             process.kill()
             process.wait()
-            del self.processes[agent_id]
-            return True
-        except Exception as e:
-            log.error(f"Failed to stop {agent_id}: {e}")
-            return False
-    
+        del self.processes[agent_id]
+        log.info(f"✅ Stopped {agent_id}")
+        return True
+
     def stop_all_agents(self) -> int:
-        """Stop all running agents. Returns number stopped."""
-        agent_ids = list(self.processes.keys())
-        stopped = 0
-        
-        for agent_id in agent_ids:
-            if self.stop_agent(agent_id):
-                stopped += 1
-        
-        return stopped
-    
+        return sum(self.stop_agent(aid) for aid in list(self.processes.keys()))
+
     def get_running_agents(self) -> List[str]:
-        """Get list of currently running agent IDs."""
-        running = []
-        for agent_id, process in list(self.processes.items()):
-            if process.poll() is None:  # Still running
-                running.append(agent_id)
-            else:  # Process ended
-                del self.processes[agent_id]
-        
-        return running
-
-
-# ============================================================================
-# EXAMPLE USAGE
-# ============================================================================
-
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    print("="*70)
-    print("UltimMC Multi-Agent Launcher v2")
-    print("Uses folder copies and built-in UltimMC flags")
-    print("="*70)
-    print()
-    
-    # Example: Launch multiple agents
-    print("Example: Multiple Agents")
-    print()
-    print("# 1. Create a source launcher (finds UltimMC and mods)")
-    print("source = UltimMCLauncher()")
-    print()
-    print("# 2. Create multi-agent launcher")
-    print("multi = MultiAgentLauncher()")
-    print()
-    print("# 3. Define agent configs")
-    print("""agent_configs = [
-    {"id": "adam", "server": "127.0.0.1:25565", 
-     "backend": "http://127.0.0.1:11400", "memory": 2048, "headless": True},
-    {"id": "eve", "server": "127.0.0.1:25565", 
-     "backend": "http://127.0.0.1:11400", "memory": 2048, "headless": True},
-]""")
-    print()
-    print("# 4. Launch all agents")
-    print("processes = multi.launch_multiple_agents(")
-    print("    agent_configs, ")
-    print("    delay_between_launches=3.0,")
-    print("    source_launcher=source,")
-    print("    headless=True  # Requires xvfb-run")
-    print(")")
-    print()
-    print("# 5. Check running agents")
-    print("print(multi.get_running_agents())")
-    print()
-    print("# 6. Stop all")
-    print("multi.stop_all_agents()")
-    print()
-    print("✅ Ready to use! Uncomment examples above to test.")
-
-    #
-    # 
-#1. Proper UltimMC Command Usage
-
-#    Uses built-in flags: -l (launch), -s (server), -a (profile), -o (offline), -n (name)
-#    Uses -d . to run from current directory instead of trying to specify external data dirs
-#    Removed the incorrect -d usage that wasn't working
-
-#2. Folder Copying Strategy
-
-#    Each agent gets a complete copy of the UltimMC installation
-#    Copies are stored in ~/.divine-world/ultimmc_agents/{agent_id}/
-#    Each copy is independent with its own accounts, instances, and data
-
-#3. Headless Support
-
-#    Added headless parameter that wraps commands with xvfb-run -a
-#    Useful for running multiple agents on servers without displays
-#    Requires Xvfb to be installed: sudo pacman -S xorg-server-xvfb
-
-#4. Simplified Launch Flow
-#python
-
-# Create source launcher to locate files
-#source = UltimMCLauncher()
-
-# Create multi-agent manager
-#multi = MultiAgentLauncher()
-
-# Launch agents (automatically copies UltimMC for each)
-#agents = [
-#    {"id": "adam", "server": "localhost:25565", 
-#     "backend": "http://localhost:11400", "headless": True},
-#    {"id": "eve", "server": "localhost:25565", 
-#     "backend": "http://localhost:11400", "headless": True},
-#]
-
-#processes = multi.launch_multiple_agents(
-#    agents, 
-#    source_launcher=source,
-#    headless=True
-#)
+        dead = [aid for aid, p in list(self.processes.items()) if p.poll() is not None]
+        for aid in dead:
+            del self.processes[aid]
+        return [aid for aid in self.processes if self.processes[aid].poll() is None]

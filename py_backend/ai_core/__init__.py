@@ -1,3 +1,4 @@
+# ai_core/__init__.py
 """
 Divine World AI Core Package
 
@@ -19,7 +20,7 @@ from ai_core.communication_protocol import (
     compress_frame_to_jpeg,
     decompress_jpeg_to_frame
 )
-from ai_core import validation
+from utils import validation
 
 # Core agent components (no circular dependencies)
 from ai_core.personality import Personality
@@ -31,10 +32,10 @@ from ai_core.brain_capsule import BrainCapsule
 from ai_core.vision import VisionAdapter
 from ai_core.actuators import ForgeIPCClient, ActuatorAdapterIsaacSim
 from ai_core.audio_processors import AudioProcessor
-from ai_core.web_browser import WebBrowser, WebPage
+from ai_core.web_browser import WebBrowser
 
 # Learning components
-from ai_core.reward_system import ImprovedRewardSystem
+from ai_core.reward_system import RewardSystem
 from ai_core.brain_core import BrainCore
 from ai_core.planner import CognitivePlanner
 
@@ -66,7 +67,7 @@ __all__ = [
     "VisionAdapter",
     "ForgeIPCClient",
     "ActuatorAdapterIsaacSim",
-    "ImprovedRewardSystem",
+    "RewardSystem",
     "BrainCore",
     "CognitivePlanner",
     "WebBrowser",

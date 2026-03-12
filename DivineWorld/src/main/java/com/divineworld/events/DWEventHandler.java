@@ -2,7 +2,9 @@
 package com.divineworld.events;
 
 import com.divineworld.DWMod;
+import com.divineworld.commands.ServerGodAbilityExecutor;
 import com.divineworld.entity.DWNPCManager;
+import com.divineworld.utils.TaggedEntitySystem;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
@@ -10,172 +12,169 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
 /**
- * FIXED - Server-side event handler for AI player management
- * Minecraft Forge 1.20.1 with Parchment mappings
+ * DWEventHandler
+ * ==============
+ * Handles player join / leave / server-tick events.
+ *
+ * Detection is purely agents.json-based. The Minecraft username IS
+ * the clean name stored in agents.json — no DW_ or DWGOD_ prefix.
+ *
+ *   "Adam"  → NPCs.male         → registered as NPC (male)
+ *   "Eve"   → NPCs.female       → registered as NPC (female)
+ *   "Zeus"  → GODs.dual.oracle  → GOD — body spawned by GodSpawnHandler
+ *
+ * TaggedEntitySystem.detectAgentType() is the single source of truth.
+ * It reads agents.json once per fresh login and caches the result in NBT
+ * so all subsequent tick-level checks are O(1) NBT reads.
+ *
+ * FIX Bug 1 — Double registerGodPlayer (previously applied):
+ *   DWEventHandler no longer calls registerGodPlayer for GOD agents.
+ *   GodSpawnHandler is the sole owner, called after the body is in the world.
+ *   This handler still calls detectAgentType() so "dw_god_type" is written
+ *   into NBT before GodSpawnHandler.onPlayerJoin reads it on the same tick.
+ *
+ * FIX Bug 13 — tickAbilityCooldowns never wired to server tick:
+ *   ServerGodAbilityExecutor stores per-ability cooldowns in player NBT under
+ *   keys like "cd_sonic_boom". Without a per-tick decrement those cooldowns
+ *   never expired and every ability was permanently blocked after the first use.
+ *
+ *   Fix: onServerTick now iterates all online god players and calls
+ *   ServerGodAbilityExecutor.tickAbilityCooldowns(player) once per tick.
+ *   The method simply decrements every NBT int key starting with "cd_" by 1,
+ *   stopping at 0. The cost is negligible — there are at most a handful of
+ *   god players and the NBT read/write is O(number of active cooldown keys).
  */
 @Mod.EventBusSubscriber(modid = DWMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class DWEventHandler {
 
-    /**
-     * Called when a player joins the server
-     */
+    // -------------------------------------------------------------------------
+    // Player join
+    // -------------------------------------------------------------------------
+
     @SubscribeEvent
     public static void onPlayerJoin(PlayerEvent.PlayerLoggedInEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
-            return;
-        }
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
 
         String username = player.getName().getString();
-
         DWMod.LOGGER.info("Player joined: {} (UUID: {})", username, player.getUUID());
 
-        // PATTERN 1: Username-based detection
-        // Format: DW_<agentId> or DWGOD_<type>_<agentId>
+        // agents.json is the sole authority — username IS the agent's clean name.
+        // detectAgentType() writes "dw_god_type" (and "dw_gender") into NBT so
+        // GodSpawnHandler.onPlayerJoin can read the cached type on the same tick.
+        TaggedEntitySystem.AgentType agentType = TaggedEntitySystem.detectAgentType(player);
 
-        if (username.startsWith("DWGOD_")) {
-            // God-tier agent
-            // Format: DWGOD_<type>_<agentId>
-            String[] parts = username.substring(4).split("_", 2);
-            if (parts.length == 2) {
-                String godType = parts[0].toLowerCase();
-                String agentId = parts[1];
+        switch (agentType) {
 
-                DWNPCManager.registerGodPlayer(player, agentId, godType);
-                notifyBackendPlayerConnected(agentId, player.getUUID().toString(), "god_" + godType);
+            case GOD -> {
+                // Read the type detectAgentType() just cached in NBT.
+                // FIX Bug 1: do NOT call registerGodPlayer here —
+                // GodSpawnHandler owns full god registration after the body spawns.
+                String godType = TaggedEntitySystem.extractGodType(player);
+                if (godType == null || godType.isEmpty()) godType = "oracle";
 
-                DWMod.LOGGER.info("✅ Registered GOD player: {} (Type: {}, Agent: {})",
-                        username, godType, agentId);
-            }
-        }
-        else if (username.startsWith("DW_")) {
-            // Regular NPC agent
-            String agentId = username.substring(3); // Remove "DW_" prefix
+                // Notify the Python backend immediately so it knows a god connected.
+                notifyBackend(username, player.getUUID().toString(), "god_" + godType, "connected");
 
-            DWNPCManager.registerAIPlayer(player, agentId);
-            notifyBackendPlayerConnected(agentId, player.getUUID().toString(), "npc");
-
-            DWMod.LOGGER.info("✅ Registered AI player: {} (Agent: {})", username, agentId);
-        }
-
-        // PATTERN 2: Persistent data from client mod
-        // DWClientMod sets this data when connecting
-        if (player.getPersistentData().contains("dw_agent_id")) {
-            String agentId = player.getPersistentData().getString("dw_agent_id");
-            String agentType = player.getPersistentData().getString("dw_agent_type");
-
-            if (agentType.startsWith("god_")) {
-                String godType = agentType.substring(4);
-                DWNPCManager.registerGodPlayer(player, agentId, godType);
-
-                DWMod.LOGGER.info("✅ Registered GOD player via NBT: {} (Type: {})",
-                        agentId, godType);
-            } else {
-                DWNPCManager.registerAIPlayer(player, agentId);
-
-                DWMod.LOGGER.info("✅ Registered AI player via NBT: {}", agentId);
+                DWMod.LOGGER.info("✅ GOD joined: {} (type={}), body spawn in 40 ticks", username, godType);
             }
 
-            notifyBackendPlayerConnected(agentId, player.getUUID().toString(), agentType);
+            case NPC_MALE -> {
+                DWNPCManager.registerAIPlayer(player, username);
+                player.getPersistentData().putString("dw_gender", "male");
+                notifyBackend(username, player.getUUID().toString(), "npc_male", "connected");
+                DWMod.LOGGER.info("✅ NPC (male) joined: {}", username);
+            }
+
+            case NPC_FEMALE -> {
+                DWNPCManager.registerAIPlayer(player, username);
+                player.getPersistentData().putString("dw_gender", "female");
+                notifyBackend(username, player.getUUID().toString(), "npc_female", "connected");
+                DWMod.LOGGER.info("✅ NPC (female) joined: {}", username);
+            }
+
+            case REAL_PLAYER -> {
+                DWMod.LOGGER.debug("Real player joined: {}", username);
+            }
         }
     }
 
-    /**
-     * Called when a player leaves the server
-     */
+    // -------------------------------------------------------------------------
+    // Player leave
+    // -------------------------------------------------------------------------
+
     @SubscribeEvent
     public static void onPlayerLeave(PlayerEvent.PlayerLoggedOutEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
-            return;
-        }
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
 
         if (DWNPCManager.isAIPlayer(player)) {
             String agentId = DWNPCManager.getAgentId(player);
-
             DWNPCManager.unregisterAIPlayer(player);
-
             if (agentId != null) {
-                notifyBackendPlayerDisconnected(agentId, player.getUUID().toString());
-                DWMod.LOGGER.info("❌ AI player disconnected: {} (Agent: {})",
-                        player.getName().getString(), agentId);
+                notifyBackend(agentId, player.getUUID().toString(), "any", "disconnected");
+                DWMod.LOGGER.info("❌ Agent disconnected: {}", agentId);
             }
         }
     }
 
-    /**
-     * Server tick event for cooldown management
-     */
+    // -------------------------------------------------------------------------
+    // Server tick — cooldown management
+    // -------------------------------------------------------------------------
+
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
-        if (event.phase == TickEvent.Phase.END) {
-            DWNPCManager.tickCooldowns();
+        if (event.phase != TickEvent.Phase.END) return;
+
+        // NPC chat rate-limit cooldowns
+        DWNPCManager.tickCooldowns();
+
+        // FIX Bug 13: tick god ability cooldowns every server tick.
+        // Without this, ServerGodAbilityExecutor.setCooldown() stored a value
+        // that was never decremented, permanently blocking abilities after first use.
+        // We iterate all players, skip non-gods, and call tickAbilityCooldowns once.
+        if (event.getServer() != null) {
+            for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
+                if (DWNPCManager.isGodPlayer(player)) {
+                    ServerGodAbilityExecutor.tickAbilityCooldowns(player);
+                }
+            }
         }
     }
 
-    /**
-     * Notify Python backend that an AI player connected
-     */
-    private static void notifyBackendPlayerConnected(String agentId, String playerUuid, String agentType) {
-        new Thread(() -> {
-            try {
-                String backendUrl = System.getProperty("dw.backend", "http://127.0.0.1:11400");
+    // -------------------------------------------------------------------------
+    // Backend notification (fire-and-forget on a daemon thread)
+    // -------------------------------------------------------------------------
 
-                java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+    private static void notifyBackend(String agentId, String playerUuid,
+                                      String agentType, String eventType) {
+        Thread t = new Thread(() -> {
+            try {
+                String url = System.getProperty("dw.backend", "http://127.0.0.1:11400")
+                        + "/api/player_event";
 
                 String json = String.format(
-                        "{\"agent_id\":\"%s\",\"player_uuid\":\"%s\",\"agent_type\":\"%s\",\"event\":\"connected\"}",
-                        agentId, playerUuid, agentType
-                );
+                        "{\"agent_id\":\"%s\",\"player_uuid\":\"%s\"," +
+                        "\"agent_type\":\"%s\",\"event\":\"%s\"}",
+                        agentId, playerUuid, agentType, eventType);
 
-                java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
-                        .uri(java.net.URI.create(backendUrl + "/api/player_event"))
+                java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+                java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
+                        .uri(java.net.URI.create(url))
                         .header("Content-Type", "application/json")
                         .POST(java.net.http.HttpRequest.BodyPublishers.ofString(json))
                         .build();
 
-                java.net.http.HttpResponse<String> response = client.send(
-                        request,
-                        java.net.http.HttpResponse.BodyHandlers.ofString()
-                );
-
-                if (response.statusCode() == 200) {
-                    DWMod.LOGGER.info("✅ Backend notified: {} connected", agentId);
-                } else {
-                    DWMod.LOGGER.warn("⚠️ Backend notification failed: {} (code: {})",
-                            agentId, response.statusCode());
-                }
+                var resp = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+                if (resp.statusCode() == 200)
+                    DWMod.LOGGER.info("✅ Backend notified: {} {}", agentId, eventType);
+                else
+                    DWMod.LOGGER.warn("⚠ Backend notify failed for {} (HTTP {})",
+                            agentId, resp.statusCode());
 
             } catch (Exception e) {
-                DWMod.LOGGER.error("Failed to notify backend: {}", e.getMessage());
+                DWMod.LOGGER.error("Failed to notify backend ({}): {}", eventType, e.getMessage());
             }
-        }, "DW-BackendNotify-" + agentId).start();
-    }
-
-    /**
-     * Notify Python backend that an AI player disconnected
-     */
-    private static void notifyBackendPlayerDisconnected(String agentId, String playerUuid) {
-        new Thread(() -> {
-            try {
-                String backendUrl = System.getProperty("dw.backend", "http://127.0.0.1:11400");
-
-                java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
-
-                String json = String.format(
-                        "{\"agent_id\":\"%s\",\"player_uuid\":\"%s\",\"event\":\"disconnected\"}",
-                        agentId, playerUuid
-                );
-
-                java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
-                        .uri(java.net.URI.create(backendUrl + "/api/player_event"))
-                        .header("Content-Type", "application/json")
-                        .POST(java.net.http.HttpRequest.BodyPublishers.ofString(json))
-                        .build();
-
-                client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-
-            } catch (Exception e) {
-                DWMod.LOGGER.error("Failed to notify backend of disconnect: {}", e.getMessage());
-            }
-        }, "DW-BackendNotify-Disconnect-" + agentId).start();
+        }, "DW-BackendNotify-" + agentId);
+        t.setDaemon(true);
+        t.start();
     }
 }

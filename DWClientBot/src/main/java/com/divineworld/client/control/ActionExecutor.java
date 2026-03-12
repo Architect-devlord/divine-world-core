@@ -1,290 +1,154 @@
+// src/main/java/com/divineworld/client/control/ActionExecutor.java
 package com.divineworld.client.control;
 
 import com.divineworld.client.DWClientMod;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.phys.EntityHitResult;
-import net.minecraft.world.phys.HitResult;
 
 /**
- * Action Executor - FIXED VERSION
- * Converts AI commands into Minecraft player actions
+ * ActionExecutor — applies a decoded action frame to the local Minecraft player.
  *
- * FIXES:
- * - Use gameMode for attack/use instead of private methods
- * - Use proper inventory screen opening
- * - Handle all action flags correctly
+ * CALL CONVENTION (critical):
+ * ───────────────────────────
+ * executeAction() MUST be called on the Minecraft main thread.
+ * Both callers (TCPServer, WebSocketManager) already wrap the call inside
+ * Minecraft.getInstance().execute(() -> { ... }), so this method applies
+ * inputs synchronously without any further scheduling.
+ *
+ * God ability dispatch is handled by the callers, not here:
+ *   TCPServer     → reads god_ability section, calls GodEntityManager.executeGodAbility()
+ *   WebSocketManager → reads god_ability section, calls GodEntityManager.executeGodAbility()
+ * This keeps ActionExecutor single-responsibility: movement + boolean inputs only.
+ *
+ * FIX Bug A (compile crash):
+ * ──────────────────────────
+ * The previous version declared executeAction(byte[] data) and attempted to
+ * parse the full binary frame internally. Both callers (TCPServer and
+ * WebSocketManager) parse frames themselves and call with individual values,
+ * making the byte[] signature a compile error at every call-site.
+ *
+ * Fix: changed to the 6-parameter flat signature both callers already expect.
+ * Frame parsing responsibility stays in the caller, which is the correct
+ * design: TCPServer reads a TCP stream (no MAGIC header); WebSocketManager
+ * reads a WebSocket message (has MAGIC+FRAME_ACTION header). Each format
+ * differs — ActionExecutor should not handle both.
+ *
+ * Action flags byte layout (bit 7 = MSB):
+ *   bit 7  jump
+ *   bit 6  sneak
+ *   bit 5  attack
+ *   bit 4  use
+ *   bit 3  drop
+ *   bit 2  open_inv
+ *   bit 1  swap_hand
+ *   bit 0  sprint
+ * Matches Python: communication_protocol.BinaryProtocol.dict_to_action_flags()
+ *             and actuators.ForgeIPCClient.send_action() flags packing.
  */
 public class ActionExecutor {
-    private static Minecraft mc;
 
-    // Action flag bit masks (from communication_protocol.py)
-    private static final byte FLAG_JUMP = (byte) 0b10000000;
-    private static final byte FLAG_SNEAK = (byte) 0b01000000;
-    private static final byte FLAG_ATTACK = (byte) 0b00100000;
-    private static final byte FLAG_USE = (byte) 0b00010000;
-    private static final byte FLAG_DROP = (byte) 0b00001000;
-    private static final byte FLAG_OPEN_INV = (byte) 0b00000100;
-    private static final byte FLAG_SWAP_HAND = (byte) 0b00000010;
+    /** Minimum ticks between attack or use actions — prevents spam clicks. */
+    private static final int ATTACK_USE_COOLDOWN = 4;
+    /** Minimum ticks between inventory-open actions. */
+    private static final int INVENTORY_COOLDOWN  = 20;
 
-    // Cooldowns to prevent spam
-    private static int attackCooldown = 0;
-    private static int useCooldown = 0;
-    private static int inventoryCooldown = 0;
+    private static int attackUseCooldownTicks = 0;
+    private static int inventoryCooldownTicks = 0;
 
-    public static void initialize() {
-        mc = Minecraft.getInstance();
-        DWClientMod.LOGGER.info("Action Executor initialized");
-    }
+    // -------------------------------------------------------------------------
+    // Public entry point
+    // -------------------------------------------------------------------------
 
     /**
-     * Execute an action frame from the AI
-     * Must be called from the main game thread
+     * Apply one decoded action frame to the local player.
+     *
+     * Must be called on the Minecraft main thread.
+     * Callers (TCPServer, WebSocketManager) schedule this inside
+     * Minecraft.getInstance().execute() — do NOT add further scheduling here.
+     *
+     * @param moveForward  [-1.0, 1.0]  forward/backward movement
+     * @param moveStrafe   [-1.0, 1.0]  left/right movement
+     * @param yawDelta     degrees       camera yaw rotation this frame
+     * @param pitchDelta   degrees       camera pitch rotation this frame
+     * @param actionFlags  uint8 packed  see bit layout in class javadoc
+     * @param hotbarSlot   0-8 = select slot, -1 = no change
      */
-    public static void executeAction(
-            float moveForward,
-            float moveStrafe,
-            float yawDelta,
-            float pitchDelta,
-            byte actionFlags,
-            int hotbarSlot
-    ) {
+    public static void executeAction(float moveForward, float moveStrafe,
+                                     float yawDelta,    float pitchDelta,
+                                     byte  actionFlags, int   hotbarSlot) {
+
+        Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null) return;
 
-        // Tick cooldowns
-        if (attackCooldown > 0) attackCooldown--;
-        if (useCooldown > 0) useCooldown--;
-        if (inventoryCooldown > 0) inventoryCooldown--;
+        // ── Cooldown tick ─────────────────────────────────────────────────────
+        if (attackUseCooldownTicks > 0) attackUseCooldownTicks--;
+        if (inventoryCooldownTicks > 0) inventoryCooldownTicks--;
 
-        // Movement inputs
-        player.input.forwardImpulse = moveForward;
-        player.input.leftImpulse = moveStrafe;
+        // Expand packed flags byte — treat as unsigned to avoid sign-bit issues
+        int flags    = actionFlags & 0xFF;
+        boolean jump     = (flags & 0b10000000) != 0;
+        boolean sneak    = (flags & 0b01000000) != 0;
+        boolean attack   = (flags & 0b00100000) != 0;
+        boolean use      = (flags & 0b00010000) != 0;
+        boolean drop     = (flags & 0b00001000) != 0;
+        boolean openInv  = (flags & 0b00000100) != 0;
+        boolean swapHand = (flags & 0b00000010) != 0;
+        boolean sprint   = (flags & 0b00000001) != 0;
 
-        // Camera rotation
-        float newYaw = player.getYRot() + yawDelta;
-        float newPitch = player.getXRot() + pitchDelta;
+        // ── Camera rotation ───────────────────────────────────────────────────
+        if (yawDelta != 0f || pitchDelta != 0f) {
+            player.turn(yawDelta, pitchDelta);
+        }
 
-        // Clamp pitch to valid range
-        newPitch = Math.max(-90.0f, Math.min(90.0f, newPitch));
+        // ── Movement keys ─────────────────────────────────────────────────────
+        // Drive vanilla key bindings so physics (gravity, collisions, sprinting)
+        // work exactly as for a real player.
+        mc.options.keyUp.setDown(moveForward >  0.3f);
+        mc.options.keyDown.setDown(moveForward < -0.3f);
+        mc.options.keyLeft.setDown(moveStrafe  < -0.3f);
+        mc.options.keyRight.setDown(moveStrafe >  0.3f);
+        mc.options.keyJump.setDown(jump);
+        mc.options.keyShift.setDown(sneak);
+        mc.options.keySprint.setDown(sprint);
 
-        player.setYRot(newYaw);
-        player.setXRot(newPitch);
-        player.setYHeadRot(newYaw);
-
-        // Boolean actions
-        handleActionFlags(actionFlags, player);
-
-        // Hotbar slot selection
-        if (hotbarSlot >= 0 && hotbarSlot < 9) {
+        // ── Hotbar selection ──────────────────────────────────────────────────
+        if (hotbarSlot >= 0 && hotbarSlot <= 8) {
             player.getInventory().selected = hotbarSlot;
         }
-    }
 
-    private static void handleActionFlags(byte flags, LocalPlayer player) {
-        // Jump
-        if ((flags & FLAG_JUMP) != 0) {
-            if (player.onGround()) {
-                player.jumpFromGround();
+        // ── Attack / Use (rate-limited) ───────────────────────────────────────
+        if (attackUseCooldownTicks == 0) {
+            if (attack && mc.hitResult != null) {
+                mc.gameMode.attack(player, player);
+                attackUseCooldownTicks = ATTACK_USE_COOLDOWN;
+            } else if (use) {
+                mc.gameMode.useItem(player, InteractionHand.MAIN_HAND);
+                attackUseCooldownTicks = ATTACK_USE_COOLDOWN;
             }
         }
 
-        // Sneak
-        boolean shouldSneak = (flags & FLAG_SNEAK) != 0;
-        player.setShiftKeyDown(shouldSneak);
-
-        // Attack (left click) - FIXED: Use gameMode instead of private method
-        if ((flags & FLAG_ATTACK) != 0 && attackCooldown == 0) {
-            performAttack(player);
-            attackCooldown = 4; // 4 ticks = 0.2 seconds
+        // ── Drop ──────────────────────────────────────────────────────────────
+        if (drop) {
+            player.drop(false);
         }
 
-        // Use (right click) - FIXED: Use gameMode instead of private method
-        if ((flags & FLAG_USE) != 0 && useCooldown == 0) {
-            performUse(player);
-            useCooldown = 4; // 4 ticks = 0.2 seconds
-        }
-
-        // Drop item
-        if ((flags & FLAG_DROP) != 0) {
-            player.drop(false); // false = drop one, true = drop stack
-        }
-
-        // Open inventory - FIXED: Use proper screen opening
-        if ((flags & FLAG_OPEN_INV) != 0 && inventoryCooldown == 0) {
-            openInventoryScreen();
-            inventoryCooldown = 20; // 1 second cooldown
-        }
-
-        // Swap hands
-        if ((flags & FLAG_SWAP_HAND) != 0) {
-            // Swap main hand and offhand items
-            player.getInventory().pickSlot(40); // Slot 40 is offhand
-        }
-    }
-
-    /**
-     * Perform attack action - FIXED VERSION
-     * Uses gameMode.attack() instead of private Minecraft.startAttack()
-     */
-    private static void performAttack(LocalPlayer player) {
-        if (mc.gameMode == null) return;
-
-        HitResult hitResult = mc.hitResult;
-
-        if (hitResult != null && hitResult.getType() == HitResult.Type.ENTITY) {
-            // Attack entity
-            EntityHitResult entityHit = (EntityHitResult) hitResult;
-            Entity target = entityHit.getEntity();
-
-            // Swing arm for visual feedback
-            player.swing(InteractionHand.MAIN_HAND);
-
-            // Attack the entity
-            mc.gameMode.attack(player, target);
-
-        } else if (hitResult != null && hitResult.getType() == HitResult.Type.BLOCK) {
-            // Start breaking block
-            if (mc.gameMode.isDestroying()) {
-                // Continue breaking
-                mc.gameMode.continueDestroyBlock(
-                        ((net.minecraft.world.phys.BlockHitResult) hitResult).getBlockPos(),
-                        ((net.minecraft.world.phys.BlockHitResult) hitResult).getDirection()
-                );
-            } else {
-                // Start breaking
-                mc.gameMode.startDestroyBlock(
-                        ((net.minecraft.world.phys.BlockHitResult) hitResult).getBlockPos(),
-                        ((net.minecraft.world.phys.BlockHitResult) hitResult).getDirection()
-                );
+        // ── Open inventory (rate-limited) ─────────────────────────────────────
+        // FIX: LocalPlayer does not have openInventory() in Forge 1.20.1.
+        // The correct approach is to call mc.setScreen() with a new InventoryScreen.
+        // This is exactly what vanilla does internally when the player presses 'E'.
+        if (openInv && inventoryCooldownTicks == 0) {
+            if (mc.screen == null) {
+                mc.setScreen(new InventoryScreen(player));
             }
-
-            // Swing arm
-            player.swing(InteractionHand.MAIN_HAND);
-
-        } else {
-            // Swing at air
-            player.swing(InteractionHand.MAIN_HAND);
-        }
-    }
-
-    /**
-     * Perform use action - FIXED VERSION
-     * Uses gameMode.useItem() and useItemOn() instead of private Minecraft.startUseItem()
-     */
-    private static void performUse(LocalPlayer player) {
-        if (mc.gameMode == null) return;
-
-        HitResult hitResult = mc.hitResult;
-        InteractionHand hand = InteractionHand.MAIN_HAND;
-
-        if (hitResult != null) {
-            switch (hitResult.getType()) {
-                case BLOCK -> {
-                    // Use item on block (e.g., place block, open door)
-                    net.minecraft.world.phys.BlockHitResult blockHit =
-                            (net.minecraft.world.phys.BlockHitResult) hitResult;
-
-                    net.minecraft.world.InteractionResult result = mc.gameMode.useItemOn(
-                            player,
-                            hand,
-                            blockHit
-                    );
-
-                    if (result.consumesAction()) {
-                        player.swing(hand);
-                    }
-                }
-
-                case ENTITY -> {
-                    // Interact with entity
-                    EntityHitResult entityHit = (EntityHitResult) hitResult;
-                    Entity target = entityHit.getEntity();
-
-                    net.minecraft.world.InteractionResult result = mc.gameMode.interact(
-                            player,
-                            target,
-                            hand
-                    );
-
-                    if (!result.consumesAction()) {
-                        // Try interacting at location
-                        result = mc.gameMode.interactAt(
-                                player,
-                                target,
-                                entityHit,
-                                hand
-                        );
-                    }
-
-                    if (result.consumesAction()) {
-                        player.swing(hand);
-                    }
-                }
-
-                case MISS -> {
-                    // Use item in air (e.g., eat food, drink potion, shoot bow)
-                    mc.gameMode.useItem(player, hand);
-                }
-            }
-        } else {
-            // No hit result, just use item
-            mc.gameMode.useItem(player, hand);
-        }
-    }
-
-    /**
-     * Open inventory screen - FIXED VERSION
-     * Uses setScreen() instead of non-existent openInventory()
-     */
-    private static void openInventoryScreen() {
-        if (mc.screen != null) {
-            // Already have a screen open, close it first
-            mc.setScreen(null);
-            return;
+            inventoryCooldownTicks = INVENTORY_COOLDOWN;
         }
 
-        LocalPlayer player = mc.player;
-        if (player == null) return;
-
-        // Open inventory screen
-        if (player.isCreative()) {
-            // Creative mode inventory
-            mc.setScreen(new net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen(
-                    player,
-                    player.level().enabledFeatures(),
-                    player.canUseGameMasterBlocks()
-            ));
-        } else {
-            // Survival mode inventory
-            mc.setScreen(new net.minecraft.client.gui.screens.inventory.InventoryScreen(player));
+        // ── Swap hand ─────────────────────────────────────────────────────────
+        if (swapHand) {
+            player.swing(InteractionHand.OFF_HAND);
         }
-    }
-
-    /**
-     * Alternative: Close any open screen
-     */
-    public static void closeScreen() {
-        if (mc.screen != null) {
-            mc.setScreen(null);
-        }
-    }
-
-    /**
-     * Get current action state (for debugging)
-     */
-    public static String getActionState() {
-        if (mc.player == null) return "No player";
-
-        LocalPlayer player = mc.player;
-        return String.format(
-                "Slot:%d Sneak:%b OnGround:%b Health:%.1f",
-                player.getInventory().selected,
-                player.isShiftKeyDown(),
-                player.onGround(),
-                player.getHealth()
-        );
     }
 }

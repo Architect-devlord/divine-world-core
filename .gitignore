@@ -14,7 +14,7 @@ npc_applications/
 out/
 data/
 logs/
-
+.pytest_cache
 # Environment variables
 .env
 .env.local
@@ -102,3 +102,5 @@ forge*changelog.txt
 .DS_Store
 Thumbs.db
 data/logs/divine_world.log
+PAKORA.md
+*.tex

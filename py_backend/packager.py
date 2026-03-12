@@ -1,10 +1,36 @@
-# py_backend/packager.py - PRODUCTION VERSION
+# py_backend/packager.py
 """
-Production-ready agent packager with:
-- Proper frontend detection and npm handling
-- Fixed PyInstaller imports
-- Multi-platform support
-- Comprehensive error handling
+Production agent packager.
+===========================
+Creates a self-contained .exe (via PyInstaller) for each agent, bundling:
+  - config.json
+  - React frontend (optional)
+  - DivineWorld + DWClientBot mod jars (optional)
+  - UltimMC launcher (optional, for Minecraft auto-join)
+
+brain.pcap is NOT bundled into the exe — it lives next to the exe in the
+{agent_id}/ folder and is read/written at runtime.  Bundling it would mean
+auto-saves overwrite a copy inside _MEIPASS which gets discarded on exit.
+
+Hidden-import list is read from Config.AGENT_HIDDEN_IMPORTS and the
+exclusion list from Config.AGENT_EXCLUDE_MODULES — add new agent modules
+or server-only exclusions there; no changes needed here.
+
+Output layout
+-------------
+All output goes to:  npc_applications/{agent_id}/
+  DW_{agent_id}          ← standalone executable
+  brain.pcap             ← agent state (NOT inside the exe)
+  brain.pcap.json        ← human-readable sidecar
+  config.json            ← agent config
+  frontend/              ← React dist (optional)
+  mods/                  ← DivineWorld + DWClientBot jars (optional)
+  UltimMC/               ← Minecraft launcher (optional)
+  README.md
+
+PyInstaller intermediate artefacts (dist/, build/, *.spec) are written to a
+temp directory under npc_applications/.build_tmp/ and cleaned up afterwards
+so they never pollute the project root or any other location.
 """
 
 import os
@@ -12,10 +38,12 @@ import sys
 import shutil
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 import time
 from typing import Optional, Dict, Any
 import logging
+
 from frontend_builder import FrontendBuilder
 from py_backend.config import Config
 from py_backend.utils.mc_uuid import get_minecraft_uuid
@@ -23,900 +51,828 @@ from py_backend.utils.mc_uuid import get_minecraft_uuid
 log = logging.getLogger("packager")
 log.setLevel(logging.INFO)
 
-# Find npm in PATH (cross-platform)
 NPM_CMD = shutil.which("npm") or "npm"
-
-# Initialize frontend builder
 frontend_builder = FrontendBuilder()
 
 
 class AgentPackager:
-    """
-    Production-ready agent packager.
-    Creates standalone executables for AI agents.
-    """
+    """Creates standalone executables for AI agents."""
 
     def __init__(self, output_dir: str = None):
-        # Default to centralized NPC applications directory from Config
-        if output_dir is None:
-            self.output_dir = Path(Config.NPC_APPLICATIONS_DIR)
-        else:
-            self.output_dir = Path(output_dir)
+        # ── Single canonical output root ──────────────────────────────────────
+        # Everything goes to npc_applications/ (or the explicit override).
+        # No fallback to CWD/dist, no relative paths.
+        self.output_dir = Path(output_dir).resolve() if output_dir else Path(Config.NPC_APPLICATIONS_DIR).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.dist_dir = Path("dist")
-        self.build_dir = Path("build")
 
-        # Frontend detection - try multiple paths
+        # PyInstaller temp dir — lives inside output_dir so it stays contained
+        self._build_tmp = self.output_dir / ".build_tmp"
+        self._build_tmp.mkdir(parents=True, exist_ok=True)
+
         self.frontend_dir = self._find_frontend_dir()
-        # Try to find DivineWorld mod jar
-        self.mod_jar = self._find_mod_jar()
-        # Try to find client jar from config
-        try:
-            from config import Config as _Config2
-            self.client_jar = _Config2.CLIENT_JAR
-        except Exception:
-            self.client_jar = None
-
+        self.mod_jar      = self._find_mod_jar()
+        self.client_jar   = Config.CLIENT_JAR
         self.ultimmc_path = self._find_ultimmc()
 
+    # ------------------------------------------------------------------
+    # Path discovery
+    # ------------------------------------------------------------------
+
     def _find_frontend_dir(self) -> Optional[Path]:
-        """Find the React frontend directory"""
-        cwd = Path.cwd()
-
-        # Check parent directory structure
-        if cwd.name == "py_backend":
-            workspace_root = cwd.parent
-        else:
-            workspace_root = cwd
-
-        candidates = [
-            workspace_root / "react-app",
-            workspace_root / "dw_agent" / "react-app",
-            workspace_root / "dw_agent" / "electron" / "react-app",
-            workspace_root / "frontend",
-            cwd / "react-app",
-        ]
-
-        for path in candidates:
-            log.debug(f"Checking frontend path: {path}")
+        cwd  = Path.cwd()
+        root = cwd.parent if cwd.name == "py_backend" else cwd
+        for path in [
+            root / "react-app",
+            root / "dw_agent" / "react-app",
+            root / "dw_agent" / "electron" / "react-app",
+            root / "frontend",
+            cwd  / "react-app",
+        ]:
             if path.exists() and (path / "package.json").exists():
-                log.info(f"✅ Found frontend at: {path}")
+                log.info(f"✅ Frontend: {path}")
                 return path
-
-        log.warning("⚠️ No frontend directory found")
+        log.warning("⚠️  No frontend directory found")
         return None
 
     def _find_mod_jar(self) -> Optional[Path]:
-        """Try to find a built DivineWorld mod jar in common Gradle output locations."""
-        cwd = Path.cwd()
-        if cwd.name == "py_backend":
-            workspace_root = cwd.parent
-        else:
-            workspace_root = cwd
-
-        candidates = [
-            workspace_root / "DivineWorld" / "build" / "libs",
-            workspace_root / "DivineWorld" / "build" / "reobfJar" / "libs",
-            workspace_root / "DivineWorld" / "build" / "libs",
-        ]
-
-        for base in candidates:
+        cwd  = Path.cwd()
+        root = cwd.parent if cwd.name == "py_backend" else cwd
+        for base in [
+            root / "DivineWorld" / "build" / "libs",
+            root / "DivineWorld" / "build" / "reobfJar" / "libs",
+        ]:
             if not base.exists():
                 continue
-            # Look for jar files containing 'divine' or the mod id
-            for jar in sorted(base.glob('*.jar')):
-                name = jar.name.lower()
-                if 'divine' in name or 'divineworld' in name:
-                    log.info(f"✅ Found mod jar: {jar}")
+            for jar in sorted(base.glob("*.jar")):
+                if "divine" in jar.name.lower() or "divineworld" in jar.name.lower():
+                    log.info(f"✅ Mod jar: {jar}")
                     return jar
-
-        log.debug("No DivineWorld mod jar found in build output")
         return None
 
     def _find_ultimmc(self) -> Optional[Path]:
-        """Find UltimMC installation directory"""
-        cwd = Path.cwd()
-        if cwd.name == "py_backend":
-            workspace_root = cwd.parent
-        else:
-            workspace_root = cwd
+        cwd  = Path.cwd()
+        root = cwd.parent if cwd.name == "py_backend" else cwd
 
         candidates = [
-            workspace_root / "UltimMC",
+            root / "UltimMC",
+            Path.home() / "UltimMC",
+            Path.home() / ".ultimmc",
+            Path.home() / ".local" / "share" / "ultimmc",
             Path("/opt/ultimmc"),
+            Path("/Applications/UltimMC.app"),   # macOS
         ]
 
         for path in candidates:
             if path.exists() and (path / "bin" / "UltimMC").exists():
-                log.info(f"✅ Found UltimMC at: {path}")
+                log.info(f"✅ UltimMC: {path}")
                 return path
 
-        log.warning("⚠️ UltimMC not found")
+        exe = shutil.which("ultimmc") or shutil.which("UltimMC")
+        if exe:
+            exe_path     = Path(exe)
+            install_root = exe_path.parent.parent if exe_path.parent.name == "bin" else exe_path.parent
+            log.info(f"✅ UltimMC found in PATH: {install_root}")
+            return install_root
+
+        log.warning("⚠️  UltimMC not found")
         return None
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
 
     def package_agent(
         self,
-        agent_id: str,
+        agent_id:           str,
         brain_capsule_path: str,
-        agent_name: Optional[str] = None,
-        gender: str = "neutral",
-        agent_type: str = "npc",
-        icon_path: Optional[str] = None,
-        include_frontend: bool = True,
-        include_mod: bool = True,
+        agent_name:         Optional[str] = None,
+        gender:             str = "neutral",
+        agent_type:         str = "npc",
+        icon_path:          Optional[str] = None,
+        include_frontend:   bool = True,
+        include_mod:        bool = True,
         include_client_jar: bool = True,
-        backend_port: int = 11400
+        backend_port:       int  = 11400,
+        agent=None,         # live NPCAgent; used to auto-save brain if .pcap missing
     ) -> Dict[str, str]:
-        """
-        Creates self-contained executable for an agent.
-        """
+        """Build a self-contained executable for an agent."""
+        log.info(f"📦 Packaging {agent_id} (type={agent_type}, gender={gender})")
 
-        log.info(f"📦 Packaging agent: {agent_id} (gender: {gender}, type: {agent_type})")
-
-        # Validate inputs
         brain_path = Path(brain_capsule_path)
         if not brain_path.exists():
             raise FileNotFoundError(f"Brain capsule not found: {brain_capsule_path}")
 
-        # Verify brain file size
         brain_size = brain_path.stat().st_size
         if brain_size > Config.MAX_BRAIN_SIZE_MB * 1024 * 1024:
-            raise ValueError(f"Brain file too large: {brain_size / (1024*1024):.1f}MB")
-
+            raise ValueError(f"Brain too large: {brain_size / (1024*1024):.1f} MB")
         if brain_size < 100:
-            raise ValueError(f"Brain file too small: {brain_size} bytes (possibly corrupt)")
+            raise ValueError(f"Brain suspiciously small: {brain_size} bytes")
 
-        # Create agent directory
+        # ── All agent files land in output_dir/{agent_id}/ ────────────────────
         agent_dir = self.output_dir / agent_id
         agent_dir.mkdir(parents=True, exist_ok=True)
 
-        # Determine agent name for Minecraft (clean name if provided, otherwise agent_id)
-        if agent_name and agent_name != "Unnamed":
+        # Derive a clean Minecraft username
+        if agent_name and agent_name not in ("Unnamed", ""):
             minecraft_name = agent_name
+        elif agent_type.startswith("god_"):
+            minecraft_name = f"DW_{agent_type.replace('god_','').upper()}_{agent_id}"
         else:
-            # Fallback to prefixed name if it's an NPC/God and no clean name provided
-            if agent_type.startswith('god_'):
-                god_type = agent_type.replace('god_', '').upper()
-                minecraft_name = f"DWGOD_{god_type}_{agent_id}"
-            else:
-                minecraft_name = f"DW_{agent_id}"
+            minecraft_name = f"DW_{agent_id}"
 
-        # Generate proper Minecraft offline UUID
         agent_uuid = get_minecraft_uuid(minecraft_name)
 
-        # Copy UltimMC and setup account/instance
+        # ── UltimMC setup ──────────────────────────────────────────────
         if self.ultimmc_path:
-            ultimmc_dest = agent_dir / "UltimMC"
-            shutil.copytree(self.ultimmc_path, ultimmc_dest)
+            self._setup_ultimmc(agent_id, agent_dir, agent_uuid, minecraft_name)
 
-            # Modify accounts.json
-            accounts_file = ultimmc_dest / "bin" / "accounts.json"
-            if accounts_file.exists():
-                import uuid
-                with open(accounts_file, 'r') as f:
-                    accounts_data = json.load(f)
+        # ── Copy brain capsule ─────────────────────────────────────────
+        self._copy_brain_capsule(brain_path, agent_dir, gender, agent_type, agent=agent)
 
-                agent_account = {
-                    "active": True,
-                    "profile": {
-                        "capes": [],
-                        "id": agent_uuid,
-                        "name": minecraft_name,
-                        "skin": {"id": "", "url": "", "variant": ""}
-                    },
-                    "type": "Local",
-                    "ygg": {
-                        "extra": {
-                            "clientToken": str(uuid.uuid4()),
-                            "userName": minecraft_name
-                        },
-                        "iat": int(time.time())
-                    }
-                }
-                for acc in accounts_data.get("accounts", []):
-                    acc["active"] = False
-                accounts_data["accounts"].append(agent_account)
-                with open(accounts_file, 'w') as f:
-                    json.dump(accounts_data, f, indent=2)
-
-            # Copy instance
-            instance_src = self.ultimmc_path / "instances" / "1.20.1"
-            if instance_src.exists():
-                instance_dest = ultimmc_dest / "instances" / agent_id
-                shutil.copytree(instance_src, instance_dest)
-                # Install mods
-                mods_dir = instance_dest / ".minecraft" / "mods"
-                mods_dir.mkdir(parents=True, exist_ok=True)
-                if self.mod_jar:
-                    shutil.copy(self.mod_jar, mods_dir / self.mod_jar.name)
-                if self.client_jar:
-                    shutil.copy(self.client_jar, mods_dir / self.client_jar.name)
-
-        # 1. Copy brain capsule
-        self._copy_brain_capsule(brain_path, agent_dir, gender, agent_type)
-
-        # 2. Build React frontend if requested AND frontend exists
+        # ── React frontend ─────────────────────────────────────────────
         frontend_included = False
         if include_frontend and self.frontend_dir:
             frontend_dest = agent_dir / "frontend"
             if frontend_builder.build_frontend(self.frontend_dir, frontend_dest):
                 frontend_included = True
             else:
-                log.warning("⚠️  Frontend build failed")
-                log.info("Continuing without frontend...")
-                frontend_included = False
-        else:
-            log.info("🔇 Skipping frontend (not found or not requested)")
+                log.warning("⚠️  Frontend build failed — continuing without")
 
-        # 2b. Include mods (DivineWorld mod jar + DWClientBot mod jar)
+        # ── Mods ───────────────────────────────────────────────────────
         mod_included = False
         if include_mod:
             mods_dest = agent_dir / "mods"
             mods_dest.mkdir(parents=True, exist_ok=True)
-
-            # Include DivineWorld mod jar if found
             if self.mod_jar:
                 try:
                     shutil.copy(self.mod_jar, mods_dest / self.mod_jar.name)
-                    log.info(f"✅ Included DivineWorld mod: {self.mod_jar}")
                     mod_included = True
+                    log.info(f"✓ DivineWorld mod included")
                 except Exception as e:
-                    log.warning(f"Failed to include DivineWorld mod: {e}")
-
-            # DWClientBot.jar is also a mod - include it in mods folder
+                    log.warning(f"DivineWorld mod copy failed: {e}")
             if include_client_jar and self.client_jar:
                 try:
                     shutil.copy(self.client_jar, mods_dest / Path(self.client_jar).name)
-                    log.info(f"✅ Included DWClientBot mod: {self.client_jar}")
                     mod_included = True
+                    log.info(f"✓ DWClientBot mod included")
                 except Exception as e:
-                    log.warning(f"Failed to include DWClientBot mod: {e}")
+                    log.warning(f"DWClientBot copy failed: {e}")
 
-        # DWClientBot is a mod, not a separate client
-        client_included = False
-
-        # 3. Create launcher script
-        launcher_path = self._create_launcher(agent_id, agent_dir, frontend_included, agent_type, backend_port, minecraft_name)
-
-        # 4. Create configuration
+        # ── Launcher + config ─────────────────────────────────────────
+        launcher_path = self._create_launcher(
+            agent_id, agent_dir, frontend_included, agent_type,
+            backend_port, minecraft_name,
+        )
         config_path = self._create_config(agent_id, agent_dir, gender, agent_type, backend_port)
 
-        # 5. Build executable
-        exe_path = self._build_executable(agent_id, launcher_path, agent_dir, icon_path, frontend_included)
-
-        # 6. Create portable package
+        # ── Build .exe ────────────────────────────────────────────────
+        exe_path     = self._build_executable(agent_id, launcher_path, agent_dir, icon_path, frontend_included)
         package_path = self._create_portable_package(agent_id, agent_dir, exe_path, frontend_included)
 
-        log.info(f"✅ Agent packaged: {exe_path}")
-
+        log.info(f"✅ Packaged: {package_path / exe_path.name}")
         return {
-            "agent_id": agent_id,
-            "exe_path": str(exe_path),
-            "package_path": str(package_path),
-            "brain_path": str(agent_dir / "brain.pcap"),
+            "agent_id":    agent_id,
+            "exe_path":    str(package_path / exe_path.name),
+            "package_path":str(package_path),
+            "brain_path":  str(agent_dir / "brain.pcap"),
             "config_path": str(config_path),
-            "has_frontend": frontend_included,
-            "has_mod": mod_included,
-            "gender": gender,
-            "agent_type": agent_type,
-            "backend_port": backend_port
+            "has_frontend":frontend_included,
+            "has_mod":     mod_included,
+            "gender":      gender,
+            "agent_type":  agent_type,
+            "backend_port":backend_port,
         }
 
-    def _copy_brain_capsule(self, brain_path: Path, agent_dir: Path, gender: str, agent_type: str):
-        """Copy brain capsule and add gender/type metadata"""
+    # ------------------------------------------------------------------
+    # UltimMC
+    # ------------------------------------------------------------------
+
+    def _setup_ultimmc(self, agent_id: str, agent_dir: Path,
+                       agent_uuid: str, minecraft_name: str):
+        """Clone UltimMC into the agent directory and configure it."""
+        import uuid as uuid_mod
+        ultimmc_dest = agent_dir / "UltimMC"
+        shutil.copytree(self.ultimmc_path, ultimmc_dest, dirs_exist_ok=True)
+
+        accounts_file = ultimmc_dest / "bin" / "accounts.json"
+        if accounts_file.exists():
+            with open(accounts_file) as f:
+                data = json.load(f)
+            for acc in data.get("accounts", []):
+                acc["active"] = False
+            data.setdefault("accounts", []).append({
+                "active": True,
+                "profile": {
+                    "capes": [],
+                    "id":    agent_uuid,
+                    "name":  minecraft_name,
+                    "skin":  {"id": "", "url": "", "variant": ""},
+                },
+                "type": "Local",
+                "ygg": {
+                    "extra": {
+                        "clientToken": str(uuid_mod.uuid4()),
+                        "userName":    minecraft_name,
+                    },
+                    "iat": int(time.time()),
+                },
+            })
+            with open(accounts_file, 'w') as f:
+                json.dump(data, f, indent=2)
+
+        instance_src = self.ultimmc_path / "instances" / "1.20.1"
+        if instance_src.exists():
+            instance_dest = ultimmc_dest / "instances" / agent_id
+            shutil.copytree(instance_src, instance_dest, dirs_exist_ok=True)
+            mods_dir = instance_dest / ".minecraft" / "mods"
+            mods_dir.mkdir(parents=True, exist_ok=True)
+            if self.mod_jar:
+                shutil.copy(self.mod_jar,    mods_dir / self.mod_jar.name)
+            if self.client_jar:
+                shutil.copy(self.client_jar, mods_dir / Path(self.client_jar).name)
+
+    # ------------------------------------------------------------------
+    # Brain copy
+    # ------------------------------------------------------------------
+
+    def _copy_brain_capsule(self, brain_path: Path, agent_dir: Path,
+                             gender: str, agent_type: str, agent=None):
+        """
+        Copy brain.pcap to agent_dir.
+        If the file doesn't exist yet (e.g. a god agent that was just spawned
+        but never called agent.save()), call agent.save() first to produce it.
+        """
+        if not brain_path.exists():
+            if agent is not None:
+                log.info(f"Brain not found at {brain_path} — saving now before packaging...")
+                try:
+                    agent.save(str(brain_path))
+                    log.info(f"Brain saved: {brain_path}")
+                except Exception as e:
+                    raise FileNotFoundError(
+                        f"Brain capsule missing and auto-save failed: {brain_path}: {e}"
+                    ) from e
+            else:
+                raise FileNotFoundError(
+                    f"Brain capsule not found: {brain_path}\n"
+                    f"Call agent.save() before packaging, or pass agent= to package_agent()."
+                )
         brain_dest = agent_dir / "brain.pcap"
         shutil.copy(brain_path, brain_dest)
 
+        resolved_gender = gender
+        try:
+            import torch as _torch
+            data = _torch.load(brain_path, map_location='cpu', weights_only=False)
+            cap_gender = data.get('gender') or (data.get('personality') or {}).get('gender')
+            if cap_gender and cap_gender != "neutral":
+                resolved_gender = cap_gender
+                log.info(f"Gender resolved from brain capsule: {resolved_gender}")
+        except Exception as eg:
+            log.debug(f"Could not read gender from brain capsule: {eg}")
+
         brain_json = brain_path.with_suffix('.pcap.json')
         if brain_json.exists():
-            with open(brain_json, 'r') as f:
-                brain_data = json.load(f)
-
-            brain_data['metadata']['gender'] = gender
-            brain_data['metadata']['agent_type'] = agent_type
-
+            with open(brain_json) as f:
+                data = json.load(f)
+            data.setdefault('metadata', {})['gender'] = resolved_gender
+            data['metadata']['agent_type'] = agent_type
+            if 'gender' in data:
+                data['gender'] = resolved_gender
             with open(agent_dir / "brain.pcap.json", 'w') as f:
-                json.dump(brain_data, f, indent=2)
+                json.dump(data, f, indent=2)
 
-        log.info(f"✓ Brain capsule copied with metadata")
+        log.info(f"✓ Brain capsule copied (gender={resolved_gender})")
 
-    def _create_launcher(self, agent_id: str, agent_dir: Path, has_frontend: bool,
-                        agent_type: str, backend_port: int, minecraft_name: str) -> Path:
-        """Creates launcher with FIXED import paths for PyInstaller"""
+    # ------------------------------------------------------------------
+    # Launcher script
+    # ------------------------------------------------------------------
 
-        launcher_template = r'''"""
-DW Agent Launcher - __AGENT_ID__ (__MINECRAFT_NAME__)
-Type: __AGENT_TYPE__
-Production Version with Fixed Imports and Auto-Join Logic
+    def _create_launcher(self, agent_id: str, agent_dir: Path,
+                          has_frontend: bool, agent_type: str,
+                          backend_port: int, minecraft_name: str) -> Path:
+        """
+        Generate launcher.py.
+
+        When frozen (sys.frozen=True):
+          - BASE_DIR  = sys._MEIPASS   (extracted bundle, read-only)
+          - AGENT_DIR = directory containing the .exe  (writable, has brain.pcap)
+          sys.path gets both so `import ai_core` and `from ai_core.x import y` both work.
+
+        When run as plain Python (dev/debug):
+          - BASE_DIR  = two levels up from launcher.py
+                        i.e. divine-world-core/  (project root)
+          - AGENT_DIR = directory containing launcher.py
+                        i.e. npc_applications/{agent_id}/
+          sys.path gets project root so ai_core, py_backend, rl are all importable.
+        """
+        sep = '=' * 60
+        launcher_code = f'''"""
+DW Agent Launcher — {agent_id} ({minecraft_name})
+Type: {agent_type}
 """
 
-import sys
-import os
-import socket
-import shutil
-import subprocess
+import sys, os, socket, shutil, subprocess
 from pathlib import Path
 
-# CRITICAL FIX: Proper path handling for PyInstaller
 if getattr(sys, 'frozen', False):
-    # Running as compiled .exe
-    BASE_DIR = Path(sys._MEIPASS)
-    AGENT_DIR = Path(os.path.dirname(sys.executable))
-    # Add bundled modules to path
+    # ── Frozen (PyInstaller .exe) ─────────────────────────────────────
+    BASE_DIR  = Path(sys._MEIPASS)          # extracted bundle (read-only)
+    AGENT_DIR = Path(sys.executable).parent # folder containing the .exe
     sys.path.insert(0, str(BASE_DIR))
     sys.path.insert(0, str(BASE_DIR / "ai_core"))
     sys.path.insert(0, str(BASE_DIR / "py_backend"))
+    sys.path.insert(0, str(BASE_DIR / "rl"))
+    sys.path.insert(0, str(BASE_DIR / "py_backend" / "utils"))
 else:
-    # Running as script (development)
-    BASE_DIR = Path(__file__).parent.parent
-    AGENT_DIR = Path(__file__).parent
-    # Add development paths
-    sys.path.insert(0, str(BASE_DIR))
-    sys.path.insert(0, str(BASE_DIR / "ai_core"))
-    sys.path.insert(0, str(BASE_DIR / "py_backend"))
+    # ── Plain Python (dev / debug) ────────────────────────────────────
+    # launcher.py is a DEV convenience — it requires the divine-world-core
+    # project source to be present on this machine.
+    #
+    # If you're on a different machine with no project source, use the
+    # standalone executable instead:
+    #   Linux/macOS : ./DW_{agent_id}
+    #   Windows     : DW_{agent_id}.exe
+    #
+    # We search for the project root by walking UP from AGENT_DIR until
+    # we find a directory containing 'ai_core/', rather than assuming a
+    # fixed number of parent levels.  This means the package can sit
+    # anywhere in the filesystem and still work when run inside the
+    # original dev tree.
+    AGENT_DIR = Path(__file__).resolve().parent
 
-import json
-import logging
-import time
-import threading
-import webbrowser
+    def _find_project_root(start: Path) -> Path:
+        """Walk upward from start until ai_core/ is found."""
+        current = start
+        for _ in range(10):   # don't walk past filesystem root
+            if (current / "ai_core").is_dir():
+                return current
+            if current.parent == current:
+                break
+            current = current.parent
+        return None
 
-AGENT_ID = "__AGENT_ID__"
-MINECRAFT_NAME = "__MINECRAFT_NAME__"
-AGENT_TYPE = "__AGENT_TYPE__"
-BRAIN_PATH = AGENT_DIR / "brain.pcap"
-CONFIG_PATH = AGENT_DIR / "config.json"
-FRONTEND_PATH = AGENT_DIR / "frontend"
-HAS_FRONTEND = __HAS_FRONTEND__
-BACKEND_PORT = __BACKEND_PORT__
+    PROJECT_ROOT = _find_project_root(AGENT_DIR)
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s - %(message)s'
-)
+    if PROJECT_ROOT is None:
+        print("=" * 60)
+        print("  ERROR: launcher.py requires the divine-world-core source.")
+        print()
+        print("  ai_core/ was not found anywhere above this folder.")
+        print("  This means you are on a machine without the project source.")
+        print()
+        print("  Use the standalone executable instead:")
+        print(f"    ./DW_{agent_id}      (Linux/macOS)")
+        print(f"    DW_{agent_id}.exe   (Windows)")
+        print()
+        print("  The exe requires no Python and runs anywhere.")
+        print("=" * 60)
+        sys.exit(1)
+
+    sys.path.insert(0, str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT / "ai_core"))
+    sys.path.insert(0, str(PROJECT_ROOT / "py_backend"))
+    sys.path.insert(0, str(PROJECT_ROOT / "rl"))
+    sys.path.insert(0, str(PROJECT_ROOT / "py_backend" / "utils"))
+    BASE_DIR = PROJECT_ROOT
+
+import json, logging, time, threading, webbrowser
+
+AGENT_ID       = "{agent_id}"
+MINECRAFT_NAME = "{minecraft_name}"
+AGENT_TYPE     = "{agent_type}"
+BRAIN_PATH     = AGENT_DIR / "brain.pcap"
+CONFIG_PATH    = AGENT_DIR / "config.json"
+FRONTEND_PATH  = AGENT_DIR / "frontend"
+HAS_FRONTEND   = {has_frontend}
+BACKEND_PORT   = {backend_port}
+
+logging.basicConfig(level=logging.INFO,
+                    format='[%(asctime)s] %(levelname)s - %(message)s')
 log = logging.getLogger("launcher")
 
-def load_config():
-    """Load agent configuration"""
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, 'r') as f:
-            return json.load(f)
-    return {"agent_id": AGENT_ID, "minecraft_name": MINECRAFT_NAME, "agent_type": AGENT_TYPE, "backend_port": BACKEND_PORT, "default_server": "127.0.0.1:25565"}
 
-def is_server_up(host: str, port: int, timeout: float = 2.0) -> bool:
+def load_config():
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    return {{"agent_id": AGENT_ID, "backend_port": BACKEND_PORT,
+             "default_server": "127.0.0.1:25565"}}
+
+
+def is_server_up(host, port, timeout=2.0):
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
     except Exception:
         return False
 
-def start_backend_server(port: int = BACKEND_PORT):
-    """Start FastAPI backend server"""
-    log.info(f"Starting backend server on port {port}...")
+
+def start_backend(port):
+    log.info(f"Starting backend on port {{port}}…")
     try:
         import uvicorn
-        if getattr(sys, 'frozen', False):
-            try:
-                from main import app
-            except ImportError:
-                # Fallback for different build structures
-                from py_backend.main import app
-        else:
-            from py_backend.main import app
-
-        def run_server():
-            uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
-
-        server_thread = threading.Thread(target=run_server, daemon=True)
-        server_thread.start()
+        try:
+            from agent import app as _agent_app          # frozen path
+        except ImportError:
+            from ai_core.agent import app as _agent_app  # dev path
+        t = threading.Thread(
+            target=lambda: uvicorn.run(_agent_app, host="127.0.0.1", port=port, log_level="error"),
+            daemon=True,
+        )
+        t.start()
         time.sleep(1.5)
-        log.info(f"✅ Backend ready at http://127.0.0.1:{port}")
+        log.info(f"✅ Backend at http://127.0.0.1:{{port}}")
         return True
     except Exception as e:
-        log.error(f"Failed to start backend: {e}")
-        import traceback
-        traceback.print_exc()
+        log.error(f"Backend failed: {{e}}")
         return False
 
-def attempt_launch_minecraft_client(agent_id, agent_dir, port):
-    """Manual fallback instructions for launching Minecraft"""
-    print("\n" + "!"*60)
-    print(f"  MANUAL ACTION REQUIRED")
-    print("!"*60)
-    print(f"  To connect this agent to Minecraft:")
-    print(f"  1. Start Minecraft 1.20.1 with Forge {UltimMCLauncher.FORGE_VERSION}")
-    print(f"  2. Ensure DivineWorld and DWClientBot mods are installed")
-    print(f"  3. Add the following JVM Argument to your launcher:")
-    print(f"     -Ddw.backend=http://127.0.0.1:{port}")
-    print(f"  4. Join the server")
-    print("!"*60 + "\n")
 
-def try_launch_ultimmc(server_addr: str, agent_name: str) -> bool:
-    """Try to launch embedded UltimMC if available to join the server."""
-    ultimmc_dir = AGENT_DIR / "UltimMC"
-    if not ultimmc_dir.exists():
+def try_ultimmc(server_addr, agent_name):
+    ultimmc_dir = (AGENT_DIR / "UltimMC").resolve()
+    ult = ultimmc_dir / "bin" / "UltimMC"
+    if not ult.exists():
+        log.warning(f"UltimMC not found at {{ult}} — manual Minecraft setup required")
         return False
-    ult_path = ultimmc_dir / "bin" / "UltimMC"
-    if not ult_path.exists():
-        return False
-    cmd = [
-        str(ult_path),
-        "-d", str(ultimmc_dir),
-        "-l", agent_name,
-        "-s", server_addr,
-        "-a", agent_name,
-        "-o",
-        "-n", agent_name
-    ]
     try:
-        log.info(f"Launching embedded UltimMC: {' '.join(cmd)}")
-        subprocess.Popen(cmd, cwd=str(AGENT_DIR))
+        log.info(f"Launching UltimMC: instance={{AGENT_ID}}, name={{agent_name}}, server={{server_addr}}")
+        subprocess.Popen([
+            str(ult),
+            "-d", str(ultimmc_dir),
+            "-l", AGENT_ID,
+            "-s", server_addr,
+            "-a", agent_name,
+            "-o",
+            "-n", agent_name,
+        ], cwd=str(ultimmc_dir))
+        time.sleep(2)
+        log.info(f"✅ UltimMC launched (instance={{AGENT_ID}})")
         return True
     except Exception as e:
-        log.error(f"Failed to launch UltimMC: {e}")
+        log.error(f"UltimMC launch failed: {{e}}")
         return False
 
-def launch_chat_mode():
-    """Launch agent in chat interface mode with auto-join behavior"""
-    log.info(f"💬 Starting {AGENT_ID} in CHAT mode")
-    cfg = load_config()
-    backend_port = cfg.get('backend_port', BACKEND_PORT)
+
+def launch():
+    cfg            = load_config()
+    backend_port   = cfg.get('backend_port', BACKEND_PORT)
     default_server = cfg.get('default_server', '127.0.0.1:25565')
+    srv_host, srv_port = (default_server.split(':') + ['25565'])[:2]
 
-    # Parse default server
-    server_host, server_port = default_server.split(':') if ':' in default_server else (default_server, '25565')
-    server_port = int(server_port)
-
-    # Load agent
-    log.info(f"Loading brain from {BRAIN_PATH}...")
+    log.info(f"Loading brain from {{BRAIN_PATH}}…")
     if getattr(sys, 'frozen', False):
-        from agent import NPCAgent
+        from agent          import NPCAgent
         from brain_language import add_language_to_brain
     else:
-        from ai_core.agent import NPCAgent
+        from ai_core.agent          import NPCAgent
         from ai_core.brain_language import add_language_to_brain
 
     agent = NPCAgent(AGENT_ID)
     if BRAIN_PATH.exists():
         try:
             agent.load(str(BRAIN_PATH))
-            log.info(f"✅ Brain loaded")
+            log.info("✅ Brain loaded")
         except Exception as e:
-            log.error(f"⚠️ Failed to load brain: {e}")
+            log.error(f"Brain load failed: {{e}}")
 
-    if not hasattr(agent.brain, 'language') or agent.brain.language is None:
+    if not getattr(getattr(agent, 'brain', None), 'language', None):
         add_language_to_brain(agent.brain)
-        log.info("✅ Language capabilities initialized")
+        log.info("✅ Language initialised")
 
-    # Decide behavior based on server availability
-    server_available = is_server_up(server_host, server_port)
-    log.info(f"Server {server_host}:{server_port} available: {server_available}")
-
-    # Start backend
-    if not start_backend_server(backend_port):
-        log.error("Backend failed to start")
+    if not start_backend(backend_port):
         sys.exit(1)
 
-    if server_available:
-        # Try to auto-launch UltimMC to join server
-        launched = try_launch_ultimmc(f"{server_host}:{server_port}", MINECRAFT_NAME)
-        if not launched:
-            log.info("Could not auto-launch UltimMC; present manual instructions to user.")
-            # Show same instructions as before
-            attempt_launch_minecraft_client(AGENT_ID, AGENT_DIR, backend_port)
-    else:
-        # No server: open frontend if available
-        if HAS_FRONTEND and FRONTEND_PATH.exists():
-            try:
-                import http.server
-                import socketserver
-
-                class Handler(http.server.SimpleHTTPRequestHandler):
-                    def __init__(self, *args, **kwargs):
-                        super().__init__(*args, directory=str(FRONTEND_PATH), **kwargs)
-
-                    def log_message(self, format, *args):
-                        pass
-
-                frontend_port = backend_port + 1
-
-                def serve_frontend():
-                    with socketserver.TCPServer(("", frontend_port), Handler) as httpd:
-                        log.info(f"Frontend serving on http://localhost:{frontend_port}")
-                        httpd.serve_forever()
-
-                frontend_thread = threading.Thread(target=serve_frontend, daemon=True)
-                frontend_thread.start()
-                time.sleep(1)
-                webbrowser.open(f"http://localhost:{frontend_port}")
-            except Exception as e:
-                log.error(f"Frontend server failed: {e}")
+    server_up = is_server_up(srv_host, int(srv_port))
+    if server_up:
+        print(f"🎮 Server detected at {{default_server}}")
+        if not try_ultimmc(default_server, MINECRAFT_NAME):
+            log.info("Manual Minecraft join required — see README")
+            print(f"\\n  ⚠️  UltimMC launch failed. Manual setup needed:")
+            print(f"  Add JVM arg: -Ddw.backend=http://127.0.0.1:{{backend_port}}")
         else:
-            log.info("Frontend not available - backend only mode")
-            print(f"\n✅ Backend running at http://127.0.0.1:{backend_port}")
+            print(f"🚀 Minecraft launching (allow 30-60 seconds for first load)...")
+    elif HAS_FRONTEND and FRONTEND_PATH.exists():
+        import http.server, socketserver
+        fp = backend_port + 1
+        class H(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, directory=str(FRONTEND_PATH), **kw)
+            def log_message(self, *a): pass
+        t = threading.Thread(
+            target=lambda: socketserver.TCPServer(("", fp), H).__enter__().serve_forever(),
+            daemon=True,
+        )
+        t.start()
+        time.sleep(1)
+        webbrowser.open(f"http://localhost:{{fp}}")
 
-    # Keep alive with auto-save
-    print("\n" + "="*60)
-    print(f"  ✅ {AGENT_ID} RUNNING")
-    print("="*60)
-    print(f"  Backend: http://localhost:{backend_port}")
-    if HAS_FRONTEND and FRONTEND_PATH.exists():
-        print(f"  Frontend: http://localhost:{backend_port + 1}")
-    print("\nPress Ctrl+C to stop")
-    print("="*60 + "\n")
+    print(f"\\n{sep}\\n  ✅ {{AGENT_ID}} RUNNING\\n  Backend: http://localhost:{{backend_port}}")
+    if HAS_FRONTEND:
+        print(f"  Frontend: http://localhost:{{backend_port + 1}}")
+    print("  Ctrl+C to stop\\n{sep}")
 
     try:
         last_save = time.time()
-        save_interval = 300  # 5 minutes
         while True:
             time.sleep(1)
-            if time.time() - last_save >= save_interval:
+            if time.time() - last_save >= 300:
                 try:
                     agent.save(str(BRAIN_PATH))
-                    log.info("💾 Auto-saved brain state")
+                    log.info("💾 Auto-saved")
                     last_save = time.time()
                 except Exception as e:
-                    log.error(f"Auto-save failed: {e}")
+                    log.error(f"Auto-save failed: {{e}}")
     except KeyboardInterrupt:
-        log.info("\n💾 Saving brain state before exit...")
+        log.info("Saving before exit…")
         try:
             agent.save(str(BRAIN_PATH))
-            log.info("✅ Brain saved")
+            log.info("✅ Saved")
         except Exception as e:
-            log.error(f"❌ Failed to save: {e}")
-        log.info("Goodbye!")
+            log.error(f"Save failed: {{e}}")
 
-def main():
-    """Main entry point"""
-    print("\n" + "="*60)
-    print(f"  🤖 DW Agent - {AGENT_ID}")
-    print(f"  Type: {AGENT_TYPE}")
-    print(f"  Frontend: {'✅ Included' if HAS_FRONTEND else '❌ Not included'}")
-    print(f"  Port: {BACKEND_PORT}")
-    print("="*60)
-
-    if not BRAIN_PATH.exists():
-        log.error(f"Brain capsule not found: {BRAIN_PATH}")
-        sys.exit(1)
-
-    log.info(f"Brain: {BRAIN_PATH}")
-
-    # Launch chat mode
-    launch_chat_mode()
 
 if __name__ == "__main__":
     try:
-        main()
+        if not BRAIN_PATH.exists():
+            log.error(f"Brain not found: {{BRAIN_PATH}}")
+            sys.exit(1)
+        launch()
     except KeyboardInterrupt:
-        log.info("\nShutdown requested")
         sys.exit(0)
     except Exception as e:
-        log.exception(f"Fatal error: {e}")
+        log.exception(f"Fatal: {{e}}")
         sys.exit(1)
 '''
 
-        # Replace template placeholders with actual values safely
-        launcher_code = launcher_template.replace('__AGENT_ID__', agent_id)
-        launcher_code = launcher_code.replace('__MINECRAFT_NAME__', minecraft_name)
-        launcher_code = launcher_code.replace('__AGENT_TYPE__', agent_type)
-        launcher_code = launcher_code.replace('__HAS_FRONTEND__', str(has_frontend))
-        launcher_code = launcher_code.replace('__BACKEND_PORT__', str(backend_port))
-
         launcher_path = agent_dir / "launcher.py"
         launcher_path.write_text(launcher_code, encoding='utf-8')
-        log.info(f"✓ Launcher created with fixed imports")
-
+        log.info("✓ Launcher created")
         return launcher_path
+
+    # ------------------------------------------------------------------
+    # Config file
+    # ------------------------------------------------------------------
+
     def _create_config(self, agent_id: str, agent_dir: Path, gender: str,
-                      agent_type: str, backend_port: int) -> Path:
-        """Creates agent configuration file"""
+                        agent_type: str, backend_port: int) -> Path:
         config = {
-            "agent_id": agent_id,
-            "agent_type": agent_type,
-            "gender": gender,
-            "version": "2.1.0",
-            "default_server": "127.0.0.1:25565",
-            "backend_port": backend_port,
+            "agent_id":      agent_id,
+            "agent_type":    agent_type,
+            "gender":        gender,
+            "version":       "2.1.0",
+            "default_server":"127.0.0.1:25565",
+            "backend_port":  backend_port,
             "frontend_port": backend_port + 1,
-            "modes": {
-                "chat": True,
-                "controller": True,
-                "headless": True
-            },
+            "modes":  {"chat": True, "controller": True, "headless": True},
             "features": {
                 "language_intelligence": True,
-                "pattern_recognition": True,
-                "multimodal_learning": True,
-                "auto_save": True
-            }
+                "pattern_recognition":  True,
+                "multimodal_learning":  True,
+                "auto_save":            True,
+                "breeding":             True,
+            },
         }
-
         config_path = agent_dir / "config.json"
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
-
         return config_path
 
+    # ------------------------------------------------------------------
+    # PyInstaller
+    # ------------------------------------------------------------------
+
     def _build_executable(self, agent_id: str, launcher_path: Path,
-                          agent_dir: Path, icon_path: Optional[str],
-                          has_frontend: bool) -> Path:
-        """Builds executable using PyInstaller with fixed paths"""
-        log.info(f"🔨 Building executable for {agent_id}...")
+                           agent_dir: Path, icon_path: Optional[str],
+                           has_frontend: bool) -> Path:
+        """
+        Run PyInstaller with all output redirected to self._build_tmp.
 
-        exe_name = f"DW_Agent_{agent_id}"
+        --distpath  → _build_tmp/dist/   (where PyInstaller drops the exe)
+        --workpath  → _build_tmp/build/  (intermediate object files)
+        --specpath  → _build_tmp/        (generated .spec file)
 
-        # Determine correct module paths
-        if Path.cwd().name == "py_backend":
-            workspace_root = Path.cwd().parent
-        else:
-            workspace_root = Path.cwd()
+        After a successful build the exe is moved to agent_dir/ so it is
+        co-located with brain.pcap / config.json before _create_portable_package
+        copies everything to the final package folder.
+        """
+        log.info(f"🔨 Building executable for {agent_id}…")
+        exe_name = f"DW_{agent_id}"
 
-        ai_core_path = workspace_root / "ai_core"
-        py_backend_path = workspace_root / "py_backend"
-
-        # If ai_core isn't at workspace root, check under py_backend (monorepo layout)
+        cwd  = Path.cwd()
+        root = cwd.parent if cwd.name == "py_backend" else cwd
+        ai_core_path    = root / "ai_core"
+        py_backend_path = root / "py_backend"
         if not ai_core_path.exists():
-            alt_ai_core = py_backend_path / "ai_core"
-            if alt_ai_core.exists():
-                ai_core_path = alt_ai_core
-
-        # Verify paths exist
+            alt = py_backend_path / "ai_core"
+            if alt.exists():
+                ai_core_path = alt
         if not ai_core_path.exists():
-            raise FileNotFoundError(f"ai_core directory not found: {ai_core_path}")
+            raise FileNotFoundError(f"ai_core not found: {ai_core_path}")
         if not py_backend_path.exists():
-            raise FileNotFoundError(f"py_backend directory not found: {py_backend_path}")
+            raise FileNotFoundError(f"py_backend not found: {py_backend_path}")
+
+        rl_path    = root / "rl"
+        utils_path = py_backend_path / "utils"
+
+        # ── Directories for PyInstaller intermediate/output ────────────
+        dist_dir  = self._build_tmp / "dist"
+        build_dir = self._build_tmp / "build"
+        spec_dir  = self._build_tmp
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        build_dir.mkdir(parents=True, exist_ok=True)
 
         args = [
-            'pyinstaller',
-            '--name', exe_name,
-            '--onefile',
-            '--clean',
-            '--noconfirm',
-            '--console',
-
-            # Module paths
-            '--paths', str(workspace_root),
+            'pyinstaller', '--name', exe_name,
+            # --onedir not --onefile: PyTorch's libtorch_cpu.so is ~2 GB and
+            # zlib cannot decompress it at runtime (error code -1).
+            # --onedir skips compression entirely — all .so/.dll stay as files.
+            '--onedir', '--clean', '--noconfirm', '--console',
+            # Tell PyInstaller exactly where to put everything
+            '--distpath', str(dist_dir),
+            '--workpath', str(build_dir),
+            '--specpath', str(spec_dir),
+            # Source search paths
+            '--paths', str(root),
             '--paths', str(ai_core_path),
             '--paths', str(py_backend_path),
-
-            # Hidden imports (modules only)
-            '--hidden-import', 'uvicorn',
-            '--hidden-import', 'fastapi',
-            '--hidden-import', 'websockets',
-            '--hidden-import', 'numpy',
-            '--hidden-import', 'torch',
-            '--hidden-import', 'pydantic',
+            '--paths', str(py_backend_path / "utils"),
         ]
+        if rl_path.exists():
+            args.extend(['--paths', str(rl_path)])
 
-        # Add all Config hidden imports
-        for module in Config.PYINSTALLER_HIDDEN_IMPORTS:
+        # Hidden imports — agent-only modules defined in Config
+        for module in Config.AGENT_HIDDEN_IMPORTS:
             args.extend(['--hidden-import', module])
 
-        # Data files
-        data_files = [
-            (agent_dir / "brain.pcap", '.'),
+        # Exclude server-manager modules
+        for module in Config.AGENT_EXCLUDE_MODULES:
+            args.extend(['--exclude-module', module])
+
+        # ── Data files bundled into the exe ───────────────────────────
+        # NOTE: brain.pcap is intentionally NOT included here.
+        # It lives next to the exe and is read/written at runtime via AGENT_DIR.
+        # Bundling it would mean auto-saves go into _MEIPASS (a temp dir that
+        # disappears on exit), so the brain would never persist.
+        data = [
             (agent_dir / "config.json", '.'),
         ]
+        if has_frontend and (agent_dir / "frontend").exists():
+            data.append((agent_dir / "frontend", 'frontend'))
 
-        # Add brain JSON if exists
-        brain_json = agent_dir / "brain.pcap.json"
-        if brain_json.exists():
-            data_files.append((brain_json, '.'))
+        # Source trees bundled into the exe
+        data.append((py_backend_path, 'py_backend'))
+        data.append((ai_core_path,    'ai_core'))
+        if rl_path.exists():
+            data.append((rl_path,     'rl'))
+        if utils_path.exists():
+            data.append((utils_path,  'py_backend/utils'))
 
-        # Add frontend if exists
-        if has_frontend:
-            frontend_dir = agent_dir / "frontend"
-            if frontend_dir.exists():
-                data_files.append((frontend_dir, 'frontend'))
-                log.info("✅ Frontend will be bundled")
-
-        # Add modules as data directories
-        if py_backend_path.exists():
-            data_files.append((py_backend_path, 'py_backend'))
-            log.info(f"📦 Adding py_backend from: {py_backend_path}")
-
-        if ai_core_path.exists():
-            data_files.append((ai_core_path, 'ai_core'))
-            log.info(f"📦 Adding ai_core from: {ai_core_path}")
-
-        # Add all data files to args
-        for src, dst in data_files:
+        for src, dst in data:
             args.extend(['--add-data', f'{src}{os.pathsep}{dst}'])
 
-        # Add icon if provided
         if icon_path and Path(icon_path).exists():
             args.extend(['--icon', icon_path])
 
-        # Launcher script
         args.append(str(launcher_path))
 
-        log.info("PyInstaller command:")
-        log.info(" ".join(args))
-
-        # Run PyInstaller
+        log.info("Running PyInstaller… (this may take 30–60 s)")
         try:
-            log.info(f"Running PyInstaller...")
-            log.info(f"⏳ This will take 30-60 seconds. Please wait...")
-
-            result = subprocess.run(
-                args,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minute timeout
-            )
-
-            log.info("✅ PyInstaller completed")
-
-            # Find executable
-            dist_dir = Path("dist")
-            if sys.platform == "win32":
-                exe_path = dist_dir / f"{exe_name}.exe"
-            else:
-                exe_path = dist_dir / exe_name
-
-            if not exe_path.exists():
-                raise FileNotFoundError(f"Executable not found: {exe_path}")
-
-            file_size = exe_path.stat().st_size / (1024 * 1024)
-            log.info(f"✅ Executable built: {exe_path} ({file_size:.1f} MB)")
-            return exe_path
-
+            subprocess.run(args, check=True, capture_output=True,
+                           text=True, timeout=3000)
         except subprocess.CalledProcessError as e:
-            log.error(f"❌ PyInstaller failed:")
-            log.error(f"STDOUT: {e.stdout}")
-            log.error(f"STDERR: {e.stderr}")
+            log.error(f"PyInstaller failed:\n{e.stdout}\n{e.stderr}")
             raise
         except subprocess.TimeoutExpired:
-            log.error("❌ PyInstaller timed out after 5 minutes")
+            log.error("PyInstaller timed out")
             raise
-        except KeyboardInterrupt:
-            log.error("❌ Build interrupted by user")
-            raise
+
+        exe_name_full = f"{exe_name}.exe" if sys.platform == "win32" else exe_name
+
+        # --onedir: PyInstaller outputs dist/{exe_name}/ (a folder, not a single file).
+        # The actual executable is dist/{exe_name}/{exe_name}[.exe].
+        # Move the whole folder into agent_dir/bin/ so every .so/.dll travels
+        # with the exe — this is what lets it run without decompression.
+        onedir_folder = dist_dir / exe_name
+        if not onedir_folder.exists():
+            raise FileNotFoundError(
+                f"PyInstaller onedir folder not found: {onedir_folder}\n"
+                f"Contents of dist_dir: {list(dist_dir.iterdir()) if dist_dir.exists() else 'missing'}"
+            )
+
+        bin_dest = agent_dir / "bin"
+        if bin_dest.exists():
+            shutil.rmtree(bin_dest)
+        shutil.move(str(onedir_folder), str(bin_dest))
+
+        final_exe = bin_dest / exe_name_full
+        if not final_exe.exists():
+            raise FileNotFoundError(f"Executable not found inside bin/: {final_exe}")
+
+        log.info(f"✅ Executable: {final_exe} ({final_exe.stat().st_size / (1024*1024):.1f} MB)")
+        return final_exe
+
+    # ------------------------------------------------------------------
+    # Portable package
+    # ------------------------------------------------------------------
 
     def _create_portable_package(self, agent_id: str, agent_dir: Path,
                                    exe_path: Path, has_frontend: bool) -> Path:
-        """Creates portable package directory"""
-        package_dir = self.output_dir / f"{agent_id}_portable"
-        package_dir.mkdir(parents=True, exist_ok=True)
+        """
+        Assemble the final portable folder at output_dir/{agent_id}/.
 
-        # Copy executable
-        shutil.copy(exe_path, package_dir / exe_path.name)
+        agent_dir is already output_dir/{agent_id}/ — the exe was moved there
+        by _build_executable, so most files are already in place.
+        We just need to ensure UltimMC, mods, and frontend are present.
+        """
+        pkg_dir = self.output_dir / agent_id
+        pkg_dir.mkdir(parents=True, exist_ok=True)
 
-        # Copy brain and config
-        shutil.copy(agent_dir / "brain.pcap", package_dir / "brain.pcap")
-        shutil.copy(agent_dir / "config.json", package_dir / "config.json")
+        # exe + brain + config are already in agent_dir == pkg_dir
+        # (agent_dir IS pkg_dir — same path)
+        # Nothing to copy for those; just assert they're there.
+        for required in [exe_path, agent_dir / "brain.pcap", agent_dir / "config.json"]:
+            if not required.exists():
+                log.warning(f"⚠️  Expected file missing in package: {required}")
 
-        brain_json = agent_dir / "brain.pcap.json"
-        if brain_json.exists():
-            shutil.copy(brain_json, package_dir / "brain.pcap.json")
+        # Read backend_port for README
+        backend_port = 11400
+        try:
+            config_path = agent_dir / "config.json"
+            if config_path.exists():
+                with open(config_path) as f:
+                    cfg = json.load(f)
+                    backend_port = cfg.get("backend_port", 11400)
+        except Exception as e:
+            log.warning(f"Could not read backend_port from config: {e}")
 
-        # Copy frontend if exists
-        if has_frontend:
-            frontend_dir = agent_dir / "frontend"
-            if frontend_dir.exists():
-                shutil.copytree(frontend_dir, package_dir / "frontend", dirs_exist_ok=True)
+        # mods/ — already copied into agent_dir during package_agent()
+        # frontend/ — same
+        # UltimMC/ — same
 
-        # Copy mods folder (includes both DivineWorld and DWClientBot mods)
-        mods_dir = agent_dir / "mods"
-        if mods_dir.exists():
-            shutil.copytree(mods_dir, package_dir / "mods", dirs_exist_ok=True)
-
-        # Create README
-        readme = f"""# {agent_id} - Divine World AI Agent
-
-**Portable Standalone Package (Production v2.1.0)**
+        readme = f"""# {agent_id} — Divine World AI Agent (v2.1.0)
 
 ## Quick Start
+1. Run the agent executable:
+   - Linux/macOS: `./bin/{exe_path.name}`
+   - Windows:     `bin\\{exe_path.name}`
+2. UltimMC will automatically launch Minecraft and log in
+3. The agent backend starts on port {backend_port}
 
-Double-click `{exe_path.name}` to launch the agent.
-
-## What's Included
-
-- `{exe_path.name}` - Main executable (standalone, no dependencies)
-- `brain.pcap` - Agent's memory and personality
-- `config.json` - Configuration
-- `mods/` - Minecraft mods (DivineWorld + DWClientBot)
-{'- `frontend/` - Chat interface' if has_frontend else '- No frontend (backend only)'}
-
-## Usage
-
-The agent will:
-1. Load its brain state from `brain.pcap`
-2. Start the backend server (port configured in config.json)
-{'3. Open the chat interface in your browser' if has_frontend else '3. Run in backend-only mode (connect via API)'}
-
-## Features
-
-✅ Language Intelligence - Learns from text and conversation
-✅ Pattern Recognition - Identifies behavioral patterns
-✅ Multimodal Learning - Processes vision and audio
-✅ Personality System - Unique traits and emotions
-✅ Atomic Saves - Data never corrupts
-✅ Auto-Save - Saves every 5 minutes
-✅ Minecraft Integration - Bundled mods (DivineWorld + DWClientBot)
+## Package Contents
+- `bin/{exe_path.name}` — executable + all bundled libraries (PyTorch, ai_core, etc.)
+- `bin/_internal/` — shared .so/.dll files (required, do not delete)
+- `brain.pcap` — complete agent state (weights, memory, personality, pregnancy)
+- `brain.pcap.json` — human-readable brain summary
+- `config.json` — agent configuration and backend settings
+- `UltimMC/` — Minecraft launcher with pre-configured {Config.MINECRAFT_VERSION}
+- `mods/` — DivineWorld + DWClientBot Minecraft mods
+{"- `frontend/` — web-based chat UI" if has_frontend else ""}
 
 ## Portability
+**Fully portable** — copy this entire folder to any PC and run `{exe_path.name}`.
+No Python installation required on the target machine.
 
-This entire folder is portable!
-- Move to any Windows computer
-- All memories preserved in brain.pcap
-- No installation required
-- Self-contained executable
+## Backend API
+- REST API:  http://localhost:{backend_port}
+- WebSocket: ws://localhost:{backend_port}/ws
 
-## Configuration
-
-Edit `config.json` to change:
-- Backend port
-- Frontend port
-- Auto-save interval
-- Feature flags
-
-## Agent Info
-
-- Agent ID: {agent_id}
-- Has Frontend: {has_frontend}
-- Version: 2.1.0 (Production)
-- Protocol: Binary WebSocket
+## Notes
+- Auto-saves brain every 5 minutes
+- Each agent gets its own Minecraft instance and JVM
 
 ## Minecraft Integration
-
-The packaged `mods/` folder contains:
-- **DivineWorld.jar** - Divine World mod for enhanced gameplay
-- **DWClientBot.jar** - Agent communication mod (allows AI agent to interact with Minecraft)
-
-Place the entire `mods/` folder into your Minecraft mods folder:
-- **Windows:** `%APPDATA%/.minecraft/mods/`
-- **Linux:** `~/.minecraft/mods/`
-- **macOS:** `~/Library/Application Support/minecraft/mods/`
-
-## Troubleshooting
-
-**Backend won't start:**
-- Check if port is already in use
-- Try changing backend_port in config.json
-
-**Frontend won't load:**
-- Ensure backend started successfully
-- Check browser at http://localhost:<frontend_port>
-
-**Brain won't load:**
-- Verify brain.pcap file exists
-- Check file isn't corrupted (should be >100 bytes)
-
-**Mods not loading in Minecraft:**
-- Verify mods/ folder is in your Minecraft mods directory
-- Ensure you have Forge/Fabric installed (if required)
-- Check Minecraft launcher logs for mod errors
-
-## Support
-
-For issues or questions:
-- Check logs in console window
-- Brain state is automatically backed up
-- Safe to restart - progress is saved
-
----
-Packaged: {time.strftime('%Y-%m-%d %H:%M:%S')}
+- Minecraft: {Config.MINECRAFT_VERSION}
+- Forge:     {Config.FORGE_VERSION}
+- Server:    {Config.DEFAULT_SERVER}
 """
+        (pkg_dir / "README.md").write_text(readme, encoding='utf-8')
+        log.info(f"✅ Portable package: {pkg_dir}")
+        return pkg_dir
 
-        (package_dir / "README.md").write_text(readme, encoding='utf-8')
-
-        log.info(f"✅ Portable package: {package_dir}")
-        return package_dir
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
 
     def cleanup_build_artifacts(self):
-        """Clean up temporary build files"""
-        try:
-            if self.build_dir.exists():
-                shutil.rmtree(self.build_dir)
-                log.info(f"Cleaned up {self.build_dir}")
+        """Remove PyInstaller temp dirs. Call after packaging if desired."""
+        if self._build_tmp.exists():
+            try:
+                shutil.rmtree(self._build_tmp)
+                log.info(f"🧹 Cleaned build tmp: {self._build_tmp}")
+            except Exception as e:
+                log.warning(f"Could not clean build tmp: {e}")
 
-            # Clean up spec files
-            for spec_file in Path.cwd().glob("*.spec"):
-                spec_file.unlink()
-                log.info(f"Cleaned up {spec_file}")
-
-        except Exception as e:
-            log.warning(f"Failed to clean up some artifacts: {e}")
+    def get_package_info(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        pkg_dir = self.output_dir / agent_id
+        if not pkg_dir.exists():
+            return None
+        exe_name = f"DW_{agent_id}.exe" if sys.platform == "win32" else f"DW_{agent_id}"
+        return {
+            "agent_id":    agent_id,
+            "package_dir": str(pkg_dir),
+            "exe_path":    str(pkg_dir / exe_name),
+            "brain_path":  str(pkg_dir / "brain.pcap"),
+            "config_path": str(pkg_dir / "config.json"),
+            "exists":      (pkg_dir / exe_name).exists(),
+        }

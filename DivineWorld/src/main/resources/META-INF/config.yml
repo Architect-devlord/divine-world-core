@@ -5,8 +5,8 @@ oracle:
   active-model: "phi3:mini"
   models:
     -phi3:mini
-    #- "gemma3:1b"
-    #- "deepseek-r1:8b"
+    #-gemma3:1b
+    #-deepseek-r1:8b
 
 agents:
   max_concurrent: 50

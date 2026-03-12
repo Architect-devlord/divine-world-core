@@ -21,7 +21,7 @@ import logging
 
 try:
     from avalanche.benchmarks.utils import AvalancheTensorDataset
-    from avalanche.training.strategies import Naive, Replay, EWC, LwF
+    from avalanche.training.supervised.strategy_wrappers import Naive, Replay, EWC, LwF
     from avalanche.models import SimpleMLP
     from avalanche.evaluation.metrics import accuracy_metrics, loss_metrics
     from avalanche.logging import InteractiveLogger
@@ -206,42 +206,29 @@ class ContinualLearner:
         log.info(f"Avalanche strategy initialized: {self.strategy_name}")
     
     def collect_experiences(self, min_batch_size: int = 32) -> bool:
-        """
-        Collect experiences from agent's continual buffer.
-        Returns True if enough experiences collected.
-        """
-        if not hasattr(self.agent.brain, 'continual_buffer'):
-            return False
-        
-        buffer = self.agent.brain.continual_buffer
-        
+        buffer = list(getattr(self.agent.brain, 'continual_buffer', []))
         if len(buffer) < min_batch_size:
             return False
-        
-        # Extract experiences
+        templates = ['collect','craft','attack','flee','use_item',
+                    'explore','eat','sleep','build','trade','interact']
         for exp in buffer:
-            obs = exp.get('observations')
-            actions = exp.get('actions')
-            rewards = exp.get('rewards')
-            next_obs = exp.get('next_observations')
-            dones = exp.get('dones')
-            
-            if obs is not None and actions is not None:
-                # Store as (obs, action, reward, next_obs, done, task_id)
-                task_id = exp.get('task', self.current_task_id)
-                
-                # Convert to tensors if numpy
-                if isinstance(obs, np.ndarray):
-                    obs = torch.from_numpy(obs).float()
-                if isinstance(actions, np.ndarray):
-                    actions = torch.from_numpy(actions).float()
-                if isinstance(next_obs, np.ndarray):
-                    next_obs = torch.from_numpy(next_obs).float()
-                
-                self.experience_buffer.append((
-                    obs, actions, rewards, next_obs, dones, task_id
-                ))
-        
+            context = exp.get('context') or {}
+            event   = exp.get('event', {})
+            # Build obs vector from context
+            obs_list = [
+                context.get('health', 20.0) / 20.0,
+                context.get('hunger', 20.0) / 20.0,
+            ] + [0.0] * (self.obs_dim - 2)
+            obs = torch.tensor(obs_list[:self.obs_dim], dtype=torch.float32)
+            # Build action vector from event type
+            action_vec = [0.0] * self.action_dim
+            etype = event.get('type', '')
+            if etype in templates:
+                action_vec[templates.index(etype) % self.action_dim] = 1.0
+            action   = torch.tensor(action_vec, dtype=torch.float32)
+            task_id  = exp.get('task', self.current_task_id)
+            reward   = float(exp.get('reward', 0.0))
+            self.experience_buffer.append((obs, action, reward, obs, False, task_id))
         return len(self.experience_buffer) >= min_batch_size
     
     def learn_from_buffer(self, epochs: int = 1) -> Dict[str, float]:

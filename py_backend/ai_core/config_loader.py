@@ -1,107 +1,95 @@
 # ai_core/config_loader.py
 """
-Unified configuration loader for Divine World Project.
-Loads config.yml, merges environment variable overrides (DW_*),
-and caches the final dictionary. Used by all AI subsystems.
+Thin adapter that satisfies world_model.py's
+    from ai_core.config_loader import get_section, get_device
+import without requiring any changes to world_model.py.
+
+All real configuration lives in config.py (Config class).
+This module exposes the two helpers world_model.py needs and
+routes everything else through a lightweight YAML/env-var layer
+so callers can optionally drop a `config.yaml` next to the
+package without breaking anything.
 """
 
 import os
-import yaml
 import logging
+import torch
 from typing import Any, Dict
 
 log = logging.getLogger("config_loader")
 
-_DEFAULT_LOCATIONS = [
-    "config.yml",
-    os.path.join(os.getcwd(), "config.yml"),
-    os.path.join(os.getcwd(), "py_backend", "config.yml"),
-]
+# ---------------------------------------------------------------------------
+# Optional YAML support
+# ---------------------------------------------------------------------------
+_yaml_config: Dict[str, Any] = {}
 
-_cached: Dict[str, Any] = {}
-
-
-def _load_yaml(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def _apply_env_overrides(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply DW_* environment variable overrides."""
-    env_map = {
-        "DW_DEVICE": ("runtime", "device_preference"),
-        "DW_PRECISION": ("runtime", "precision"),
-        "DW_LM": ("language_model", "model_name_or_path"),
-        "DW_WM": ("world_model", "model_name"),
-        "DW_LOG_LEVEL": ("runtime", "log_level"),
-        "DW_LOG_DIR": ("paths", "logs_dir"),
-        "DW_SAFE_MODE": ("runtime", "safe_mode"),
-    }
-    for env_key, path in env_map.items():
-        if env_key in os.environ:
-            section, key = path
-            if section in cfg:
-                val = os.environ[env_key]
-                if val.lower() in ("true", "false"):
-                    val = val.lower() == "true"
-                cfg[section][key] = val
-                log.info(f"Env override: {env_key} -> {section}.{key} = {val}")
-    return cfg
+def _load_yaml() -> None:
+    """
+    Attempt to load config.yaml from the repo root (one level above ai_core/).
+    Silently skips if the file doesn't exist or PyYAML isn't installed.
+    """
+    global _yaml_config
+    try:
+        import yaml
+        from pathlib import Path
+        candidates = [
+            Path(__file__).parent.parent / "config.yaml",   # py_backend/config.yaml
+            Path(__file__).parent / "config.yaml",           # ai_core/config.yaml
+        ]
+        for path in candidates:
+            if path.exists():
+                with open(path, "r") as fh:
+                    _yaml_config = yaml.safe_load(fh) or {}
+                log.info(f"config_loader: loaded {path}")
+                return
+    except ImportError:
+        pass  # PyYAML not installed — fine, we fall back to defaults
+    except Exception as e:
+        log.warning(f"config_loader: could not load YAML config: {e}")
 
 
-def load_config(path: str = None, force_reload: bool = False) -> Dict[str, Any]:
-    """Load YAML config and merge environment overrides."""
-    global _cached
-    if _cached and not force_reload:
-        return _cached
-
-    cfg = None
-    for p in ([path] if path else _DEFAULT_LOCATIONS):
-        if p and os.path.exists(p):
-            try:
-                cfg = _load_yaml(p)
-                break
-            except Exception as e:
-                log.error(f"Error loading {p}: {e}")
-    if cfg is None:
-        raise FileNotFoundError("config.yml not found in any default path")
-
-    cfg = _apply_env_overrides(cfg)
-    _cached = cfg
-    log.info(f"Configuration loaded successfully from {p}")
-    return cfg
+_load_yaml()
 
 
-def get_section(section: str, default: Dict[str, Any] = None) -> Dict[str, Any]:
-    cfg = load_config()
-    return cfg.get(section, default or {})
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def get_section(section: str, default: Any = None) -> Any:
+    """
+    Return a config section dict.
+
+    Priority:
+      1. YAML file  (key == section name)
+      2. `default`  (caller-supplied fallback, typically {})
+
+    Example usage in world_model.py:
+        cfg = get_section("world_model", {})
+        d_model = cfg.get("d_model", 512)
+    """
+    return _yaml_config.get(section, default if default is not None else {})
 
 
 def get_device() -> str:
-    """Return preferred torch device."""
-    cfg = load_config()
-    pref = cfg.get("runtime", {}).get("device_preference", "auto").lower()
-    if pref == "cuda":
-        import torch
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if pref == "cpu":
-        return "cpu"
-    import torch
-    return "cuda" if torch.cuda.is_available() else "cpu"
+    """
+    Resolve the preferred torch device.
 
+    Priority:
+      1. DW_DEVICE env var  (e.g. "cuda", "cpu", "mps")
+      2. YAML global key    "device"
+      3. Auto-detect CUDA / MPS / CPU
+    """
+    env = os.getenv("DW_DEVICE", "").strip().lower()
+    if env:
+        return env
 
-def get_precision() -> str:
-    return load_config().get("runtime", {}).get("precision", "float32")
+    yaml_device = _yaml_config.get("device", "").strip().lower()
+    if yaml_device:
+        return yaml_device
 
-
-def summary() -> None:
-    cfg = load_config()
-    print("\n========== Divine World Configuration ==========")
-    print(f"Device Preference : {get_device()}")
-    print(f"Precision          : {get_precision()}")
-    print(f"Log Level          : {cfg.get('runtime', {}).get('log_level')}")
-    for section in ("world_model", "language_model", "training"):
-        print(f"\n[{section}]")
-        for k, v in cfg.get(section, {}).items():
-            print(f"  {k}: {v}")
-    print("================================================\n")
+    if torch.cuda.is_available():
+        return "cuda"
+    # MPS (Apple Silicon) — only available in recent torch builds
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"

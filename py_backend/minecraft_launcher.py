@@ -501,7 +501,7 @@ class UltimMCLauncher:
             str(exe),
             "-d", str(data_dir / "bin"), # Executive live along side accounts.json and the -d flag of UltimMC should point to the bin containing the accounts.json and the UltimMC executable.
             "--alive",
-            "-l", instance_name,
+            "-l", 1.20.1, #launches the 1.20.1 instance of minecraft in UltimMC if other version of instance is to be use it should be created then specified here 
         ]
 
         if server_addr:

@@ -130,9 +130,17 @@ public class AgentConfigLoader {
 
     /**
      * Parses the agents.json structure produced by mc_uuid.AgentNameManager.
-     * GODs.dual is always a JsonObject in the canonical format.
-     * A legacy flat JsonArray (old format) is also accepted: every name is
-     * placed under the "oracle" type with a warning.
+     *
+     * ACTUAL format (from mc_uuid.py):
+     *   NPCs.male   → {"Adam": 11401, "Abel": 11402}   (JsonObject: name → port)
+     *   NPCs.female → {"Eve": 11420, ...}              (JsonObject: name → port)
+     *   GODs.dual.<type> → {"Mortis": 11440, ...}      (JsonObject: name → port)
+     *
+     * The old code called parseStringArray() which checked isJsonArray() — always
+     * false for this format, so all lists came back empty and every connecting agent
+     * was classified as REAL_PLAYER. (FIX S-01)
+     *
+     * Legacy flat JsonArray is still accepted with a warning.
      */
     private static AgentConfig parseConfig(JsonObject root) {
         AgentConfig cfg = new AgentConfig();
@@ -140,8 +148,8 @@ public class AgentConfigLoader {
         // NPCs
         if (root.has("NPCs")) {
             JsonObject npcs = root.getAsJsonObject("NPCs");
-            parseStringArray(npcs, "male")  .forEach(cfg.maleNPCNames::add);
-            parseStringArray(npcs, "female").forEach(cfg.femaleNPCNames::add);
+            parseNamesFromElem(npcs, "male")  .forEach(cfg.maleNPCNames::add);
+            parseNamesFromElem(npcs, "female").forEach(cfg.femaleNPCNames::add);
         }
 
         // GODs
@@ -151,21 +159,16 @@ public class AgentConfigLoader {
                 JsonElement dualElem = gods.get("dual");
 
                 if (dualElem.isJsonObject()) {
-                    // Canonical format: GODs.dual.{type} = [names...]
+                    // Canonical: GODs.dual.{type} = {"Name": port, ...}
                     for (Map.Entry<String, JsonElement> entry : dualElem.getAsJsonObject().entrySet()) {
-                        String      type  = entry.getKey().toLowerCase();
-                        List<String> names = new ArrayList<>();
-                        if (entry.getValue().isJsonArray()) {
-                            for (JsonElement ne : entry.getValue().getAsJsonArray()) {
-                                names.add(ne.getAsString());
-                            }
-                        }
+                        String       type  = entry.getKey().toLowerCase();
+                        List<String> names = extractNames(entry.getValue());
                         cfg.godTypes.add(type);
                         cfg.godNamesByType.put(type, names);
                     }
                 } else if (dualElem.isJsonArray()) {
                     // Legacy flat array — treat all as oracle names
-                    DWMod.LOGGER.warn("[AgentConfig] Legacy flat GODs.dual array — treating as 'oracle' names. Update agents.json.");
+                    DWMod.LOGGER.warn("[AgentConfig] Legacy flat GODs.dual array — treating as 'oracle' names.");
                     List<String> names = new ArrayList<>();
                     for (JsonElement ne : dualElem.getAsJsonArray()) names.add(ne.getAsString());
                     cfg.godTypes.add("oracle");
@@ -177,12 +180,34 @@ public class AgentConfigLoader {
         return cfg;
     }
 
-    private static List<String> parseStringArray(JsonObject obj, String key) {
+    /**
+     * Extract name strings from a JsonElement that is either:
+     *   - JsonObject: {"Name": port, ...}   → keys are the names  (mc_uuid.py format)
+     *   - JsonArray:  ["Name", ...]          → elements are names  (legacy format)
+     */
+    private static List<String> extractNames(JsonElement elem) {
         List<String> list = new ArrayList<>();
-        if (obj.has(key) && obj.get(key).isJsonArray()) {
-            for (JsonElement e : obj.getAsJsonArray(key)) list.add(e.getAsString());
+        if (elem == null) return list;
+        if (elem.isJsonObject()) {
+            // Standard mc_uuid.py format: keys are names, values are ports (ignored)
+            for (String name : elem.getAsJsonObject().keySet()) {
+                if (!name.isEmpty()) list.add(name);
+            }
+        } else if (elem.isJsonArray()) {
+            for (JsonElement e : elem.getAsJsonArray()) {
+                if (e.isJsonPrimitive()) list.add(e.getAsString());
+            }
         }
         return list;
+    }
+
+    /**
+     * Read names from obj.get(key), accepting both JsonObject (canonical)
+     * and JsonArray (legacy) under the given key.
+     */
+    private static List<String> parseNamesFromElem(JsonObject obj, String key) {
+        if (!obj.has(key)) return new ArrayList<>();
+        return extractNames(obj.get(key));
     }
 
     // -------------------------------------------------------------------------

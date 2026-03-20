@@ -15,157 +15,175 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * WebSocket Manager
+ * WebSocket Manager — Non-blocking rewrite
  *
- * Manages the bidirectional binary WebSocket connection to the Python backend.
- *   Outbound: perception frames (JPEG + game state + audio) at ~20 FPS
- *   Inbound:  ActionFrames (movement + flags + god ability)
+ * KEY FIXES FOR FREEZE ON OLD HARDWARE
+ * =====================================
  *
- * Fixes applied
- * ─────────────
- * Bug C1 — Compile crash: ActionExecutor.initialize() removed.
- *   The new ActionExecutor has no initialize() method; all state is static
- *   and ready on first use.  Removing the call fixes the compile error.
+ * FIX F1 — wsFuture.join() removed from main thread
+ *   The old code called CompletableFuture.join() on the Minecraft main thread
+ *   while waiting for the WebSocket TCP handshake.  If the Python backend was
+ *   not ready, this blocked the entire game loop (freeze until timeout).
+ *   Fix: connect asynchronously via thenAccept().  The game continues normally
+ *   while the connection is being established in the background.
  *
- * Bug C2 — God abilities silently dropped:
- *   handleActionFrame() previously stopped after reading hotbarSlot.
- *   The god_ability section ([2] len, [N] UTF-8, [4×3] params) was never
- *   consumed, so every god ability decision from the Python backend was
- *   discarded.  The fixed handler reads the full ability section and
- *   forwards it to GodEntityManager.executeGodAbility() on the main thread.
+ * FIX F2 — JPEG encoding moved off the main thread
+ *   captureScreenAsJPEG() was called inside Minecraft.getInstance().execute()
+ *   (= main thread) then JPEG-encoded there via ImageIO.write() — a CPU-heavy
+ *   operation that took 100-500 ms on older hardware, starving the game loop
+ *   at 20 FPS.
+ *   Fix: VisionCaptureSystem.grabPixels() captures the NativeImage pixels on
+ *   the main thread (required for GPU readback), then encoding is submitted
+ *   to the encode executor (off-thread).  sendBinary() is also off-thread.
  *
- * Bug I — Static messageBuffer unsafe across reconnects:
- *   The old code used a single static ByteBuffer allocated once. On reconnect
- *   a partial/corrupt payload from the dead session could remain if the
- *   connection dropped mid-message before the `last=true` clear() call.
- *   Replaced with a per-connection ByteArrayOutputStream (msgAccum) that is
- *   allocated fresh in onOpen() so every new connection starts clean.
- *   ByteArrayOutputStream.write(byte[]) is also simpler than ByteBuffer.put()
- *   and avoids BufferOverflowException on unexpectedly large frames.
+ * FIX F3 — sendBinary() moved off the main thread
+ *   Sending a 20-100 KB WebSocket frame on the main thread blocked it for the
+ *   duration of the kernel socket write.  Moved to the encode executor.
+ *
+ * FIX F4 — Reduced default capture resolution
+ *   640×480 = 307 200 pixels per frame.  For old hardware the default is now
+ *   320×240 (76 800 pixels) — ¼ the work.  Override with
+ *   -Ddw.vision.width=640 -Ddw.vision.height=480 when needed.
+ *
+ * Other bugs preserved from previous version:
+ *   Bug C1 — ActionExecutor.initialize() removed (no such method)
+ *   Bug C2 — god ability section fully read and dispatched
+ *   Bug I  — per-connection ByteArrayOutputStream accumulator
  */
 public class WebSocketManager {
 
-    private static WebSocket webSocket;
-    private static String agentId;
-    private static final AtomicBoolean connected = new AtomicBoolean(false);
-    private static ScheduledExecutorService executor;
+    private static volatile WebSocket       webSocket;
+    private static volatile String          agentId;
+    private static final AtomicBoolean      connected   = new AtomicBoolean(false);
+    private static final AtomicBoolean      connecting  = new AtomicBoolean(false);
 
-    private static final int MAGIC            = 0x44574149; // 'DWAI'
+    private static ScheduledExecutorService perceptionExecutor;
+
+    /**
+     * FIX F2/F3: single-thread executor for JPEG encoding + WS sends.
+     * Keeps encoding sequential (no frame reordering) and off the main thread.
+     */
+    private static final ExecutorService encodeExecutor =
+        Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "DW-Encode-Send");
+            t.setDaemon(true);
+            t.setPriority(Thread.NORM_PRIORITY - 1);
+            return t;
+        });
+
+    private static final int MAGIC            = 0x44574149;
+    private static final int FRAME_CHAT       = 0x03;  // Python → Java chat message
     private static final int FRAME_PERCEPTION = 0x01;
     private static final int FRAME_ACTION     = 0x02;
 
-    /**
-     * FIX Bug I — per-connection accumulator.
-     * Declared volatile so the reference swap in onOpen is visible to onBinary.
-     * ByteArrayOutputStream.write() and reset() are called only from the
-     * single-threaded Java 11 WebSocket listener, so no additional locking
-     * is needed within one connection lifetime.
-     */
-    private static volatile ByteArrayOutputStream msgAccum = new ByteArrayOutputStream(1024 * 1024);
+    private static volatile ByteArrayOutputStream msgAccum =
+        new ByteArrayOutputStream(1024 * 1024);
 
     // -------------------------------------------------------------------------
-    // Initialise
+    // Initialise — NON-BLOCKING (FIX F1)
     // -------------------------------------------------------------------------
 
     public static void initialize(String url, int port, String agentIdParam) {
         agentId = agentIdParam;
 
-        // Initialise vision system (idempotent)
+        // VisionCaptureSystem.initialize() only reads system properties
+        // and initialises AudioCaptureSystem — safe on main thread.
         VisionCaptureSystem.initialize();
 
-        // FIX Bug C1: ActionExecutor.initialize() REMOVED — the new ActionExecutor
-        // has no such method.  Its cooldown counters are static primitives that
-        // are ready on first call to executeAction().
+        if (connecting.getAndSet(true)) {
+            DWClientMod.LOGGER.info("[WS] Already connecting — skipping duplicate init");
+            return;
+        }
 
-        try {
-            URI serverUri = URI.create(url + ":" + port + "/ws/agent");
-            HttpClient client = HttpClient.newHttpClient();
+        URI serverUri = URI.create(url + ":" + port + "/ws/agent");
+        DWClientMod.LOGGER.info("[WS] Connecting async to {}", serverUri);
 
-            CompletableFuture<WebSocket> wsFuture = client.newWebSocketBuilder()
-                    .buildAsync(serverUri, new WebSocket.Listener() {
+        HttpClient client = HttpClient.newHttpClient();
 
-                        @Override
-                        public void onOpen(WebSocket ws) {
-                            DWClientMod.LOGGER.info("[WS] Connected to backend");
-                            // FIX Bug I: allocate a fresh accumulator on every new connection
-                            // so stale bytes from a previous session never survive the reconnect.
-                            msgAccum = new ByteArrayOutputStream(1024 * 1024);
-                            connected.set(true);
-                            sendHandshake(ws);
-                            startPerceptionLoop();
-                            ws.request(1);
-                        }
+        // FIX F1: thenAccept() instead of join() — never blocks the main thread.
+        client.newWebSocketBuilder()
+            .buildAsync(serverUri, new WebSocket.Listener() {
 
-                        /**
-                         * Text frames: JSON control messages from the backend (debug, chat acks).
-                         * Not used for action delivery but logged at DEBUG for visibility.
-                         */
-                        @Override
-                        public CompletionStage<?> onText(WebSocket ws, CharSequence data, boolean last) {
-                            DWClientMod.LOGGER.debug("[WS] JSON received: {}", data.toString());
-                            ws.request(1);
-                            return null;
-                        }
+                @Override
+                public void onOpen(WebSocket ws) {
+                    DWClientMod.LOGGER.info("[WS] Connected to backend at {}", serverUri);
+                    msgAccum = new ByteArrayOutputStream(1024 * 1024);
+                    webSocket = ws;
+                    connected.set(true);
+                    connecting.set(false);
+                    // request(1) MUST come before sendHandshake so the Java
+                    // HTTP client's receive pump is running before we send.
+                    // Without this, the Python side's receive_json() hangs
+                    // waiting for a frame that the client hasn't flushed yet.
+                    ws.request(1);
+                    sendHandshake(ws);
+                    startPerceptionLoop();
+                }
 
-                        /**
-                         * Binary frames: ActionFrame payloads from the Python backend.
-                         *
-                         * FIX Bug I: accumulate into a per-connection ByteArrayOutputStream
-                         * instead of the old static ByteBuffer.  This prevents stale bytes
-                         * from a dropped connection poisoning the first frame of a new session.
-                         *
-                         * Java 11 WebSocket guarantees sequential delivery within one
-                         * connection, so no synchronisation is required here.
-                         */
-                        @Override
-                        public CompletionStage<?> onBinary(WebSocket ws, ByteBuffer data, boolean last) {
-                            // Drain the ByteBuffer into the accumulator
-                            byte[] chunk = new byte[data.remaining()];
-                            data.get(chunk);
-                            try {
-                                msgAccum.write(chunk);
-                            } catch (Exception e) {
-                                DWClientMod.LOGGER.warn("[WS] msgAccum write error: {}", e.getMessage());
-                            }
+                @Override
+                public CompletionStage<?> onText(WebSocket ws, CharSequence data, boolean last) {
+                    DWClientMod.LOGGER.debug("[WS] JSON: {}", data);
+                    ws.request(1);
+                    return null;
+                }
 
-                            if (last) {
-                                // Wrap accumulated bytes and hand off to the action parser
-                                ByteBuffer complete = ByteBuffer.wrap(msgAccum.toByteArray());
-                                msgAccum.reset(); // ready for next message
+                @Override
+                public CompletionStage<?> onBinary(WebSocket ws, ByteBuffer data, boolean last) {
+                    byte[] chunk = new byte[data.remaining()];
+                    data.get(chunk);
+                    try { msgAccum.write(chunk); } catch (Exception ignored) {}
+                    if (last) {
+                        ByteBuffer complete = ByteBuffer.wrap(msgAccum.toByteArray());
+                        msgAccum.reset();
+                        // Peek at frame type to dispatch correctly
+                        if (complete.remaining() >= 8) {
+                            int peekMagic = complete.getInt();
+                            int peekType  = complete.getInt();
+                            complete.rewind();
+                            if (peekMagic == MAGIC && peekType == FRAME_CHAT) {
+                                handleChatFrame(complete);
+                            } else {
                                 handleActionFrame(complete);
                             }
-
-                            ws.request(1);
-                            return null;
                         }
+                    }
+                    ws.request(1);
+                    return null;
+                }
 
-                        @Override
-                        public CompletionStage<?> onClose(WebSocket ws, int statusCode, String reason) {
-                            DWClientMod.LOGGER.warn("[WS] Closed: {} {}", statusCode, reason);
-                            connected.set(false);
-                            scheduleReconnect();
-                            return null;
-                        }
+                @Override
+                public CompletionStage<?> onClose(WebSocket ws, int statusCode, String reason) {
+                    DWClientMod.LOGGER.warn("[WS] Closed: {} {}", statusCode, reason);
+                    connected.set(false);
+                    connecting.set(false);
+                    scheduleReconnect(url, port);
+                    return null;
+                }
 
-                        @Override
-                        public void onError(WebSocket ws, Throwable error) {
-                            DWClientMod.LOGGER.error("[WS] Error", error);
-                            connected.set(false);
-                            scheduleReconnect();
-                        }
-                    });
+                @Override
+                public void onError(WebSocket ws, Throwable error) {
+                    DWClientMod.LOGGER.error("[WS] Error: {}", error.getMessage());
+                    connected.set(false);
+                    connecting.set(false);
+                    scheduleReconnect(url, port);
+                }
+            })
+            .exceptionally(ex -> {
+                DWClientMod.LOGGER.error("[WS] Connect failed: {}", ex.getMessage());
+                connected.set(false);
+                connecting.set(false);
+                scheduleReconnect(url, port);
+                return null;
+            });
 
-            webSocket = wsFuture.join();
-
-        } catch (Exception e) {
-            DWClientMod.LOGGER.error("[WS] Failed to initialize", e);
-        }
+        DWClientMod.LOGGER.info("[WS] Connection initiated (non-blocking) — game will not freeze");
     }
 
     // -------------------------------------------------------------------------
@@ -173,59 +191,88 @@ public class WebSocketManager {
     // -------------------------------------------------------------------------
 
     private static void sendHandshake(WebSocket ws) {
-        String handshake = String.format(
-                "{\"agent_id\":\"%s\",\"protocol\":\"binary\",\"version\":\"2.1.0\"}",
-                agentId
-        );
-        ws.sendText(handshake, true);
+        String msg = String.format(
+            "{\"agent_id\":\"%s\",\"protocol\":\"binary\",\"version\":\"2.1.0\"}",
+            agentId);
+        ws.sendText(msg, true);
     }
 
     // -------------------------------------------------------------------------
-    // Perception loop (client → Python, 20 FPS)
+    // Perception loop (FIX F2 + F3)
     // -------------------------------------------------------------------------
 
     private static void startPerceptionLoop() {
-        if (executor != null && !executor.isShutdown()) return;
+        if (perceptionExecutor != null && !perceptionExecutor.isShutdown()) return;
 
-        executor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "DW-Perception-Loop");
+        perceptionExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "DW-Perception-Scheduler");
             t.setDaemon(true);
             return t;
         });
 
-        // 50 ms period = 20 FPS
-        executor.scheduleAtFixedRate(() -> {
-            if (connected.get() && webSocket != null) {
-                Minecraft.getInstance().execute(WebSocketManager::sendPerceptionFrame);
-            }
-        }, 100, 50, TimeUnit.MILLISECONDS);
+        // Schedule the CAPTURE trigger at 20 FPS on the scheduler thread.
+        // The scheduler posts pixel-grab to the main thread, then hands off
+        // encoding + sending to the encode executor.
+        perceptionExecutor.scheduleAtFixedRate(() -> {
+            if (!connected.get() || webSocket == null) return;
+            // Step 1: grab pixels on Minecraft main thread (GPU readback must be there)
+            Minecraft.getInstance().execute(WebSocketManager::captureAndScheduleEncode);
+        }, 200, 50, TimeUnit.MILLISECONDS);
+
+        DWClientMod.LOGGER.info("[WS] Perception loop started (20 FPS)");
     }
 
-    private static void sendPerceptionFrame() {
+    /**
+     * FIX F2: Runs on Minecraft main thread — only pixel readback here.
+     * Hands everything CPU-heavy to encodeExecutor immediately.
+     */
+    private static void captureAndScheduleEncode() {
         try {
             Minecraft mc = Minecraft.getInstance();
             if (mc.player == null || mc.level == null) return;
+            if (!connected.get() || webSocket == null) return;
 
-            byte[] imageData = VisionCaptureSystem.captureScreenAsJPEG();
-            if (imageData == null) return;
+            // Grab game state — cheap
+            final float  health = mc.player.getHealth();
+            final float  hunger = mc.player.getFoodData().getFoodLevel();
+            final double x      = mc.player.getX();
+            final double y      = mc.player.getY();
+            final double z      = mc.player.getZ();
+            final float  yaw    = mc.player.getYRot();
+            final float  pitch  = mc.player.getXRot();
 
-            byte[] audioData = AudioCaptureSystem.captureAudioFrame();
+            // Grab raw pixels on main thread (MUST be here for GPU readback).
+            // VisionCaptureSystem.grabPixels() returns the raw int[] pixel data
+            // without doing any CPU-heavy encoding.
+            final int[] pixels  = VisionCaptureSystem.grabPixels();
+            final int   imgW    = VisionCaptureSystem.getWidth();
+            final int   imgH    = VisionCaptureSystem.getHeight();
+            if (pixels == null) return;
 
-            float  health = mc.player.getHealth();
-            float  hunger = mc.player.getFoodData().getFoodLevel();
-            double x      = mc.player.getX();
-            double y      = mc.player.getY();
-            double z      = mc.player.getZ();
-            float  yaw    = mc.player.getYRot();
-            float  pitch  = mc.player.getXRot();
+            // Audio capture — fine on main thread, just reads from a buffer
+            final byte[] audioData = AudioCaptureSystem.captureAudioFrame();
 
-            ByteBuffer buffer = buildPerceptionFrame(
-                    imageData, audioData, health, hunger, x, y, z, yaw, pitch);
+            // FIX F2+F3: hand off JPEG encoding + WS send to encode executor
+            encodeExecutor.submit(() -> {
+                try {
+                    byte[] imageData = VisionCaptureSystem.encodePixelsToJPEG(pixels, imgW, imgH);
+                    if (imageData == null) return;
 
-            webSocket.sendBinary(buffer, true);
+                    ByteBuffer frame = buildPerceptionFrame(
+                        imageData, audioData != null ? audioData : new byte[0],
+                        health, hunger, x, y, z, yaw, pitch, imgW, imgH);
+
+                    WebSocket ws = webSocket;
+                    if (ws != null && connected.get()) {
+                        ws.sendBinary(frame, true);
+                    }
+                } catch (Exception e) {
+                    DWClientMod.LOGGER.error("[WS] Encode/send error: {}", e.getMessage());
+                }
+            });
 
         } catch (Exception e) {
-            DWClientMod.LOGGER.error("[WS] Failed to send perception frame", e);
+            DWClientMod.LOGGER.error("[WS] captureAndScheduleEncode error: {}", e.getMessage());
         }
     }
 
@@ -233,176 +280,157 @@ public class WebSocketManager {
             byte[] imageData, byte[] audioData,
             float health, float hunger,
             double x, double y, double z,
-            float yaw, float pitch) {
+            float yaw, float pitch,
+            int imgW, int imgH) {
 
-        byte[] agentIdBytes = agentId.getBytes(StandardCharsets.UTF_8);
-
-        // Audio section (always present, even when silent):
-        //   [4]  audio data length (0 = silent)
-        //   [N]  raw PCM bytes
-        //   [4]  sample rate
-        //   [1]  channels
-        //   [1]  bits per sample
+        byte[] idBytes = agentId.getBytes(StandardCharsets.UTF_8);
         int audioSection = 4 + audioData.length + 4 + 1 + 1;
+        int total = 4 + 4
+                  + 4 + idBytes.length
+                  + 8
+                  + 4 + imageData.length
+                  + 2 + 2
+                  + 4 + 4
+                  + 4 + 4 + 4
+                  + 4 + 4
+                  + 2
+                  + audioSection;
 
-        int totalSize = 4                          // MAGIC
-                + 4                                // frame type
-                + 4 + agentIdBytes.length          // agent ID
-                + 8                                // timestamp (double)
-                + 4 + imageData.length             // JPEG
-                + 2 + 2                            // width + height (shorts)
-                + 4 + 4                            // health, hunger
-                + 4 + 4 + 4                        // x, y, z
-                + 4 + 4                            // yaw, pitch
-                + 2                                // entity count
-                + audioSection;
-
-        ByteBuffer buf = ByteBuffer.allocate(totalSize);
-
+        ByteBuffer buf = ByteBuffer.allocate(total);
         buf.putInt(MAGIC);
         buf.putInt(FRAME_PERCEPTION);
-
-        buf.putInt(agentIdBytes.length);
-        buf.put(agentIdBytes);
-
+        buf.putInt(idBytes.length); buf.put(idBytes);
         buf.putDouble(System.currentTimeMillis() / 1000.0);
-
-        buf.putInt(imageData.length);
-        buf.put(imageData);
-        buf.putShort((short) VisionCaptureSystem.getWidth());
-        buf.putShort((short) VisionCaptureSystem.getHeight());
-
-        buf.putFloat(health);
-        buf.putFloat(hunger);
-        buf.putFloat((float) x);
-        buf.putFloat((float) y);
-        buf.putFloat((float) z);
-        buf.putFloat(yaw);
-        buf.putFloat(pitch);
-
+        buf.putInt(imageData.length); buf.put(imageData);
+        buf.putShort((short) imgW); buf.putShort((short) imgH);
+        buf.putFloat(health); buf.putFloat(hunger);
+        buf.putFloat((float) x); buf.putFloat((float) y); buf.putFloat((float) z);
+        buf.putFloat(yaw); buf.putFloat(pitch);
         buf.putShort((short) 0); // entity count
-
         buf.putInt(audioData.length);
         if (audioData.length > 0) buf.put(audioData);
         buf.putInt(AudioCaptureSystem.getSampleRate());
         buf.put((byte) AudioCaptureSystem.getChannels());
         buf.put((byte) AudioCaptureSystem.getBitsPerSample());
-
         buf.flip();
         return buf;
     }
 
     // -------------------------------------------------------------------------
-    // Inbound: ActionFrame (Python → client)
+    // Inbound: ChatFrame (Python → Minecraft, agent speaks in-world)
     // -------------------------------------------------------------------------
 
     /**
-     * Parse a complete binary ActionFrame and apply it on the Minecraft main thread.
+     * Parse a FRAME_CHAT (0x03) from the Python backend and send it as
+     * in-game chat via the Minecraft client.
      *
-     * Wire layout (must match BinaryProtocol.pack_action in communication_protocol.py):
+     * Wire layout (matches BinaryProtocol.pack_chat() in communication_protocol.py):
      *   [4]  MAGIC  0x44574149
-     *   [4]  type   0x02
+     *   [4]  type   0x03
      *   [4]  agent-ID length
      *   [N]  agent-ID UTF-8
-     *   [8]  timestamp (double)
-     *   [4]  move_forward  float
-     *   [4]  move_strafe   float
-     *   [4]  yaw_delta     float
-     *   [4]  pitch_delta   float
-     *   [1]  action_flags  uint8
-     *   [1]  hotbar_slot   uint8  (0xFF = no change)
-     *   [2]  ability_len   uint16 (0 = no ability this frame)
-     *   [N]  ability name  UTF-8  (present when len > 0)
-     *   [4]  param1  float  (present when len > 0)
-     *   [4]  param2  float
-     *   [4]  param3  float
-     *
-     * FIX Bug C2 — god ability section now fully consumed and dispatched.
-     * Previously the parser stopped at hotbarSlot; the ability bytes piled up
-     * and were discarded with the buffer.  Now ability name + params are read
-     * and forwarded to GodEntityManager.executeGodAbility() so client-side
-     * effects (particles, cooldown tracking) fire correctly.
+     *   [8]  timestamp (double, ignored)
+     *   [4]  message length
+     *   [N]  message UTF-8
      */
-    private static void handleActionFrame(ByteBuffer buf) {
+    private static void handleChatFrame(ByteBuffer buf) {
         try {
-            // ── Header ────────────────────────────────────────────────────────
             if (buf.remaining() < 8) return;
             int magic = buf.getInt();
-            if (magic != MAGIC) {
-                DWClientMod.LOGGER.warn("[WS] Bad magic: 0x{}", Integer.toHexString(magic));
-                return;
-            }
-            int frameType = buf.getInt();
-            if (frameType != FRAME_ACTION) {
-                DWClientMod.LOGGER.debug("[WS] Non-action frame: {}", frameType);
-                return;
-            }
+            if (magic != MAGIC) return;
+            int type = buf.getInt();
+            if (type != FRAME_CHAT) return;
 
-            // ── Agent ID (skip — single-agent process) ────────────────────────
+            // Skip agent ID
             int aidLen = buf.getInt();
-            if (aidLen > 0 && buf.remaining() >= aidLen) {
+            if (aidLen > 0 && buf.remaining() >= aidLen)
                 buf.position(buf.position() + aidLen);
-            }
 
-            // ── Timestamp (skip) ──────────────────────────────────────────────
-            buf.getDouble();
+            // Skip timestamp
+            if (buf.remaining() >= 8) buf.getDouble();
 
-            // ── Movement ─────────────────────────────────────────────────────
-            final float moveForward = buf.getFloat();
-            final float moveStrafe  = buf.getFloat();
-            final float yawDelta    = buf.getFloat();
-            final float pitchDelta  = buf.getFloat();
+            // Read message
+            if (buf.remaining() < 4) return;
+            int msgLen = buf.getInt();
+            if (msgLen <= 0 || buf.remaining() < msgLen) return;
+            byte[] msgBytes = new byte[msgLen];
+            buf.get(msgBytes);
+            final String message = new String(msgBytes, StandardCharsets.UTF_8);
 
-            // ── Flags + hotbar ────────────────────────────────────────────────
-            final byte actionFlags = buf.get();
-            final int  hotbar;
-            {
-                int raw = buf.get() & 0xFF;
-                hotbar  = (raw == 0xFF) ? -1 : raw;
-            }
-
-            // ── God ability section (FIX Bug C2) ──────────────────────────────
-            // Previously this entire section was ignored, dropping all god ability
-            // commands from the Python backend.
-            String godAbility = null;
-            float  param1 = 0f, param2 = 0f, param3 = 0f;
-
-            if (buf.remaining() >= 2) {
-                int abilityLen = buf.getShort() & 0xFFFF;
-                if (abilityLen > 0 && buf.remaining() >= abilityLen) {
-                    byte[] abBytes = new byte[abilityLen];
-                    buf.get(abBytes);
-                    godAbility = new String(abBytes, StandardCharsets.UTF_8);
-
-                    if (buf.remaining() >= 12) {
-                        param1 = buf.getFloat();
-                        param2 = buf.getFloat();
-                        param3 = buf.getFloat();
-                    }
-                }
-            }
-
-            // ── Dispatch on main thread ───────────────────────────────────────
-            final String  fAbility = godAbility;
-            final float   fP1 = param1, fP2 = param2, fP3 = param3;
-
+            // Send on Minecraft main thread
             Minecraft.getInstance().execute(() -> {
-                // 1. Movement + boolean inputs
-                ActionExecutor.executeAction(
-                        moveForward, moveStrafe,
-                        yawDelta,    pitchDelta,
-                        actionFlags, hotbar);
-
-                // 2. God ability (FIX Bug C2: was never dispatched before)
-                if (fAbility != null && !fAbility.isEmpty()) {
-                    GodEntityManager.executeGodAbility(fAbility, fP1, fP2, fP3);
-                    DWClientMod.LOGGER.debug("[WS] God ability dispatched: {} ({},{},{})",
-                            fAbility, fP1, fP2, fP3);
+                net.minecraft.client.multiplayer.ClientPacketListener conn =
+                    Minecraft.getInstance().getConnection();
+                if (conn != null && !message.isEmpty()) {
+                    // Trim to Minecraft chat limit (256 chars)
+                    String trimmed = message.length() > 256
+                        ? message.substring(0, 256) : message;
+                    conn.sendChat(trimmed);
+                    DWClientMod.LOGGER.info("[WS] Agent spoke: {}", trimmed);
                 }
             });
 
         } catch (Exception e) {
-            DWClientMod.LOGGER.error("[WS] handleActionFrame failed", e);
+            DWClientMod.LOGGER.error("[WS] handleChatFrame error: {}", e.getMessage());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Inbound: ActionFrame
+    // -------------------------------------------------------------------------
+
+    private static void handleActionFrame(ByteBuffer buf) {
+        try {
+            if (buf.remaining() < 8) return;
+            int magic = buf.getInt();
+            if (magic != MAGIC) {
+                DWClientMod.LOGGER.warn("[WS] Bad magic 0x{}", Integer.toHexString(magic));
+                return;
+            }
+            if (buf.getInt() != FRAME_ACTION) return;
+
+            int aidLen = buf.getInt();
+            if (aidLen > 0 && buf.remaining() >= aidLen)
+                buf.position(buf.position() + aidLen);
+
+            buf.getDouble(); // timestamp
+
+            final float moveForward = buf.getFloat();
+            final float moveStrafe  = buf.getFloat();
+            final float yawDelta    = buf.getFloat();
+            final float pitchDelta  = buf.getFloat();
+            final byte  actionFlags = buf.get();
+            final int   rawHotbar   = buf.get() & 0xFF;
+            final int   hotbar      = (rawHotbar == 0xFF) ? -1 : rawHotbar;
+
+            String godAbility = null;
+            float  p1 = 0f, p2 = 0f, p3 = 0f;
+            if (buf.remaining() >= 2) {
+                int alen = buf.getShort() & 0xFFFF;
+                if (alen > 0 && buf.remaining() >= alen) {
+                    byte[] ab = new byte[alen];
+                    buf.get(ab);
+                    godAbility = new String(ab, StandardCharsets.UTF_8);
+                    if (buf.remaining() >= 12) {
+                        p1 = buf.getFloat(); p2 = buf.getFloat(); p3 = buf.getFloat();
+                    }
+                }
+            }
+
+            final String fa = godAbility;
+            final float fp1 = p1, fp2 = p2, fp3 = p3;
+            final int   fHotbar = hotbar;
+
+            Minecraft.getInstance().execute(() -> {
+                ActionExecutor.executeAction(
+                    moveForward, moveStrafe, yawDelta, pitchDelta, actionFlags, fHotbar);
+                if (fa != null && !fa.isEmpty()) {
+                    GodEntityManager.executeGodAbility(fa, fp1, fp2, fp3);
+                }
+            });
+
+        } catch (Exception e) {
+            DWClientMod.LOGGER.error("[WS] handleActionFrame error: {}", e.getMessage());
         }
     }
 
@@ -410,33 +438,25 @@ public class WebSocketManager {
     // Reconnect
     // -------------------------------------------------------------------------
 
-    private static void scheduleReconnect() {
-        if (executor != null && !executor.isShutdown()) {
-            executor.schedule(() -> {
-                DWClientMod.LOGGER.info("[WS] Reconnecting...");
-                initialize(DWClientMod.getBackendUrl(), DWClientMod.getBackendPort(), agentId);
-            }, 5, TimeUnit.SECONDS);
+    private static void scheduleReconnect(String url, int port) {
+        if (perceptionExecutor != null && !perceptionExecutor.isShutdown()) {
+            perceptionExecutor.schedule(() ->
+                initialize(url, port, agentId), 5, TimeUnit.SECONDS);
         }
     }
 
     // -------------------------------------------------------------------------
-    // Chat observation (client → Python, JSON)
+    // Chat
     // -------------------------------------------------------------------------
 
-    /**
-     * Forward a proximity-chat message to the Python backend so the agent
-     * can hear what was said near it.  Called by ClientChatEventHandler.
-     *
-     * JSON: {"type":"chat_heard","agent_id":"<id>","speaker":"<n>","message":"<text>","timestamp":<ms>}
-     */
     public static void sendChatObservation(String speaker, String message) {
         if (!connected.get() || webSocket == null) return;
-        String safeMsg     = message.replace("\\", "\\\\").replace("\"", "\\\"");
-        String safeSpeaker = speaker.replace("\\", "\\\\").replace("\"", "\\\"");
+        String s = message.replace("\\", "\\\\").replace("\"", "\\\"");
+        String sp = speaker.replace("\\", "\\\\").replace("\"", "\\\"");
         String json = String.format(
-                "{\"type\":\"chat_heard\",\"agent_id\":\"%s\"," +
-                "\"speaker\":\"%s\",\"message\":\"%s\",\"timestamp\":%d}",
-                agentId, safeSpeaker, safeMsg, System.currentTimeMillis());
+            "{\"type\":\"chat_heard\",\"agent_id\":\"%s\","
+          + "\"speaker\":\"%s\",\"message\":\"%s\",\"timestamp\":%d}",
+            agentId, sp, s, System.currentTimeMillis());
         webSocket.sendText(json, true);
     }
 
@@ -446,12 +466,16 @@ public class WebSocketManager {
 
     public static void shutdown() {
         connected.set(false);
-        if (executor != null) executor.shutdown();
-        if (webSocket != null) webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "Shutting down");
+        connecting.set(false);
+        if (perceptionExecutor != null) perceptionExecutor.shutdown();
+        // Do NOT call encodeExecutor.shutdown() — it is static final and cannot
+        // be restarted.  Shutting it down here means captureAndScheduleEncode()
+        // throws RejectedExecutionException on the next login.  It is a daemon
+        // thread and will die naturally with the JVM / game process.
+        WebSocket ws = webSocket;
+        if (ws != null) ws.sendClose(WebSocket.NORMAL_CLOSURE, "Shutting down");
         VisionCaptureSystem.cleanup();
     }
 
-    public static boolean isConnected() {
-        return connected.get();
-    }
+    public static boolean isConnected() { return connected.get(); }
 }

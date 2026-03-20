@@ -17,8 +17,12 @@ Design notes
 ------------
 - Each agent's UltimMC copy lives at npc_applications/<agent_id>/UltimMC/
 - JVM args (-Ddw.agent.id, -Ddw.backend.url, -Ddw.backend.port, -Ddw.server)
-  are injected via the INST_JAVA environment variable that UltimMC forwards
-  to Java.  Property names match DWClientMod.loadConfiguration() exactly.
+  are injected via the instance.cfg JvmArgs field that UltimMC reads before
+  launching Java.  Property names match DWClientMod.loadConfiguration() exactly.
+  NOTE: INST_JAVA is the Java *executable path* in UltimMC/MultiMC — it is
+  NOT a JVM args variable.  Using it for -D flags means UltimMC tries to run
+  "-Xmx2048M..." as the Java binary, fails silently, and launches system Java
+  with none of the -D properties, causing the mod to fall back to port 11400.
 - headless=True wraps the command with xvfb-run -a (requires Xvfb).
 - _find_ultimmc() uses the same multi-location search as packager.py so
   both code paths find UltimMC regardless of installation style.
@@ -35,7 +39,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from py_backend.config import Config
-from py_backend.utils.mc_uuid import get_minecraft_uuid
+from py_backend.utils.mc_uuid import get_minecraft_uuid, AgentNameManager
 
 log = logging.getLogger("minecraft_launcher")
 log.setLevel(logging.INFO)
@@ -365,14 +369,16 @@ class UltimMCLauncher:
         instance_dir = self.ultimmc_dir / "instances" / instance_name
         instance_dir.mkdir(parents=True, exist_ok=True)
 
-        # instance.cfg
+        # instance.cfg — base config without JvmArgs.
+        # JvmArgs are written by _update_instance_cfg() at launch time
+        # because ports (dw.tcp.port, dw.backend.port) are only known then.
         (instance_dir / "instance.cfg").write_text(
             f"InstanceType=OneSix\n"
             f"name={instance_name}\n"
             f"iconKey=default\n"
             f"notes=Divine World Agent Instance\n"
             f"OverrideJavaArgs=true\n"
-            f"OverrideMemory=true\n"
+            f"JvmArgs=\n"            f"OverrideMemory=true\n"
             f"MaxMemAlloc=2048\n"
             f"MinMemAlloc=512\n"
             f"ShowConsole=false\n"
@@ -408,6 +414,67 @@ class UltimMCLauncher:
 
         log.info(f"✅ Instance created: {instance_name}")
         return True
+
+    def _update_instance_cfg(self, instance_name: str,
+                              jvm_props: list,
+                              memory_mb: int = 2048) -> bool:
+        """
+        Rewrite instance.cfg with the correct JvmArgs and memory settings
+        for this specific launch.  Called by launch_instance() right before
+        starting UltimMC so every agent gets its own -D property values.
+
+        UltimMC/MultiMC instance.cfg key reference:
+          OverrideJavaArgs=true  — enable custom JVM args for this instance
+          JvmArgs=<args>         — space-separated additional JVM args
+          OverrideMemory=true    — enable custom memory settings
+          MaxMemAlloc=<MB>       — -Xmx equivalent
+          MinMemAlloc=<MB>       — -Xms equivalent
+        """
+        if not self.ultimmc_dir:
+            return False
+
+        instance_dir = self.ultimmc_dir / "instances" / instance_name
+        cfg_path     = instance_dir / "instance.cfg"
+
+        if not instance_dir.exists():
+            log.warning(f"_update_instance_cfg: instance dir not found: {instance_dir}")
+            return False
+
+        # Read current cfg to preserve any keys we don't own
+        current_lines = []
+        if cfg_path.exists():
+            try:
+                current_lines = cfg_path.read_text(encoding="utf-8").splitlines()
+            except Exception:
+                pass
+
+        # Keys we manage — strip existing versions, then re-add below
+        managed = {"OverrideJavaArgs", "JvmArgs", "OverrideMemory",
+                   "MaxMemAlloc", "MinMemAlloc"}
+        filtered = [l for l in current_lines
+                    if l.split("=")[0].strip() not in managed]
+
+        jvm_args_str = " ".join(jvm_props)
+        new_keys = [
+            "OverrideJavaArgs=true",
+            f"JvmArgs={jvm_args_str}",
+            "OverrideMemory=true",
+            f"MaxMemAlloc={memory_mb}",
+            f"MinMemAlloc={memory_mb}",
+        ]
+
+        cfg_text = "\n".join(filtered + new_keys) + "\n"
+        try:
+            cfg_path.write_text(cfg_text, encoding="utf-8")
+            log.info(
+                f"[InstanceCfg] {instance_name}: "
+                f"JvmArgs={jvm_args_str!r}  "
+                f"mem={memory_mb}MB"
+            )
+            return True
+        except Exception as e:
+            log.error(f"_update_instance_cfg write failed: {e}")
+            return False
 
     def install_mods(self, instance_name: str) -> bool:
         """Install DivineWorld + DWClientBot mods into instance."""
@@ -497,12 +564,13 @@ class UltimMCLauncher:
         # so that -d <dir> makes UltimMC find accounts.json at <dir>/bin/accounts.json
         # and instances/ at <dir>/instances/.
         data_dir = exe.parent.parent   # .../UltimMC/bin/UltimMC → .../UltimMC/
+        # Executive live along side accounts.json and the -d flag of UltimMC should point to the bin containing the accounts.json and the UltimMC executable.
         cmd += [
             str(exe),
-            "-d", str(data_dir / "bin"), # Executive live along side accounts.json and the -d flag of UltimMC should point to the bin containing the accounts.json and the UltimMC executable.
+            "-d", str(data_dir / "bin"),
             "--alive",
-            "-l", 1.20.1, #launches the 1.20.1 instance of minecraft in UltimMC if other version of instance is to be use it should be created then specified here 
-        ]
+            "-l", "1.20.1" ,
+        ] #launches the 1.20.1 instance of minecraft in UltimMC if other version of instance is to be use it should be created then specified here
 
         if server_addr:
             cmd += ["-s", server_addr]
@@ -540,13 +608,43 @@ class UltimMCLauncher:
                 ws_port = 11400
             jvm.append(f"-Ddw.backend.url={ws_host}")
             jvm.append(f"-Ddw.backend.port={ws_port}")
+        # Inject the agent's dedicated TCP action-server port.
+        # Look up the display name (offline_name) in agents.json to find
+        # the port assigned to this agent (format: {"Name": port, ...}).
+        # Falls back to ws_port when the name is not registered yet.
+        _display = offline_name or agent_id
+        if _display:
+            try:
+                _tcp_port = AgentNameManager().get_port_for_name(_display)
+                if _tcp_port:
+                    jvm.append(f"-Ddw.tcp.port={_tcp_port}")
+                    log.info(f"[TCPPort] {_display!r} → port {_tcp_port} (from agents.json)")
+                else:
+                    log.warning(
+                        f"[TCPPort] '{_display}' not found in agents.json — "
+                        f"TCPServer will use default port 11401"
+                    )
+            except Exception as _e:
+                log.warning(f"[TCPPort] agents.json lookup failed: {_e}")
         if server_addr:
             jvm.append(f"-Ddw.server={server_addr}")
         if extra_jvm_args:
             jvm.extend(extra_jvm_args)
 
-        env              = os.environ.copy()
-        env["INST_JAVA"] = " ".join(jvm)
+        # Write JVM properties into instance.cfg so UltimMC passes them
+        # to the JVM correctly.  INST_JAVA is the Java *executable path*
+        # in UltimMC — putting -D flags there silently breaks arg delivery.
+        if self.ultimmc_dir:
+            self._update_instance_cfg(
+                instance_name=instance_name,
+                jvm_props=[a for a in jvm if a.startswith("-D")],
+                memory_mb=memory_mb,
+            )
+
+        env = os.environ.copy()
+        # Do NOT set INST_JAVA to JVM args — it is the Java executable path.
+        # Unset it so UltimMC uses its own configured Java.
+        env.pop("INST_JAVA", None)
 
         log.info(
             f"Launching UltimMC: instance={instance_name} "

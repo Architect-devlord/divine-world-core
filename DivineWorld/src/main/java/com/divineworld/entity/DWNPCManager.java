@@ -60,26 +60,40 @@ public class DWNPCManager {
      * ProximityChatHandler intercepts it and delivers it to everyone within
      * PROXIMITY_RADIUS — no separate chat-bubble packet needed.
      */
+    /**
+     * Make an agent send a chat message, delivered only to players within
+     * ProximityChatHandler.PROXIMITY_RADIUS blocks.
+     *
+     * FIX S-04: The original code called broadcastSystemMessage() which
+     * sent to every player on the server.  Chat should be proximity-scoped
+     * to match how players hear it in ProximityChatHandler.
+     */
     public static void sendAgentChat(ServerLevel world, String agentId, String message) {
         if (message == null || message.isEmpty()) return;
 
-        for (ServerPlayer player : world.players()) {
-            if (isAIPlayer(player) && agentId.equals(TaggedEntitySystem.getAIID(player))) {
+        for (ServerPlayer speaker : world.players()) {
+            if (!isAIPlayer(speaker)) continue;
+            if (!agentId.equals(TaggedEntitySystem.getAIID(speaker))) continue;
 
-                int cooldown = cooldowns.getOrDefault(player.getUUID(), 0);
-                if (cooldown > 0) return;
-                cooldowns.put(player.getUUID(), 20); // 1-second rate limit
+            int cooldown = cooldowns.getOrDefault(speaker.getUUID(), 0);
+            if (cooldown > 0) return;
+            cooldowns.put(speaker.getUUID(), 20); // 1-second rate limit
 
-                // Simulate the agent speaking — ProximityChatHandler handles delivery
-                // and notifies god agents via HTTP automatically.
-                player.getServer().getPlayerList().broadcastSystemMessage(
-                        Component.literal("<" + player.getName().getString() + "> " + message),
-                        false
-                );
+            Component msg = Component.literal("<" + speaker.getName().getString() + "> " + message);
 
-                DWMod.LOGGER.debug("[AgentChat] {}: {}", agentId, message);
-                return;
+            // Deliver only to players within proximity radius (matches ProximityChatHandler)
+            double radius = com.divineworld.events.ProximityChatHandler.PROXIMITY_RADIUS;
+            for (ServerPlayer recipient : world.players()) {
+                double dx = speaker.getX() - recipient.getX();
+                double dy = speaker.getY() - recipient.getY();
+                double dz = speaker.getZ() - recipient.getZ();
+                if (dx * dx + dy * dy + dz * dz <= radius * radius) {
+                    recipient.sendSystemMessage(msg);
+                }
             }
+
+            DWMod.LOGGER.debug("[AgentChat] {}: {}", agentId, message);
+            return;
         }
         DWMod.LOGGER.warn("Agent not found for chat: {}", agentId);
     }

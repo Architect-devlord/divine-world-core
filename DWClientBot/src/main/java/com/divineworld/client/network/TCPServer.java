@@ -13,14 +13,43 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * TCP Server for receiving actions from Python agent.
- * Primary low-latency communication channel.
+ * TCP Server for receiving actions from the Python agent.
+ * Primary low-latency action channel (Python → Java).
+ *
+ * Wire format sent by ForgeIPCClient.send_action() in actuators.py:
+ *   [4]   agentId length  (big-endian int)
+ *   [N]   agentId         (UTF-8)
+ *   [8]   tick            (big-endian long, ms timestamp)
+ *   [4]   move_forward    (big-endian float)
+ *   [4]   move_strafe     (big-endian float)
+ *   [4]   yaw_delta       (big-endian float)
+ *   [4]   pitch_delta     (big-endian float)
+ *   [1]   action_flags    (uint8, packed bits — see ActionExecutor.java)
+ *   [1]   hotbar_slot     (uint8, 0xFF = no change)
+ *   [2]   ability_len     (big-endian uint16, 0 = no ability)
+ *   [N]   ability name    (UTF-8, present when ability_len > 0)
+ *   [4]   param1          (float, present when ability_len > 0)
+ *   [4]   param2          (float)
+ *   [4]   param3          (float)
+ *
+ * FIX: old handleActionFrame() read 7 individual boolean bytes.
+ *   Python ForgeIPCClient.send_action() packs ONE flags byte + ONE hotbar byte,
+ *   not 7 individual bytes. Reading 7 bytes consumed data from the next frame,
+ *   corrupting the stream and silently dropping all actions.
+ *   Fixed to read 1 flags byte + 1 hotbar byte, matching the Python sender.
+ *
+ * Port resolution:
+ *   The port passed to start(port) comes from ClientEventHandler.onPlayerJoinedWorld()
+ *   which has already resolved it from agents.json via DWClientMod.getTcpPort().
+ *   cachedPort stores the resolved port so getPort() returns it without logging.
  */
 public class TCPServer {
-    private static ServerSocket serverSocket;
-    private static Socket clientSocket;
-    private static DataInputStream input;
-    private static boolean running = false;
+
+    private static ServerSocket     serverSocket;
+    private static Socket           clientSocket;
+    private static DataInputStream  input;
+    private static boolean          running    = false;
+    private static volatile int     cachedPort = 0;
 
     private static final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "DW-TCP-Server");
@@ -28,108 +57,137 @@ public class TCPServer {
         return t;
     });
 
+    // -------------------------------------------------------------------------
+    // Start / Stop
+    // -------------------------------------------------------------------------
+
+    /**
+     * Start the TCP server on the given port.
+     * Port is resolved by ClientEventHandler from agents.json before calling here.
+     */
     public static void start(int port) {
         if (running) {
-            DWClientMod.LOGGER.warn("TCP Server already running");
+            DWClientMod.LOGGER.warn("[TCPServer] Already running on port {}", cachedPort);
             return;
         }
-
+        cachedPort = port;
+        DWClientMod.LOGGER.info("[TCPServer] Starting on port {} (agent: {})",
+                port, DWClientMod.getAgentId());
         executor.execute(() -> runServer(port));
     }
 
     private static void runServer(int port) {
         running = true;
-
         try {
             serverSocket = new ServerSocket(port);
-            DWClientMod.LOGGER.info("TCP Server listening on port {}", port);
+            DWClientMod.LOGGER.info("[TCPServer] Listening on port {}", port);
 
             while (running) {
                 try {
-                    // Accept connection from Python agent
-                    DWClientMod.LOGGER.info("Waiting for agent connection...");
+                    DWClientMod.LOGGER.info("[TCPServer] Waiting for agent connection...");
                     clientSocket = serverSocket.accept();
                     clientSocket.setTcpNoDelay(true);
-
                     input = new DataInputStream(clientSocket.getInputStream());
-
-                    DWClientMod.LOGGER.info("Agent connected via TCP: {}",
+                    DWClientMod.LOGGER.info("[TCPServer] Agent connected: {}",
                             clientSocket.getRemoteSocketAddress());
 
-                    // Handle action frames
-                    while (clientSocket.isConnected()) {
-                        handleActionFrame();
+                    // FIX B-10: isConnected() stays true after the remote end closes;
+                    // use !isClosed() instead and break on IOException.
+                    while (!clientSocket.isClosed()) {
+                        try {
+                            handleActionFrame();
+                        } catch (IOException e) {
+                            if (running) {
+                                DWClientMod.LOGGER.warn("[TCPServer] Client disconnected: {}", e.getMessage());
+                            }
+                            try { clientSocket.close(); } catch (IOException ignored) {}
+                            break; // exit inner loop; outer loop waits for next accept()
+                        }
                     }
-
                 } catch (IOException e) {
                     if (running) {
-                        DWClientMod.LOGGER.warn("Client disconnected: {}", e.getMessage());
+                        DWClientMod.LOGGER.warn("[TCPServer] Accept error: {}", e.getMessage());
                     }
                 }
             }
-
         } catch (IOException e) {
-            DWClientMod.LOGGER.error("TCP Server error: {}", e.getMessage());
+            DWClientMod.LOGGER.error("[TCPServer] Server error on port {}: {}", port, e.getMessage());
         } finally {
             cleanup();
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Frame parsing — must match ForgeIPCClient.send_action() exactly
+    // -------------------------------------------------------------------------
+
     private static void handleActionFrame() throws IOException {
-        // Read frame matching ForgeIPCClient.send_action() format:
-        // struct.pack("!I{len}sQffffBBBBBBB", ...)
-
-        // Agent ID length (4 bytes, big-endian int)
+        // ── Agent ID ──────────────────────────────────────────────────────────
         int agentIdLen = input.readInt();
-
-        // Agent ID (variable length string)
         byte[] agentIdBytes = new byte[agentIdLen];
         input.readFully(agentIdBytes);
-        String agentId = new String(agentIdBytes, StandardCharsets.UTF_8);
+        // agentId available for debug: new String(agentIdBytes, StandardCharsets.UTF_8)
 
-        // Tick (8 bytes, big-endian long)
-        long tick = input.readLong();
+        // ── Tick (skip) ───────────────────────────────────────────────────────
+        input.readLong();
 
-        // Movement (4 floats, big-endian)
+        // ── Movement ─────────────────────────────────────────────────────────
         final float moveForward = input.readFloat();
-        final float moveStrafe = input.readFloat();
-        final float yawDelta = input.readFloat();
-        final float pitchDelta = input.readFloat();
+        final float moveStrafe  = input.readFloat();
+        final float yawDelta    = input.readFloat();
+        final float pitchDelta  = input.readFloat();
 
-        // Boolean actions (7 bytes)
-        byte jump = input.readByte();
-        byte sneak = input.readByte();
-        byte attack = input.readByte();
-        byte use = input.readByte();
-        byte drop = input.readByte();
-        byte openInv = input.readByte();
-        byte swapHand = input.readByte();
+        // ── Flags byte (FIX: 1 packed byte, NOT 7 individual bytes) ──────────
+        // Python: struct.pack('!B', flags)   — one byte, bits packed MSB→LSB:
+        //   bit7=jump, bit6=sneak, bit5=attack, bit4=use,
+        //   bit3=drop, bit2=open_inv, bit1=swap_hand, bit0=sprint
+        final byte actionFlags = input.readByte();
 
-        // Pack into action flags for ActionExecutor
-        byte flags = 0;
-        if (jump != 0) flags |= (byte) 0b10000000;
-        if (sneak != 0) flags |= (byte) 0b01000000;
-        if (attack != 0) flags |= (byte) 0b00100000;
-        if (use != 0) flags |= (byte) 0b00010000;
-        if (drop != 0) flags |= (byte) 0b00001000;
-        if (openInv != 0) flags |= (byte) 0b00000100;
-        if (swapHand != 0) flags |= (byte) 0b00000010;
+        // ── Hotbar slot (FIX: new field, was missing) ─────────────────────────
+        // Python: struct.pack('!B', hotbar_byte)  — 0xFF means no change
+        final int rawHotbar  = input.readByte() & 0xFF;
+        final int hotbarSlot = (rawHotbar == 0xFF) ? -1 : rawHotbar;
 
-        // Make final for lambda
-        final byte actionFlags = flags;
+        // ── God ability section ───────────────────────────────────────────────
+        // Python: struct.pack('!H', len) + name_bytes + struct.pack('!fff', p1,p2,p3)
+        //         or struct.pack('!H', 0) when no ability
+        String godAbility = null;
+        float  p1 = 0f, p2 = 0f, p3 = 0f;
+        int abilityLen = input.readShort() & 0xFFFF;
+        if (abilityLen > 0) {
+            byte[] abBytes = new byte[abilityLen];
+            input.readFully(abBytes);
+            godAbility = new String(abBytes, StandardCharsets.UTF_8);
+            p1 = input.readFloat();
+            p2 = input.readFloat();
+            p3 = input.readFloat();
+        }
 
-        // Execute on main thread
+        final String fAbility = godAbility;
+        final float  fP1 = p1, fP2 = p2, fP3 = p3;
+
+        // ── Dispatch on main thread ───────────────────────────────────────────
         Minecraft.getInstance().execute(() -> {
             ActionExecutor.executeAction(
-                    moveForward,
-                    moveStrafe,
-                    yawDelta,
-                    pitchDelta,
-                    actionFlags,
-                    -1  // No hotbar slot in TCP protocol
-            );
+                moveForward, moveStrafe,
+                yawDelta,    pitchDelta,
+                actionFlags, hotbarSlot);
+
+            if (fAbility != null && !fAbility.isEmpty()) {
+                try {
+                    com.divineworld.client.entity.GodEntityManager
+                        .executeGodAbility(fAbility, fP1, fP2, fP3);
+                } catch (Exception e) {
+                    DWClientMod.LOGGER.debug("[TCPServer] God ability dispatch error: {}",
+                            e.getMessage());
+                }
+            }
         });
     }
+
+    // -------------------------------------------------------------------------
+    // Lifecycle
+    // -------------------------------------------------------------------------
 
     public static void stop() {
         running = false;
@@ -138,16 +196,22 @@ public class TCPServer {
     }
 
     private static void cleanup() {
-        try {
-            if (input != null) input.close();
-            if (clientSocket != null) clientSocket.close();
-            if (serverSocket != null) serverSocket.close();
-        } catch (IOException e) {
-            // Ignore cleanup errors
-        }
+        try { if (input        != null) input.close();        } catch (IOException ignored) {}
+        try { if (clientSocket != null) clientSocket.close(); } catch (IOException ignored) {}
+        try { if (serverSocket != null) serverSocket.close(); } catch (IOException ignored) {}
     }
 
     public static boolean isConnected() {
-        return clientSocket != null && clientSocket.isConnected();
+        return clientSocket != null
+            && clientSocket.isConnected()
+            && !clientSocket.isClosed();
+    }
+
+    /**
+     * The port this server is (or will be) listening on.
+     * Returns cachedPort after start() is called — no warning spam.
+     */
+    public static int getPort() {
+        return cachedPort > 0 ? cachedPort : 0;
     }
 }

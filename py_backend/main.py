@@ -308,10 +308,7 @@ class AgentProcessManager:
 
     def _generate_agent_uuid(self, agent_id: str, agent_type: str = "npc",
                               custom_name: Optional[str] = None) -> str:
-        if custom_name and custom_name != "Unnamed":
-            username = custom_name
-        else:
-            username = f"DW_{agent_id}"
+        username = name_manager.resolve_display_name(agent_id, custom_name)
         return get_minecraft_uuid(username)
 
     # ------------------------------------------------------------------
@@ -338,17 +335,14 @@ class AgentProcessManager:
             exe_path = (
                 Path(Config.NPC_APPLICATIONS_DIR)
                 / agent_id
-                / f"DW_{agent_id}"
+                / agent_id   # no DW_ prefix — matches packager.py exe_name
             )
 
             if exe_path.exists():
                 cmd = [str(exe_path)]
             else:
                 # Resolve display name → username → UUID
-                if custom_name and custom_name != "Unnamed":
-                    username = custom_name
-                else:
-                    username = f"DW_{agent_id}"
+                username = name_manager.resolve_display_name(agent_id, custom_name)
 
                 agent_uuid = self._generate_agent_uuid(
                     agent_id, agent_type, custom_name
@@ -365,10 +359,42 @@ class AgentProcessManager:
                 #   brain.pcap written → package → setup_agent → launch_agent
                 # All of that happens inside _auto_package_agent.
 
-                backend_port = (
-                    Config.BASE_BACKEND_PORT + abs(hash(agent_id)) % 9000
-                )
-                brain_save  = str(Config.get_agent_brain_path(agent_id))
+                # ── Port resolution ───────────────────────────────────────
+                # TCP port  : agents.json lookup by display name (starts 11401).
+                #             Injected into Java as -Ddw.tcp.port by launcher.
+                # WS port   : tcp_port + WS_BACKEND_PORT_OFFSET (default 10000).
+                #             Gives WebSocket ports starting at 21401, well clear
+                #             of the TCP range and of Config.BASE_BACKEND_PORT.
+                # Both ports are stable across restarts and guaranteed unique as
+                # long as agents.json assigns each name a unique TCP port.
+                WS_BACKEND_PORT_OFFSET = 10000
+                _display_name = custom_name or username
+                tcp_port = name_manager.get_port_for_name(_display_name)
+                if tcp_port:
+                    backend_port = tcp_port + WS_BACKEND_PORT_OFFSET
+                    log.info(
+                        f"[PortAlloc] {_display_name!r} -> "
+                        f"TCP {tcp_port} / WS {backend_port} (from agents.json)"
+                    )
+                else:
+                    # Name not yet in agents.json (freshly spawned agent).
+                    # Register it now so it gets a stable port every restart.
+                    _gender = (
+                        agent_type[len("god_"):] if agent_type.startswith("god_")
+                        else ("female" if _display_name.lower() in {
+                            "eve", "alice", "diana", "emily", "fiona",
+                            "grace", "hannah", "iris", "julia", "kate",
+                        } else "male")
+                    )
+                    _cat = "GODs" if agent_type.startswith("god_") else "NPCs"
+                    tcp_port = name_manager.add_name(_cat, _gender, _display_name) or Config.BASE_BACKEND_PORT
+                    backend_port = tcp_port + WS_BACKEND_PORT_OFFSET
+                    log.warning(
+                        f"[PortAlloc] {_display_name!r} was not in agents.json -- "
+                        f"registered now -> TCP {tcp_port} / WS {backend_port}"
+                    )
+
+                brain_save   = str(Config.get_agent_brain_path(agent_id))
                 agent_script = Path(__file__).parent / "ai_core" / "agent.py"
 
                 cmd = [
@@ -376,6 +402,7 @@ class AgentProcessManager:
                     "--agent-id",        agent_id,
                     "--mode",            mode,
                     "--port",            str(backend_port),
+                    "--tcp-port",        str(tcp_port),
                     "--log-level",       "INFO",
                     "--brain-save-path", brain_save,
                 ]
@@ -393,7 +420,8 @@ class AgentProcessManager:
             )
             process = subprocess.Popen(
                 cmd, env=env,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # merge stderr→stdout; prevents 64KB pipe blockage
                 text=True, bufsize=1,
             )
 
@@ -403,6 +431,7 @@ class AgentProcessManager:
                 "mode":        mode,
                 "pid":         process.pid,
                 "backend_port": locals().get("backend_port", 0),
+                "tcp_port":     locals().get("tcp_port", 0),
                 "started_at":  asyncio.get_event_loop().time(),
                 "brain_path":  load_brain,
                 "status":      "running",
@@ -573,13 +602,19 @@ class AgentProcessManager:
             if agent_id in self.minecraft_processes:
                 try:
                     self.minecraft_processes[agent_id].terminate()
-                    self.minecraft_processes[agent_id].wait(timeout=5)
+                    self.minecraft_processes[agent_id].wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     self.minecraft_processes[agent_id].kill()
+                    self.minecraft_processes[agent_id].wait()
                 del self.minecraft_processes[agent_id]
             proc = self.agent_processes[agent_id]
             proc.terminate()
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=30)   # brain save (90MB torch.save) takes up to 30s
+            except subprocess.TimeoutExpired:
+                log.warning(f"Agent {agent_id} did not stop in 30s — force killing")
+                proc.kill()
+                proc.wait()
             log.info(f"Stopped agent {agent_id}")
             return True
         except Exception as e:

@@ -94,6 +94,7 @@ public class AICreaking extends BaseGodEntity {
         } else {
             isUnderground = false;
             setNoGravity(false);
+            this.noPhysics = false;  // FIX B-09: must reset here — handleUndergroundMovement sets it true every tick
             currentMode = MovementMode.NORMAL;
         }
     }

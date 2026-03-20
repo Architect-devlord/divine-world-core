@@ -4,63 +4,215 @@ package com.divineworld.events;
 import com.divineworld.DWMod;
 import com.divineworld.entity.DWNPCManager;
 import com.divineworld.integration.PythonBackendClient;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.Entity;
-import net.minecraftforge.event.entity.living.BabyEntitySpawnEvent;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
 /**
- * UNIFIED Breeding Handler - Detects when AI agents breed
- * FIXED: Only ONE handler, no duplicates
- * SERVER-SIDE ONLY - No client references
+ * Breeding Event Handler — proximity + adjacent-bed detection.
+ *
+ * Why BabyEntitySpawnEvent was wrong
+ * -----------------------------------
+ * BabyEntitySpawnEvent fires only for Animal subclasses (Cow, Pig, etc.).
+ * AI agents are ServerPlayer instances, not Animals, so it NEVER fires for
+ * them.  The breeding system was entirely non-functional.
+ *
+ * Correct detection  (matches Python breeding_system.check_can_breed())
+ * -----------------------------------------------------------------------
+ * On every BREED_CHECK_INTERVAL tick we scan all male/female NPC pairs in
+ * each ServerLevel.  A pair triggers when:
+ *   1. Both are NPC agents (not gods)
+ *   2. One is male, the other female  (from dw_gender NBT)
+ *   3. Within PROXIMITY_RADIUS blocks of each other
+ *   4. At least two bed blocks exist within BED_SEARCH_RADIUS of their midpoint
+ *      (Python's breeding_system requires beds_adjacent=true for NPCs)
+ *   5. Not suppressed by the Java-side per-pair cooldown
+ *
+ * Python checks all remaining conditions (pregnancy, cooldown, gender compat)
+ * via /api/breeding/event → breeding_system.check_can_breed().
+ *
+ * Flow:
+ *   ServerTickEvent → checkBreedingInLevel()
+ *     → PythonBackendClient.notifyBreeding()  (fire-and-forget HTTP)
+ *       → /api/breeding/event
+ *         → breeding_system.initiate_breeding()
+ *           → pregnancy → child agent packaged and launched by Python
  */
 @Mod.EventBusSubscriber(modid = DWMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class BreedingEventHandler {
 
+    // ── Configuration ──────────────────────────────────────────────────────
+
+    /** Max 3D distance between agents for breeding to trigger. */
+    private static final double PROXIMITY_RADIUS    = 4.0;
+
+    /** Radius around the pair midpoint within which two beds must exist. */
+    private static final double BED_SEARCH_RADIUS   = 5.0;
+
+    /** Check interval in server ticks (20 ticks/s → check once per second). */
+    private static final int    BREED_CHECK_INTERVAL = 20;
+
+    /**
+     * After notifying Python, suppress re-notification for this pair for
+     * this many ticks to avoid flooding before Python processes the event.
+     * 240 ticks = 12 seconds.
+     */
+    private static final int    JAVA_COOLDOWN_TICKS  = 240;
+
+    // ── State ───────────────────────────────────────────────────────────────
+
+    private static int ticksSinceLastCheck = 0;
+
+    /** Pair key → ticks remaining until pair may be re-notified. */
+    private static final Map<String, Integer> PAIR_COOLDOWNS = new HashMap<>();
+
+    // ── Tick handler ────────────────────────────────────────────────────────
+
     @SubscribeEvent
-    public static void onBabySpawn(BabyEntitySpawnEvent event) {
-        // Get parents
-        Entity parentA = event.getParentA();
-        Entity parentB = event.getParentB();
+    public static void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
 
-        // Validate both are ServerPlayer (AI agents join as ServerPlayer)
-        if (!(parentA instanceof ServerPlayer) || !(parentB instanceof ServerPlayer)) {
-            return; // Not AI agents
+        // Tick down all cooldowns every server tick
+        PAIR_COOLDOWNS.replaceAll((k, v) -> Math.max(0, v - 1));
+        PAIR_COOLDOWNS.entrySet().removeIf(e -> e.getValue() == 0);
+
+        if (++ticksSinceLastCheck < BREED_CHECK_INTERVAL) return;
+        ticksSinceLastCheck = 0;
+
+        if (event.getServer() == null) return;
+        for (ServerLevel level : event.getServer().getAllLevels()) {
+            checkBreedingInLevel(level);
+        }
+    }
+
+    // ── Level scan ───────────────────────────────────────────────────────────
+
+    private static void checkBreedingInLevel(ServerLevel level) {
+        List<ServerPlayer> aiPlayers = DWNPCManager.getAIPlayers(level);
+        if (aiPlayers.size() < 2) return;
+
+        for (int i = 0; i < aiPlayers.size(); i++) {
+            ServerPlayer a = aiPlayers.get(i);
+            if (DWNPCManager.isGodPlayer(a)) continue;
+
+            String genderA = a.getPersistentData().getString("dw_gender");
+            if (!"male".equals(genderA) && !"female".equals(genderA)) continue;
+
+            for (int j = i + 1; j < aiPlayers.size(); j++) {
+                ServerPlayer b = aiPlayers.get(j);
+                if (DWNPCManager.isGodPlayer(b)) continue;
+
+                String genderB = b.getPersistentData().getString("dw_gender");
+                if (!"male".equals(genderB) && !"female".equals(genderB)) continue;
+
+                // Require one male and one female
+                if (genderA.equals(genderB)) continue;
+
+                ServerPlayer male   = "male".equals(genderA) ? a : b;
+                ServerPlayer female = "female".equals(genderA) ? a : b;
+
+                String idMale   = DWNPCManager.getAgentId(male);
+                String idFemale = DWNPCManager.getAgentId(female);
+                if (idMale == null || idFemale == null) continue;
+
+                // Java-side cooldown: stop flooding Python with the same pair
+                String pairKey = pairKey(male.getUUID(), female.getUUID());
+                if (PAIR_COOLDOWNS.getOrDefault(pairKey, 0) > 0) continue;
+
+                // Proximity check
+                double distSq = male.distanceToSqr(female);
+                if (distSq > PROXIMITY_RADIUS * PROXIMITY_RADIUS) continue;
+
+                // Adjacent beds check
+                if (!hasTwoBedsNearby(level, male.blockPosition(), female.blockPosition())) {
+                    continue;
+                }
+
+                // All spatial conditions met
+                PythonBackendClient.notifyBreeding(idMale, idFemale, "npc", "npc");
+                PAIR_COOLDOWNS.put(pairKey, JAVA_COOLDOWN_TICKS);
+
+                DWMod.LOGGER.info(
+                    "Breeding conditions met: {} (male) x {} (female) dist={:.1f}m, beds present",
+                    idMale, idFemale, Math.sqrt(distSq));
+            }
+        }
+    }
+
+    // ── Bed detection ─────────────────────────────────────────────────────────
+
+    /**
+     * True when at least two distinct bed blocks are within BED_SEARCH_RADIUS
+     * of the midpoint between posA and posB.
+     * Uses the "minecraft:beds" block tag — matches all colours and mod beds.
+     */
+    private static boolean hasTwoBedsNearby(ServerLevel level, BlockPos posA, BlockPos posB) {
+        BlockPos mid = new BlockPos(
+            (posA.getX() + posB.getX()) / 2,
+            (posA.getY() + posB.getY()) / 2,
+            (posA.getZ() + posB.getZ()) / 2
+        );
+
+        int r    = (int) Math.ceil(BED_SEARCH_RADIUS);
+        int beds = 0;
+        double rSq = BED_SEARCH_RADIUS * BED_SEARCH_RADIUS;
+
+        outer:
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -r; dy <= r; dy++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (dx * dx + dy * dy + dz * dz > rSq) continue;
+                    BlockState state = level.getBlockState(mid.offset(dx, dy, dz));
+                    if (state.is(BlockTags.BEDS)) {
+                        if (++beds >= 2) break outer;
+                    }
+                }
+            }
         }
 
-        ServerPlayer playerA = (ServerPlayer) parentA;
-        ServerPlayer playerB = (ServerPlayer) parentB;
+        return beds >= 2;
+    }
 
-        // Check if both are AI-controlled
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Canonical pair key: lower UUID first so (A,B) and (B,A) share the
+     * same cooldown entry.
+     */
+    private static String pairKey(UUID a, UUID b) {
+        return a.compareTo(b) <= 0 ? a + ":" + b : b + ":" + a;
+    }
+
+    /**
+     * Directly trigger a breeding notification for two specific agents.
+     * Use this from commands or when the Python backend requests it via a
+     * WebSocket/HTTP signal rather than waiting for proximity detection.
+     */
+    public static void triggerDirectBreeding(ServerPlayer playerA, ServerPlayer playerB) {
         if (!DWNPCManager.isAIPlayer(playerA) || !DWNPCManager.isAIPlayer(playerB)) {
-            return; // At least one is not an AI agent
-        }
-
-        // Get agent IDs
-        String parentAId = DWNPCManager.getAgentId(playerA);
-        String parentBId = DWNPCManager.getAgentId(playerB);
-
-        if (parentAId == null || parentBId == null) {
-            DWMod.LOGGER.warn("Breeding detected but missing agent IDs: {} x {}",
-                    playerA.getName().getString(), playerB.getName().getString());
+            DWMod.LOGGER.warn("[Breeding] triggerDirectBreeding: not both AI agents");
             return;
         }
+        String idA   = DWNPCManager.getAgentId(playerA);
+        String idB   = DWNPCManager.getAgentId(playerB);
+        if (idA == null || idB == null) return;
 
-        // Determine agent types
         String typeA = DWNPCManager.isGodPlayer(playerA) ? "god" : "npc";
         String typeB = DWNPCManager.isGodPlayer(playerB) ? "god" : "npc";
 
-        // Notify Python backend
-        PythonBackendClient.notifyBreeding(
-                parentAId, parentBId,
-                typeA, typeB
-        );
+        PythonBackendClient.notifyBreeding(idA, idB, typeA, typeB);
+        PAIR_COOLDOWNS.put(pairKey(playerA.getUUID(), playerB.getUUID()), JAVA_COOLDOWN_TICKS);
 
-        DWMod.LOGGER.info("✅ AI breeding detected: {} ({}) x {} ({})",
-                parentAId, typeA, parentBId, typeB);
-
-        // Cancel vanilla baby spawn - Python will spawn packaged agent
-        event.setCanceled(true);
+        DWMod.LOGGER.info("Direct breeding triggered: {} x {}", idA, idB);
     }
 }

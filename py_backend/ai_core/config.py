@@ -139,7 +139,7 @@ class Config:
         'ai_core.actuators',               # action execution
         'ai_core.reward_system',           # reward / intrinsic motivation
         'ai_core.vision',                  # visual perception
-        'ai_core.audio_processor',         # audio perception
+        'ai_core.audio_processors',         # audio perception
         'ai_core.god_controls',            # god-tier abilities (no-op for NPCs)
         'ai_core.web_browser',             # web-browsing tool
         'ai_core.world_model',             # forward model (lazy)

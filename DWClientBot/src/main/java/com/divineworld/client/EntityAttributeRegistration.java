@@ -12,7 +12,7 @@ import net.minecraftforge.fml.common.Mod;
  * Registers attributes for all god entities
  * CRITICAL: Without this, entities will crash with "has no attributes" error
  */
-@Mod.EventBusSubscriber(modid = DWClientMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD)
+@Mod.EventBusSubscriber(modid = DWClientMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public class EntityAttributeRegistration {
 
     @SubscribeEvent

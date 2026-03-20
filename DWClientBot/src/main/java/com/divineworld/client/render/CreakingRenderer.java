@@ -49,8 +49,10 @@ public class CreakingRenderer extends LivingEntityRenderer<AICreaking, CreakingM
 
         poseStack.pushPose();
 
-        // Apply scaling for creaking
-        float scale = entity.getScale(); // Gets 1.2f from AICreaking
+        // Apply scaling for creaking.
+        // Entity.getScale() was added in MC 1.20.4 — does not exist in 1.20.1 (Forge 47.x).
+        // AICreaking always uses 1.2f, so hardcode it here.
+        final float scale = 1.2f;
         poseStack.scale(scale, scale, scale);
 
         super.render(entity, entityYaw, partialTicks, poseStack, buffer, packedLight);

@@ -15,7 +15,7 @@ Integration notes:
     the optimised table schema from unified_memory.py.
 """
 
-import time
+from time import time
 import uuid
 import json
 import logging
@@ -29,8 +29,14 @@ try:
     from cassandra.query import SimpleStatement, BatchStatement, ConsistencyLevel
     from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
     CASSANDRA_AVAILABLE = True
-except Exception:
+except Exception as _e:
     CASSANDRA_AVAILABLE = False
+    import logging as _log
+    _log.getLogger("memory").warning(
+        "Cassandra/ScyllaDB driver not loadable: %s — "
+        "check that the native C extension compiled correctly "
+        "(e.g. libssl, cffi). Running in-memory only.", _e
+    )
     Cluster = None
     SimpleStatement = None
     BatchStatement = None

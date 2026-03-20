@@ -121,16 +121,36 @@ class _TCPConnectionPool:
 # ==============================================================================
 
 class MinecraftClient(BaseActuatorBackend):
+    """
+    Action channel from Python to the Minecraft Java client.
+
+    Architecture
+    ------------
+    Actions travel ONLY via TCP (ForgeIPCClient → Java TCPServer).
+    The WebSocket action path that previously existed here was a self-loop:
+    MinecraftWebSocketClient was connecting to Python's own FastAPI server
+    (ws_port == _backend_port) instead of to Java.  It is removed (B-05).
+
+    The correct WebSocket action path — Python → Java — is handled by
+    AgentConnectionHandler.send_action() inside handle_agent_websocket(),
+    which sends back over the SAME WebSocket connection the Java mod opened.
+    That path is triggered by perception frames arriving from Java and does
+    not require an outbound client here.
+
+    connect_websocket() is kept as a no-op for call-site compatibility.
+    """
+
     def __init__(self, agent_id='agent', tcp_host='127.0.0.1', tcp_port=8765,
                  ws_host='127.0.0.1', ws_port=11400, prefer_tcp=True):
         self.agent_id   = agent_id
         self.prefer_tcp = prefer_tcp
-        self._tcp_pool  = _TCPConnectionPool.get(tcp_host, tcp_port) if prefer_tcp else None
-        self._ws_client = MinecraftWebSocketClient(agent_id, ws_host, ws_port)
-        self._ws_loop   = _WebSocketEventLoop.get()
+        self._tcp_pool  = _TCPConnectionPool.get(tcp_host, tcp_port)
+        # ws_host / ws_port accepted for API compatibility but NOT used —
+        # see class docstring above.
 
     def connect_websocket(self):
-        self._ws_loop.submit_and_wait(self._ws_client.connect())
+        """No-op: outbound WS to Java is not used (see class docstring)."""
+        pass
 
     async def wait_for_connection(self, timeout=60.0, poll_interval=1.0):
         import asyncio as _asyncio, time as _time
@@ -139,14 +159,9 @@ class MinecraftClient(BaseActuatorBackend):
         elapsed  = 0.0
         log.info("[%s] Waiting for Minecraft connection (timeout=%ss)...", self.agent_id, timeout)
         while _time.monotonic() < deadline:
-            if self.prefer_tcp and self._tcp_pool and self._tcp_pool.is_connected():
+            if self._tcp_pool and self._tcp_pool.is_connected():
                 log.info("[%s] ✅ Minecraft connected via TCP (%.1fs)", self.agent_id, elapsed)
                 return True
-            if self._ws_client.is_connected():
-                log.info("[%s] ✅ Minecraft connected via WebSocket (%.1fs)", self.agent_id, elapsed)
-                return True
-            if not self._ws_client.is_reconnecting():
-                self._ws_loop.submit(self._ws_client.connect())
             await _asyncio.sleep(poll_interval)
             elapsed = _time.monotonic() - (deadline - timeout)
             if _time.monotonic() - last_log >= 10.0:
@@ -156,34 +171,25 @@ class MinecraftClient(BaseActuatorBackend):
         return False
 
     def apply_action(self, action: Dict[str, Any]) -> bool:
-        if self.prefer_tcp and self._tcp_pool and self._tcp_pool.is_connected():
+        # TCP is the sole outbound action channel.  WS actions from Python to
+        # Java travel through AgentConnectionHandler.send_action() inside
+        # handle_agent_websocket() — not from here (see class docstring).
+        if self._tcp_pool and self._tcp_pool.is_connected():
             if self._tcp_pool.send(action, self.agent_id):
                 return True
-            log.debug("[%s] TCP send failed, falling back to WebSocket", self.agent_id)
-        if self._ws_client.is_connected():
-            future = self._ws_loop.submit(self._ws_client.send_action(action))
-            try:
-                future.result(timeout=1.0)
-                return True
-            except Exception as e:
-                log.error("[%s] WebSocket send failed: %s", self.agent_id, e)
-        else:
-            if not self._ws_client.is_reconnecting():
-                self._ws_loop.submit(self._ws_client.connect())
+            log.debug("[%s] TCP send failed", self.agent_id)
         return False
 
     def get_observation(self):
         return None
 
     def get_active_mode(self):
-        if self.prefer_tcp and self._tcp_pool and self._tcp_pool.is_connected():
+        if self._tcp_pool and self._tcp_pool.is_connected():
             return 'tcp'
-        if self._ws_client.is_connected():
-            return 'websocket'
         return None
 
     def close(self):
-        self._ws_loop.submit_and_wait(self._ws_client.close())
+        pass  # TCP pool is a singleton — don't close here
 
 
 class ForgeIPCClient:

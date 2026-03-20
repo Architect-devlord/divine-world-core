@@ -482,14 +482,16 @@ class UltimMCAgentSpawner(AgentSpawner):
             if gender is None:
                 gender = assign_npc_gender()
 
-            minecraft_name = f"DW_{agent_id}"
+            # Resolve display name from agents.json — no DW_ prefix
+            from py_backend.utils.mc_uuid import AgentNameManager as _ANM
+            minecraft_name = _ANM().resolve_display_name(agent_id)
             agent_uuid     = get_minecraft_uuid(minecraft_name)
 
             # Setup UltimMC instance for this agent
             ok = self._multi.setup_agent(
                 agent_id=agent_id, server_addr=server_addr,
                 custom_uuid=agent_uuid, agent_type='npc',
-                custom_name=None,
+                custom_name=minecraft_name,
                 source_launcher=self._ultimmc,
             )
             if not ok:
@@ -546,8 +548,9 @@ class UltimMCAgentSpawner(AgentSpawner):
             traits = custom_traits or cfg['persona_traits']
             gender = assign_god_gender()
 
-            # ── unified naming: DW_{agent_id} for gods and NPCs alike ──
-            minecraft_name = f"DW_{agent_id}"
+            # Resolve display name from agents.json — no DW_ prefix
+            from py_backend.utils.mc_uuid import AgentNameManager as _ANM
+            minecraft_name = _ANM().resolve_display_name(agent_id)
             agent_uuid     = get_minecraft_uuid(minecraft_name)
 
             ok = self._multi.setup_agent(

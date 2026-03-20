@@ -173,12 +173,9 @@ class AgentPackager:
         agent_dir.mkdir(parents=True, exist_ok=True)
 
         # Derive a clean Minecraft username
-        if agent_name and agent_name not in ("Unnamed", ""):
-            minecraft_name = agent_name
-        elif agent_type.startswith("god_"):
-            minecraft_name = f"DW_{agent_type.replace('god_','').upper()}_{agent_id}"
-        else:
-            minecraft_name = f"DW_{agent_id}"
+        # Resolve Minecraft display name from agents.json — no DW_ / DWGOD_ prefix
+        from py_backend.utils.mc_uuid import AgentNameManager as _ANM
+        minecraft_name = _ANM().resolve_display_name(agent_id, agent_name)
 
         agent_uuid = get_minecraft_uuid(minecraft_name)
 
@@ -422,8 +419,8 @@ else:
         print("  This means you are on a machine without the project source.")
         print()
         print("  Use the standalone executable instead:")
-        print(f"    ./DW_{agent_id}      (Linux/macOS)")
-        print(f"    DW_{agent_id}.exe   (Windows)")
+        print(f"    ./{agent_id}          (Linux/macOS)")
+        print(f"    {agent_id}.exe        (Windows)")
         print()
         print("  The exe requires no Python and runs anywhere.")
         print("=" * 60)
@@ -657,7 +654,7 @@ if __name__ == "__main__":
         copies everything to the final package folder.
         """
         log.info(f"🔨 Building executable for {agent_id}…")
-        exe_name = f"DW_{agent_id}"
+        exe_name = agent_id   # no DW_ prefix — matches main.py exe_path lookup
 
         cwd  = Path.cwd()
         root = cwd.parent if cwd.name == "py_backend" else cwd
@@ -739,7 +736,8 @@ if __name__ == "__main__":
         log.info("Running PyInstaller… (this may take 30–60 s)")
         try:
             subprocess.run(args, check=True, capture_output=True,
-                           text=True, timeout=3000)
+                           text=True, timeout=3000,
+                           start_new_session=True)   # isolate from parent SIGINT
         except subprocess.CalledProcessError as e:
             log.error(f"PyInstaller failed:\n{e.stdout}\n{e.stderr}")
             raise
@@ -867,7 +865,7 @@ No Python installation required on the target machine.
         pkg_dir = self.output_dir / agent_id
         if not pkg_dir.exists():
             return None
-        exe_name = f"DW_{agent_id}.exe" if sys.platform == "win32" else f"DW_{agent_id}"
+        exe_name = f"{agent_id}.exe" if sys.platform == "win32" else f"{agent_id}"  # no DW_ prefix
         return {
             "agent_id":    agent_id,
             "package_dir": str(pkg_dir),

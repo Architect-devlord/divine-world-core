@@ -15,12 +15,15 @@ __version__ = "1.0.0"
 # Configuration & Communication (must be first)
 from ai_core.config import Config
 from ai_core.communication_protocol import (
-    PerceptionFrame, 
-    ActionFrame, 
+    PerceptionFrame,
+    ActionFrame,
     compress_frame_to_jpeg,
     decompress_jpeg_to_frame
 )
-from utils import validation
+
+# FIX Bug 3: was `from utils import validation` which resolves to a
+# non-existent top-level `utils` package. The module lives under py_backend.
+from py_backend.utils import validation
 
 # Core agent components (no circular dependencies)
 from ai_core.personality import Personality
@@ -45,24 +48,24 @@ from ai_core.agent import NPCAgent
 __all__ = [
     # Configuration
     "Config",
-    
+
     # Communication
     "PerceptionFrame",
     "ActionFrame",
     "compress_frame_to_jpeg",
     "decompress_jpeg_to_frame",
-    
+
     # Validation
     "validation",
-    
+
     # Core
     "NPCAgent",
-    "Personality", 
+    "Personality",
     "EmotionSystem",
     "Memory",
     "EpisodicMemory",
     "BrainCapsule",
-    
+
     # Perception & Action
     "VisionAdapter",
     "ForgeIPCClient",
@@ -71,6 +74,5 @@ __all__ = [
     "BrainCore",
     "CognitivePlanner",
     "WebBrowser",
-    "WebPage",
-    "AudioProcessor"
+    "AudioProcessor",
 ]

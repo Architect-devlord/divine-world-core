@@ -198,7 +198,7 @@ public class AIWarden extends BaseGodEntity {
             double offsetY = random.nextDouble() * 2;
             double offsetZ = (random.nextDouble() - 0.5) * 2;
 
-            level().addParticle((ParticleOptions) ParticleTypes.SCULK_CHARGE,
+            level().addParticle(ParticleTypes.SCULK_CHARGE_POP,
                     getX() + offsetX,
                     getY() + offsetY,
                     getZ() + offsetZ,
@@ -236,7 +236,7 @@ public class AIWarden extends BaseGodEntity {
             double z = getZ() + Math.sin(angle) * distance;
             double y = getY() + random.nextDouble() * 5;
 
-            level().addParticle((ParticleOptions) ParticleTypes.SCULK_CHARGE,
+            level().addParticle(ParticleTypes.SCULK_CHARGE_POP,
                     x, y, z,
                     0, -0.1, 0);
         }
@@ -282,7 +282,7 @@ public class AIWarden extends BaseGodEntity {
                     // Spawn particles along line
                     for (double d = 0; d < distance; d += 1.0) {
                         Vec3 particlePos = start.add(direction.scale(d));
-                        level().addParticle((ParticleOptions) ParticleTypes.SCULK_CHARGE,
+                        level().addParticle(ParticleTypes.SCULK_CHARGE_POP,
                                 particlePos.x, particlePos.y, particlePos.z,
                                 0, 0, 0);
                     }

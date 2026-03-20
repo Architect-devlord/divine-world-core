@@ -203,7 +203,7 @@ public class ServerGodAbilityExecutor {
                 // Auto-emerge after 5 seconds with an upward burst + area damage
                 DWMod.getInstance().scheduleTask(() -> {
                     player.setInvisible(false);
-                    player.noPhysics = true;
+                    player.noPhysics = false;  // FIX S-03: must be false to restore collision on emerge
                     for (LivingEntity target : nearbyLiving(player, 5)) {
                         target.hurt(level.damageSources().mobAttack(attacker), 20.0f);
                         Vec3 knock = target.position().subtract(player.position()).normalize();

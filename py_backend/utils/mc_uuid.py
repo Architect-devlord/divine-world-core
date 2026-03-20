@@ -12,21 +12,28 @@ Provides:
                                   Used by AgentSpawner to resolve and
                                   persist agent display names.
 
-agents.json format (matches AgentConfigLoader.java):
+agents.json format:
 {
     "NPCs": {
-        "male":   ["Adam", "Abel", ...],
-        "female": ["Eve", "Sarah", ...]
+        "male":   {"Adam": 11401, "Abel": 11402, ...},
+        "female": {"Eve": 11420, "Sarah": 11421, ...}
     },
     "GODs": {
-        "dual": ["Zeus", "Odin", ...]
+        "dual": {
+            "wither":         {"Mortis": 11440, "Necros": 11441, ...},
+            "ender_dragon":   {"Draconis": 11444, ...},
+            ...
+        }
     }
 }
 
+Each name maps to a unique TCP port (starting at PORT_START = 11401) that
+the DWClientMod TCPServer listens on for that specific agent.
+
 Name-assignment rules (enforced by AgentSpawner, not here):
-  - Name given explicitly  → use it, register it in agents.json.
-  - No name, type = npc    → pick random from NPCs[gender] pool.
-  - No name, type = god    → pick random from GODs["dual"] pool.
+  - Name given explicitly  → use it, register in agents.json with next port.
+  - No name, type = npc    → pick random key from NPCs[gender] dict.
+  - No name, type = god    → pick random key from GODs["dual"][god_type] dict.
   - No god_type given      → auto-select from SPAWNABLE_GOD_TYPES.
 """
 
@@ -39,6 +46,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 log = logging.getLogger("mc_uuid")
+
+# ---------------------------------------------------------------------------
+# Port allocation constants
+# ---------------------------------------------------------------------------
+
+PORT_START = 11401   # First port; increments for each new agent registered
 
 
 # ---------------------------------------------------------------------------
@@ -67,23 +80,24 @@ class AgentNameManager:
     """
     Manages the agents.json name registry.
 
-    On first use, if agents.json is not found in ~/Documents or ~/Desktop,
-    it is created there with the built-in DEFAULT_CONTENT name pool.
+    agents.json structure:
+      NPCs.male   → {"Name": port, ...}
+      NPCs.female → {"Name": port, ...}
+      GODs.dual.<god_type> → {"Name": port, ...}
 
-    Thread-safety note: each method does a fresh load + save cycle, so
-    concurrent writes from multiple spawner threads are safe at the OS
-    level (last-write wins on a single JSON file is acceptable for this
-    use-case because spawn events are rare relative to I/O speed).
+    Ports start at PORT_START (11401) and increment globally across all
+    categories/subtypes.  Each registered name has exactly one port.
+
+    On first use, if agents.json is not found, it is created with the
+    built-in DEFAULT name pool (ports pre-assigned from PORT_START).
     """
 
-    # God types available for auto-selection when none is specified.
-    # Matches the five non-wither choices the user specified; wither can
-    # still be spawned explicitly but is excluded from random selection.
     SPAWNABLE_GOD_TYPES: List[str] = [
-        'wither','ender_dragon', 'oracle', 'elder_guardian', 'creaking', 'warden',
+        'wither', 'ender_dragon', 'oracle', 'elder_guardian', 'creaking', 'warden',
     ]
 
-    DEFAULT_CONTENT: Dict[str, Any] = {
+    # Raw name pools — ports are assigned dynamically by _build_default_content()
+    _DEFAULT_NAMES: Dict[str, Any] = {
         "NPCs": {
             "male": [
                 "Adam", "Abel", "Cain", "Noah", "Abraham", "Isaac", "Jacob",
@@ -109,20 +123,56 @@ class AgentNameManager:
         },
     }
 
+    # ------------------------------------------------------------------
+    # Default content builder — assigns ports sequentially
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _build_default_content(cls) -> Dict[str, Any]:
+        """
+        Convert the flat name lists in _DEFAULT_NAMES into {name: port} dicts
+        with ports starting at PORT_START and incrementing globally.
+        """
+        port   = PORT_START
+        result: Dict[str, Any] = {
+            "NPCs": {"male": {}, "female": {}},
+            "GODs": {"dual": {}},
+        }
+
+        for gender in ("male", "female"):
+            for name in cls._DEFAULT_NAMES["NPCs"][gender]:
+                result["NPCs"][gender][name] = port
+                port += 1
+
+        for god_type, names in cls._DEFAULT_NAMES["GODs"]["dual"].items():
+            result["GODs"]["dual"][god_type] = {}
+            for name in names:
+                result["GODs"]["dual"][god_type][name] = port
+                port += 1
+
+        return result
+
+    @classmethod
+    def _default_content(cls) -> Dict[str, Any]:
+        """Return the default content dict (cached after first call)."""
+        if not hasattr(cls, "_cached_default"):
+            cls._cached_default = cls._build_default_content()
+        return cls._cached_default
+
+    # ------------------------------------------------------------------
+    # Init / path discovery
+    # ------------------------------------------------------------------
+
     def __init__(self, config_path: Optional[Path] = None):
         self.config_path = config_path or self._find_config_path()
         self._ensure_config_exists()
         log.info(f"AgentNameManager: {self.config_path}")
 
-    # ------------------------------------------------------------------
-    # Path discovery (mirrors AgentConfigLoader.java search logic)
-    # ------------------------------------------------------------------
-
     def _find_config_path(self) -> Path:
         home = Path.home()
         candidates = [
-            home / "Documents"          / "agents.json",
-            home / "Desktop"            / "agents.json",
+            home / "Documents"              / "agents.json",
+            home / "Desktop"                / "agents.json",
             home / "OneDrive" / "Documents" / "agents.json",
             home / "OneDrive" / "Desktop"   / "agents.json",
         ]
@@ -130,7 +180,6 @@ class AgentNameManager:
             if p.exists():
                 log.info(f"Found agents.json: {p}")
                 return p
-        # Default write location
         return home / "Documents" / "agents.json"
 
     def _ensure_config_exists(self):
@@ -138,7 +187,7 @@ class AgentNameManager:
             try:
                 self.config_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(self.config_path, "w", encoding="utf-8") as f:
-                    json.dump(self.DEFAULT_CONTENT, f, indent=2)
+                    json.dump(self._default_content(), f, indent=2)
                 log.info(f"Created default agents.json: {self.config_path}")
             except Exception as e:
                 log.error(f"Failed to create agents.json: {e}")
@@ -149,15 +198,13 @@ class AgentNameManager:
 
     def load_config(self) -> Dict[str, Any]:
         if not self.config_path.exists():
-            return {k: {sk: list(v) for sk, v in sv.items()}
-                    for k, sv in self.DEFAULT_CONTENT.items()}
+            return self._default_content()
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             log.error(f"Failed to load agents.json: {e}")
-            return {k: {sk: list(v) for sk, v in sv.items()}
-                    for k, sv in self.DEFAULT_CONTENT.items()}
+            return self._default_content()
 
     def save_config(self, config: Dict[str, Any]) -> bool:
         try:
@@ -170,59 +217,158 @@ class AgentNameManager:
             return False
 
     # ------------------------------------------------------------------
+    # Port management
+    # ------------------------------------------------------------------
+
+    def _next_port(self, config: Dict[str, Any]) -> int:
+        """
+        Scan the entire config for the highest port in use and return +1.
+        Minimum is PORT_START.
+        """
+        max_port = PORT_START - 1
+
+        for gender_dict in config.get("NPCs", {}).values():
+            if isinstance(gender_dict, dict):
+                for v in gender_dict.values():
+                    if isinstance(v, int):
+                        max_port = max(max_port, v)
+
+        for type_dict in config.get("GODs", {}).get("dual", {}).values():
+            if isinstance(type_dict, dict):
+                for v in type_dict.values():
+                    if isinstance(v, int):
+                        max_port = max(max_port, v)
+
+        return max_port + 1
+
+    def get_port(self, name: str) -> Optional[int]:
+        """
+        Return the TCP port assigned to *name* anywhere in agents.json.
+        Returns None if the name is not registered.
+        """
+        config = self.load_config()
+
+        for gender_dict in config.get("NPCs", {}).values():
+            if isinstance(gender_dict, dict) and name in gender_dict:
+                return gender_dict[name]
+
+        for type_dict in config.get("GODs", {}).get("dual", {}).values():
+            if isinstance(type_dict, dict) and name in type_dict:
+                return type_dict[name]
+
+        return None
+
+    # get_port_for_name — convenience alias
+    def get_port_for_name(self, name: str) -> Optional[int]:
+        return self.get_port(name)
+
+
+    def resolve_display_name(
+        self,
+        agent_id: str,
+        custom_name: Optional[str] = None,
+    ) -> str:
+        """
+        Resolve the Minecraft display name for an agent.
+        Never adds DW_ / DWGOD_ prefixes — those are gone.
+
+        Priority:
+          1. custom_name  (if set and not empty / 'Unnamed')
+          2. agents.json  — if agent_id itself IS a registered name
+          3. agent_id as-is  (fallback — still no prefix)
+        """
+        if custom_name and custom_name not in ("Unnamed", ""):
+            return custom_name
+        # If the agent_id is itself a registered display name, use it
+        if self.get_port(agent_id) is not None:
+            return agent_id
+        # Plain fallback — still no prefix
+        return agent_id
+
+    def get_all_ports(self) -> Dict[str, int]:
+        """Return a flat {name: port} dict across all categories."""
+        config = self.load_config()
+        result: Dict[str, int] = {}
+        for gender_dict in config.get("NPCs", {}).values():
+            if isinstance(gender_dict, dict):
+                result.update(gender_dict)
+        for type_dict in config.get("GODs", {}).get("dual", {}).values():
+            if isinstance(type_dict, dict):
+                result.update(type_dict)
+        return result
+
+    # ------------------------------------------------------------------
     # Name resolution  (used by AgentSpawner)
     # ------------------------------------------------------------------
 
     def get_random_name(self, category: str, subcategory: str) -> Optional[str]:
         """
-        Pick a random name from agents.json[category][subcategory].
-        For GODs, subcategory is the god_type nested under GODs.dual.{god_type}.
-        Falls back to DEFAULT_CONTENT if the list is empty or missing.
+        Pick a random name (key) from agents.json[category][subcategory].
+        Falls back to DEFAULT_CONTENT if the dict is empty or missing.
         """
         config = self.load_config()
         if category == "GODs":
-            names = config.get("GODs", {}).get("dual", {}).get(subcategory, [])
-            if not names:
-                names = self.DEFAULT_CONTENT.get("GODs", {}).get("dual", {}).get(subcategory, [])
+            names_dict = config.get("GODs", {}).get("dual", {}).get(subcategory, {})
+            if not names_dict:
+                names_dict = self._default_content().get("GODs", {}).get("dual", {}).get(subcategory, {})
         else:
-            names = config.get(category, {}).get(subcategory, [])
-            if not names:
-                names = self.DEFAULT_CONTENT.get(category, {}).get(subcategory, [])
-        return random.choice(names) if names else None
+            names_dict = config.get(category, {}).get(subcategory, {})
+            if not names_dict:
+                names_dict = self._default_content().get(category, {}).get(subcategory, {})
+
+        keys = list(names_dict.keys()) if isinstance(names_dict, dict) else []
+        return random.choice(keys) if keys else None
 
     def get_random_god_type(self) -> str:
-        """
-        Auto-select a god type from SPAWNABLE_GOD_TYPES at random.
-        Called when spawn_god() is invoked without a specific god_type.
-        """
         return random.choice(self.SPAWNABLE_GOD_TYPES)
 
     # ------------------------------------------------------------------
-    # Registration  (called after a name is chosen / given)
+    # Registration
     # ------------------------------------------------------------------
 
-    def add_name(self, category: str, subcategory: str, name: str):
+    def add_name(self, category: str, subcategory: str, name: str) -> int:
         """
-        Register a name in agents.json.
-        For GODs, writes to GODs.dual.{subcategory} (god_type).
-        No-ops silently if name is empty, 'Unnamed', or already present.
+        Register a name in agents.json and return its assigned port.
+        If the name is already registered, returns its existing port.
+        No-ops (returns 0) if name is empty or 'Unnamed'.
         """
         if not name or name == "Unnamed":
-            return
+            return 0
+
         config = self.load_config()
+
         if category == "GODs":
-            config.setdefault("GODs", {}).setdefault("dual", {}).setdefault(subcategory, [])
-            lst = config["GODs"]["dual"][subcategory]
-            if name not in lst:
-                lst.append(name)
-                self.save_config(config)
-                log.info(f"Registered '{name}' → GODs/dual/{subcategory}")
+            config.setdefault("GODs", {}).setdefault("dual", {}).setdefault(subcategory, {})
+            target: dict = config["GODs"]["dual"][subcategory]
         else:
-            config.setdefault(category, {}).setdefault(subcategory, [])
-            if name not in config[category][subcategory]:
-                config[category][subcategory].append(name)
-                self.save_config(config)
-                log.info(f"Registered '{name}' → {category}/{subcategory}")
+            config.setdefault(category, {}).setdefault(subcategory, {})
+            target = config[category][subcategory]
+
+        # Migrate legacy list format if ever encountered
+        if isinstance(target, list):
+            log.warning(f"Migrating legacy list format for {category}/{subcategory}")
+            port_counter = self._next_port(config)
+            migrated = {}
+            for n in target:
+                migrated[n] = port_counter
+                port_counter += 1
+            target = migrated
+            if category == "GODs":
+                config["GODs"]["dual"][subcategory] = target
+            else:
+                config[category][subcategory] = target
+
+        # Return existing port if already registered
+        if name in target:
+            return target[name]
+
+        # Assign next available port
+        port = self._next_port(config)
+        target[name] = port
+        self.save_config(config)
+
+        log.info(f"Registered '{name}' → {category}/{subcategory} on port {port}")
+        return port
 
     # ------------------------------------------------------------------
     # High-level resolvers  (single call from AgentSpawner)
@@ -231,14 +377,8 @@ class AgentNameManager:
     def resolve_npc_name(self, agent_id: str,
                          custom_name: Optional[str] = None,
                          gender: str = "male") -> str:
-        """
-        Return the display name to use for an NPC and register it.
-
-          custom_name given  → register under NPCs/<gender>, return it
-          custom_name absent → pick random from NPCs/<gender>, return it
-        """
         gender = gender if gender in ("male", "female") else "male"
-        name   = (
+        name = (
             custom_name
             if custom_name and custom_name not in ("Unnamed", "")
             else (self.get_random_name("NPCs", gender) or agent_id)
@@ -248,17 +388,7 @@ class AgentNameManager:
 
     def resolve_god_name(self, agent_id: str,
                          custom_name: Optional[str] = None,
-                         god_type:    Optional[str] = None) -> tuple:
-        """
-        Return (display_name, god_type) and register the name.
-
-          god_type absent    → pick random from SPAWNABLE_GOD_TYPES
-          custom_name given  → register under GODs/<god_type>, return it
-          custom_name absent → pick random from GODs/dual, return it
-
-        Returns:
-            (name: str, god_type: str)
-        """
+                         god_type: Optional[str] = None) -> tuple:
         valid_types = self.SPAWNABLE_GOD_TYPES + ["wither"]
         if not god_type or god_type not in valid_types:
             god_type = self.get_random_god_type()
@@ -269,7 +399,7 @@ class AgentNameManager:
             if custom_name and custom_name not in ("Unnamed", "")
             else (
                 self.get_random_name("GODs", god_type)
-                or self.get_random_name("GODs", "oracle")  # fallback god pool
+                or self.get_random_name("GODs", "oracle")
                 or agent_id
             )
         )
@@ -281,9 +411,6 @@ class AgentNameManager:
     # ------------------------------------------------------------------
 
     def register_npc(self, name: str, gender: str) -> bool:
-        """Register an NPC. gender must be 'male' or 'female'."""
-
-        """Register an NPC. gender must be 'male' or 'female'."""
         if gender not in ("male", "female"):
             log.error(f"Invalid gender: {gender!r}")
             return False
@@ -291,7 +418,6 @@ class AgentNameManager:
         return True
 
     def register_god(self, name: str, god_type: str = "oracle") -> bool:
-        """Register a God under GODs.dual.{god_type}."""
         self.add_name("GODs", god_type, name)
         return True
 
@@ -301,9 +427,9 @@ class AgentNameManager:
 
     def unregister_npc(self, name: str, gender: str) -> bool:
         config = self.load_config()
-        lst    = config.get("NPCs", {}).get(gender, [])
-        if name in lst:
-            lst.remove(name)
+        target = config.get("NPCs", {}).get(gender, {})
+        if isinstance(target, dict) and name in target:
+            del target[name]
             return self.save_config(config)
         log.warning(f"NPC '{name}' not in {gender} list")
         return True
@@ -313,9 +439,9 @@ class AgentNameManager:
         dual     = config.get("GODs", {}).get("dual", {})
         subtypes = [god_type] if god_type else list(dual.keys())
         for st in subtypes:
-            lst = dual.get(st, [])
-            if name in lst:
-                lst.remove(name)
+            target = dual.get(st, {})
+            if isinstance(target, dict) and name in target:
+                del target[name]
                 return self.save_config(config)
         log.warning(f"God '{name}' not found under GODs/dual")
         return True
@@ -324,22 +450,26 @@ class AgentNameManager:
     # Read helpers
     # ------------------------------------------------------------------
 
-    def get_all_male_npcs(self)   -> List[str]:
-        return self.load_config().get("NPCs", {}).get("male",  [])
+    def get_all_male_npcs(self) -> List[str]:
+        d = self.load_config().get("NPCs", {}).get("male", {})
+        return list(d.keys()) if isinstance(d, dict) else []
 
     def get_all_female_npcs(self) -> List[str]:
-        return self.load_config().get("NPCs", {}).get("female", [])
+        d = self.load_config().get("NPCs", {}).get("female", {})
+        return list(d.keys()) if isinstance(d, dict) else []
 
-    def get_all_gods(self)        -> List[str]:
+    def get_all_gods(self) -> List[str]:
         dual = self.load_config().get("GODs", {}).get("dual", {})
-        return [name for lst in dual.values() for name in lst]
+        return [name for type_dict in dual.values()
+                if isinstance(type_dict, dict)
+                for name in type_dict.keys()]
 
     def get_stats(self) -> Dict[str, int]:
-        cfg   = self.load_config()
-        male  = len(cfg.get("NPCs", {}).get("male",   []))
-        fem   = len(cfg.get("NPCs", {}).get("female", []))
-        dual  = cfg.get("GODs", {}).get("dual", {})
-        gods  = sum(len(v) for v in dual.values())
+        cfg  = self.load_config()
+        male = len(cfg.get("NPCs", {}).get("male",   {}))
+        fem  = len(cfg.get("NPCs", {}).get("female", {}))
+        dual = cfg.get("GODs", {}).get("dual", {})
+        gods = sum(len(v) for v in dual.values() if isinstance(v, dict))
         return {
             "male_npcs":    male,
             "female_npcs":  fem,

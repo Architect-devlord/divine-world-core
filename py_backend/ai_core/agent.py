@@ -26,6 +26,27 @@ Key changes from previous version
 
 5.  GodBrainExtension   — removed from imports and usage. Gods use the
     same BrainCore; their personality weights make them different.
+
+6.  Port wiring (this revision)
+    ─────────────────────────────
+    NPCAgent now accepts two explicit port params:
+
+      backend_port  (int, default 0)
+        The WebSocket port this agent's FastAPI server is listening on.
+        Passed from main.py via  --port <N>  on the agent subprocess
+        command-line. The Java mod connects TO this port as a WebSocket
+        client at  ws://127.0.0.1:<backend_port>/ws/agent
+
+      tcp_port  (int, default 0)
+        The TCP action-server port this agent's Java TCPServer is
+        listening on (value stored in agents.json for this agent's
+        display name, starting at 11401).
+        Passed from main.py via  --tcp-port <N>.
+        If omitted (legacy / standalone usage), resolved lazily from
+        agents.json by display name, then falls back to PORT_DEFAULT.
+
+    MinecraftClient is constructed with the resolved values so there are
+    no hardcoded port constants anywhere in the runtime.
 """
 
 import asyncio
@@ -51,7 +72,7 @@ from ai_core.brain_core   import BrainCore
 from ai_core.planner      import CognitivePlanner
 from ai_core.memory       import UnifiedMemoryStore
 from ai_core.cognitive_loop import CognitiveLoop
-from ai_core.communication_protocol import handle_agent_websocket
+from ai_core.communication_protocol import handle_agent_websocket, run_tcp_action_loop
 from ai_core.config       import Config
 
 from fastapi import FastAPI, Form, UploadFile, File, WebSocket, WebSocketDisconnect, Query
@@ -65,6 +86,12 @@ if __name__ == "__main__":
         level=logging.INFO,
         format='[%(asctime)s] %(levelname)s - %(name)s - %(message)s'
     )
+
+# ---------------------------------------------------------------------------
+# Port constants — mirror mc_uuid.py so there is a single source of truth
+# ---------------------------------------------------------------------------
+_TCP_PORT_DEFAULT    = 11401   # PORT_START in mc_uuid.py
+_WS_PORT_OFFSET      = 10000   # WS backend = tcp_port + offset  (21401+)
 
 app = FastAPI()
 app.add_middleware(
@@ -154,7 +181,6 @@ async def broadcast_to_clients(message: dict):
 # HTTP endpoints
 # =============================================================================
 
-
 async def broadcast_world_model(data: dict):
     """Broadcast a world_model_update to all connected WebSocket clients."""
     await broadcast_to_clients({
@@ -172,6 +198,8 @@ async def broadcast_activity(activity_type: str, title: str):
         "title":         title,
         "timestamp":     time.time(),
     })
+
+
 @app.get("/status")
 async def get_status():
     return global_agent.get_info() if global_agent else {"error": "Agent not running"}
@@ -243,19 +271,13 @@ async def detect_devices(agent_id: str = "demo"):
     """Enumerate available cameras and microphones."""
     try:
         from py_backend.utils.dw_controller import ControllerRuntime
-        # Temporary instance just for enumeration (no agent required)
-        class _Stub:
-            pass
-        rt = ControllerRuntime.__new__(ControllerRuntime)
-        rt.agent = global_agent
-        cameras    = rt.list_cameras()    if hasattr(rt, 'list_cameras')    else []
-        microphones= rt.list_microphones() if hasattr(rt, 'list_microphones') else []
+        rt          = ControllerRuntime.__new__(ControllerRuntime)
+        rt.agent    = global_agent
+        cameras     = rt.list_cameras()     if hasattr(rt, 'list_cameras')     else []
+        microphones = rt.list_microphones() if hasattr(rt, 'list_microphones') else []
         return {
             "status":  "success",
-            "devices": {
-                "cameras":     cameras,
-                "microphones": microphones,
-            },
+            "devices": {"cameras": cameras, "microphones": microphones},
         }
     except Exception as e:
         log.error(f"detect-devices error: {e}")
@@ -264,22 +286,12 @@ async def detect_devices(agent_id: str = "demo"):
 
 @app.post("/api/controller/activate")
 async def activate_controller(data: Dict[str, Any]):
-    """
-    Activate DWController with the permissions the user granted in the UI.
-    Body: {agent_id, permissions: [str], permissionSettings: {camera,microphone,filesystem,network},
-           devices: {camera: int, microphone: int}}
-    """
     if not global_agent:
         return {"status": "error", "message": "Agent not running"}
-
     ctrl = _get_controller()
     if ctrl is None:
         return {"status": "error", "message": "ControllerRuntime unavailable"}
-
     perm_settings = data.get("permissionSettings", {})
-    devices       = data.get("devices", {})
-
-    # Convert UI permission keys → ControllerRuntime.grant_permissions() format
     granted = [k for k, v in perm_settings.items() if v]
     try:
         ctrl.grant_permissions(granted)
@@ -296,7 +308,6 @@ async def activate_controller(data: Dict[str, Any]):
 
 @app.post("/api/controller/deactivate")
 async def deactivate_controller(agent_id: str = Query(default="demo")):
-    """Stop all controller activity and release hardware."""
     global _controller_runtime
     if _controller_runtime is not None:
         try:
@@ -309,14 +320,11 @@ async def deactivate_controller(agent_id: str = Query(default="demo")):
 
 @app.get("/api/controller/status")
 async def controller_status(agent_id: str = "demo"):
-    """Return current controller state and activity stats."""
     ctrl = _get_controller()
     if ctrl is None:
         return {
-            "active":            False,
-            "camera_active":     False,
-            "microphone_active": False,
-            "permissions":       {},
+            "active": False, "camera_active": False,
+            "microphone_active": False, "permissions": {},
             "stats": {"frames_processed": 0, "audio_chunks_processed": 0,
                       "learning_events": 0, "files_processed": 0},
         }
@@ -368,12 +376,71 @@ async def upload_file(file:     UploadFile = File(...),
 
 
 # =============================================================================
+# Port resolution helper
+# =============================================================================
+
+def _resolve_minecraft_ports(
+    custom_name:  Optional[str],
+    agent_id:     str,
+    tcp_port_hint: int = 0,
+    ws_port_hint:  int = 0,
+) -> tuple:
+    """
+    Return (tcp_port, ws_port) for the MinecraftClient.
+
+    Resolution order for tcp_port:
+      1. Explicit tcp_port_hint  (passed as --tcp-port from main.py)
+      2. agents.json lookup by display name
+      3. Hard-coded default _TCP_PORT_DEFAULT (11401)
+
+    Resolution order for ws_port:
+      1. Explicit ws_port_hint  (passed as --port from main.py)
+      2. tcp_port + _WS_PORT_OFFSET
+    """
+    tcp = tcp_port_hint
+
+    if tcp <= 0:
+        display = custom_name or agent_id
+        try:
+            from py_backend.utils.mc_uuid import AgentNameManager
+            looked_up = AgentNameManager().get_port_for_name(display)
+            if looked_up:
+                tcp = looked_up
+                log.info(f"[PortResolve] '{display}' → TCP {tcp} (agents.json)")
+            else:
+                tcp = _TCP_PORT_DEFAULT
+                log.warning(
+                    f"[PortResolve] '{display}' not in agents.json — "
+                    f"using default TCP {tcp}"
+                )
+        except Exception as e:
+            tcp = _TCP_PORT_DEFAULT
+            log.warning(f"[PortResolve] agents.json lookup failed ({e}), "
+                        f"using default TCP {tcp}")
+
+    ws = ws_port_hint if ws_port_hint > 0 else tcp + _WS_PORT_OFFSET
+
+    log.info(f"[PortResolve] Final ports → TCP {tcp} / WS {ws}")
+    return tcp, ws
+
+
+# =============================================================================
 # NPCAgent
 # =============================================================================
 
 class NPCAgent:
     """
     Fully autonomous NPC / God agent with standalone runtime.
+
+    Port params
+    -----------
+    backend_port  — WebSocket port this agent's FastAPI server is listening on.
+                    The Java mod connects here: ws://127.0.0.1:<backend_port>/ws/agent
+                    Passed via --port from main.py.  0 = derive from tcp_port.
+
+    tcp_port      — TCP action-server port the Java TCPServer listens on
+                    (from agents.json, starting at 11401).
+                    Passed via --tcp-port from main.py.  0 = auto-resolve.
     """
 
     def __init__(self,
@@ -385,13 +452,24 @@ class NPCAgent:
                  use_scylla:     bool                       = True,
                  mode:           str                        = 'autonomous',
                  god_type:       Optional[str]              = None,
-                 custom_name:    Optional[str]              = None):
+                 custom_name:    Optional[str]              = None,
+                 backend_port:   int                        = 0,
+                 tcp_port:       int                        = 0):
 
         self.agent_id        = agent_id
         self.custom_name     = custom_name
         self.autonomous_mode = autonomous
         self.mode            = mode
         self.god_type        = god_type
+
+        # Resolve Minecraft communication ports up front so they are available
+        # for MinecraftClient construction and for get_info() logging.
+        self._tcp_port, self._backend_port = _resolve_minecraft_ports(
+            custom_name   = custom_name,
+            agent_id      = agent_id,
+            tcp_port_hint = tcp_port,
+            ws_port_hint  = backend_port,
+        )
 
         # ── Core components ───────────────────────────────────────────────
         if gender is None:
@@ -446,14 +524,13 @@ class NPCAgent:
         # ── Subsystem init (order matters) ────────────────────────────────
 
         # 1. Reward system — eager, so brain.reward_system is never None
-        #    during autonomous operation
         self.reward_system: Optional[RewardSystem] = None
         self.initialize_reward_system()
 
-        # 2. World model — calls brain.set_world_model() internally
+        # 2. World model
         self._init_world_model()
 
-        # 3. Vision — full pipeline via add_vision_to_agent()
+        # 3. Vision
         self._init_vision()
 
         # 4. Audio
@@ -464,7 +541,11 @@ class NPCAgent:
         if self.autonomous_mode:
             self._init_cognitive_loop()
 
-        log.info(f"NPCAgent init: {agent_id} (mode={mode}, autonomous={autonomous})")
+        log.info(
+            f"NPCAgent init: {agent_id} "
+            f"(mode={mode}, autonomous={autonomous}, "
+            f"tcp={self._tcp_port}, ws={self._backend_port})"
+        )
 
         # ── Optional integrations ─────────────────────────────────────────
         try:
@@ -478,11 +559,14 @@ class NPCAgent:
             from ai_core.actuators import MinecraftClient
             self.minecraft_client = MinecraftClient(
                 agent_id=agent_id,
-                tcp_host='127.0.0.1', tcp_port=8765,
-                ws_host='127.0.0.1',  ws_port=11400,
+                tcp_host='127.0.0.1', tcp_port=self._tcp_port,
+                ws_host='127.0.0.1',  ws_port=self._backend_port,
                 prefer_tcp=True,
             )
-            log.info(f"[{agent_id}] Minecraft client initialised")
+            log.info(
+                f"[{agent_id}] Minecraft client initialised "
+                f"(TCP:{self._tcp_port} / WS:{self._backend_port})"
+            )
         else:
             self.minecraft_client = None
 
@@ -508,29 +592,23 @@ class NPCAgent:
         log.info(f"[{self.agent_id}] Cognitive loop initialised")
 
     def _init_world_model(self):
-        """
-        Create WorldModel and wire it into BrainCore via set_world_model().
-        No monkey-patching of brain.evaluate_event.
-        """
         try:
             from ai_core.world_model import (
                 WorldModel, WorldModelConfig,
                 WorldModelReplayBuffer, WorldModelTrainer,
             )
-            config       = WorldModelConfig(
+            config        = WorldModelConfig(
                 device='cuda' if torch.cuda.is_available() else 'cpu'
             )
-            wm           = WorldModel(config)
+            wm            = WorldModel(config)
             replay_buffer = WorldModelReplayBuffer(
                 capacity=50_000, sequence_length=64
             )
-            trainer      = WorldModelTrainer(wm, replay_buffer, batch_size=16)
+            trainer       = WorldModelTrainer(wm, replay_buffer, batch_size=16)
 
             self.world_model         = wm
             self.world_model_buffer  = replay_buffer
             self.world_model_trainer = trainer
-
-            # ← Clean wiring: BrainCore owns the connection
             self.brain.set_world_model(wm)
 
             log.info(f"[{self.agent_id}] WorldModel attached to BrainCore")
@@ -538,11 +616,6 @@ class NPCAgent:
             log.warning(f"[{self.agent_id}] World model not available: {e}")
 
     def _init_vision(self):
-        """
-        Attach full VisionAdapter pipeline (feature extraction, online vocab,
-        Minecraft frame hook, cognitive loop patch).
-        Replaces the old inline VisionAdapter() stub inside observe().
-        """
         try:
             from ai_core.vision import add_vision_to_agent
             add_vision_to_agent(
@@ -568,19 +641,10 @@ class NPCAgent:
             log.warning(f"Audio processing not available: {e}")
 
     # =========================================================================
-    # Reward system — eager init
+    # Reward system
     # =========================================================================
 
-    def initialize_reward_system(self,
-                                  obs_dim:    int = 50,
-                                  action_dim: int = 11):
-        """
-        Initialise the RewardSystem and wire it into BrainCore.
-
-        Called eagerly in __init__ so brain.reward_system is never None
-        during autonomous operation.  Safe to call again (no-op if already
-        initialised).
-        """
+    def initialize_reward_system(self, obs_dim: int = 50, action_dim: int = 11):
         if self.reward_system is not None:
             return
         self.reward_system = RewardSystem(
@@ -620,7 +684,6 @@ class NPCAgent:
     # =========================================================================
 
     def perceive(self, raw_observation: Dict[str, Any]) -> np.ndarray:
-        """Convert raw observation dict to fixed-size feature vector."""
         obs_parts = []
 
         obs_parts.append(raw_observation.get('health',     20.0) / 20.0)
@@ -656,7 +719,7 @@ class NPCAgent:
         while len(obs_parts) < 50:
             obs_parts.append(0.0)
 
-        obs_array    = np.array(obs_parts[:50], dtype=np.float32)
+        obs_array     = np.array(obs_parts[:50], dtype=np.float32)
         self.last_obs = obs_array
 
         if self.cognitive_loop and self.cognitive_loop.running:
@@ -670,31 +733,19 @@ class NPCAgent:
 
     def observe(self, image: np.ndarray,
                 info: Optional[Dict[str, Any]] = None) -> np.ndarray:
-        """
-        Process a visual frame through the VisionAdapter pipeline.
-
-        If add_vision_to_agent() has been called (normal path), this method
-        is already patched by vision.py to run the full pipeline and return
-        a CHW float32 tensor.
-
-        This fallback implementation handles the rare case where vision was
-        not available at init time.
-        """
         info = info or {}
         try:
-            # vision.py patches this method during _init_vision()
-            # If we reach here the patch didn't happen — do a minimal fallback
             if image is not None:
                 processed = image.astype(np.float32).transpose(2, 0, 1) / 255.0
             else:
                 processed = np.zeros((3, 84, 84), dtype=np.float32)
 
             self.memory.remember({
-                'type':             'visual_observation',
-                'image_shape':      list(image.shape) if image is not None else [],
-                'description':      info.get('description', 'Visual observation'),
-                'source':           info.get('source', 'unknown'),
-                'timestamp':        time.time(),
+                'type':        'visual_observation',
+                'image_shape': list(image.shape) if image is not None else [],
+                'description': info.get('description', 'Visual observation'),
+                'source':      info.get('source', 'unknown'),
+                'timestamp':   time.time(),
             }, tags=['vision', 'observation'])
 
             thought = f"I observed: {info.get('description', 'a visual scene')}"
@@ -714,7 +765,6 @@ class NPCAgent:
 
     def learn(self, obs: np.ndarray, action: np.ndarray,
               next_obs: np.ndarray, outcome: dict):
-        """Learn from a single (obs, action, next_obs, outcome) transition."""
         obs_t      = torch.tensor(obs,      dtype=torch.float32).unsqueeze(0)
         action_t   = torch.tensor(action,   dtype=torch.float32).unsqueeze(0)
         next_obs_t = torch.tensor(next_obs, dtype=torch.float32).unsqueeze(0)
@@ -768,6 +818,8 @@ class NPCAgent:
             'memory_size':     len(self.memory.events),
             'dominant_emotion':self.emotion.dominant_emotion(),
             'autonomous':      self.is_autonomous(),
+            'tcp_port':        self._tcp_port,
+            'backend_port':    self._backend_port,
         }
         if hasattr(self.brain, 'language'):
             info['language'] = self.brain.get_language_progress()
@@ -779,14 +831,11 @@ class NPCAgent:
             info['server']      = self.client_process.server_addr
         if self.metadata:
             info['metadata'] = self.metadata
-
-        # Vision stats if available
         if hasattr(self, 'vision') and self.vision is not None:
             try:
                 info['vision'] = self.vision.get_stats()
             except Exception:
                 pass
-
         return info
 
     async def process_chat(self, message: str) -> str:
@@ -796,11 +845,6 @@ class NPCAgent:
             'message': message,
         }, tags=['chat', 'user', 'learning'])
 
-        # ── URL detection: store in memory, don't auto-queue ──────────────
-        # The agent decides whether to browse via brain.should_browse().
-        # Forcing URLs into the queue would be the USER controlling browsing,
-        # not the agent. Instead we store mentioned URLs as memory events so
-        # the cognitive loop can notice them when it's curious enough.
         import re
         mentioned_urls = re.findall(r'(https?://[^\s]+)', message)
         if mentioned_urls and hasattr(self, 'web_browser'):
@@ -811,7 +855,6 @@ class NPCAgent:
                     'context': message[:200],
                     'source':  'user_chat',
                 }, tags=['web', 'url', 'mentioned'])
-                # Only queue if explicitly asked ("can you check..." / "look at...")
                 trigger_words = ('check', 'look', 'browse', 'visit', 'read',
                                  'open', 'go to', 'see', 'find')
                 if any(w in message.lower() for w in trigger_words):
@@ -864,24 +907,24 @@ class NPCAgent:
             language_state = self.brain.language.state_dict()
 
         metadata = {
-            'agent_id':   self.agent_id,
-            'custom_name':self.custom_name,
-            'agent_type': self.agent_type,
-            'mode':       self.mode,
-            'gender':     self.personality.gender,
-            'step_count': self.step_count,
-            'saved_at':   time.time(),
-            'autonomous': self.autonomous_mode,
+            'agent_id':    self.agent_id,
+            'custom_name': self.custom_name,
+            'agent_type':  self.agent_type,
+            'mode':        self.mode,
+            'gender':      self.personality.gender,
+            'step_count':  self.step_count,
+            'saved_at':    time.time(),
+            'autonomous':  self.autonomous_mode,
+            # Persist resolved ports so they survive restarts without
+            # needing another agents.json lookup on cold start.
+            'tcp_port':    self._tcp_port,
+            'backend_port':self._backend_port,
         }
         metadata.update(self.metadata)
 
-        # Serialise pregnancy state if the breeding system is tracking this agent
         pregnancy_state = None
-        breeding_sys = getattr(self, '_breeding_system', None)
+        breeding_sys    = getattr(self, '_breeding_system', None)
         if breeding_sys is not None:
-            # Use get_serialisable_pregnancy() not get_pregnancy_status() —
-            # the status method includes ephemeral fields (days_remaining etc)
-            # that are meaningless after a restart and would confuse from_dict().
             pregnancy_state = breeding_sys.get_serialisable_pregnancy(self.agent_id)
 
         capsule = BrainCapsule(
@@ -896,7 +939,6 @@ class NPCAgent:
 
         model_state: Dict[str, Any] = {}
 
-        # Policy
         if self.policy:
             try:
                 model_state['policy'] = {
@@ -906,7 +948,6 @@ class NPCAgent:
             except Exception as e:
                 log.error(f"[{self.agent_id}] Failed to serialize policy: {e}")
 
-        # World model — store both config and weights so load() round-trips
         if self.world_model is not None:
             try:
                 model_state['world_model'] = {
@@ -919,15 +960,12 @@ class NPCAgent:
             except Exception as e:
                 log.error(f"[{self.agent_id}] Failed to serialize world model: {e}")
 
-        # Vision vocab + feature extractor
         if hasattr(self, 'vision') and self.vision is not None:
             try:
                 model_state['vision'] = self.vision.state_dict()
             except Exception as e:
                 log.warning(f"[{self.agent_id}] Vision state not saved: {e}")
 
-        # RewardSystem — RND + ICM curiosity networks.
-        # Without this they reset on every restart, losing all novelty calibration.
         if self.reward_system is not None:
             try:
                 rs = {}
@@ -955,20 +993,16 @@ class NPCAgent:
 
         capsule = BrainCapsule.load(path)
 
-        # Personality
         self.personality = Personality.from_dict(capsule.personality)
 
-        # Emotions
         if capsule.emotion_snapshot:
             for emotion, value in capsule.emotion_snapshot.items():
                 self.emotion.emotions[emotion] = value
 
-        # Memory
         if capsule.memory_snapshot:
             for event in capsule.memory_snapshot:
                 self.memory.remember(event, tags=event.get('tags', []))
 
-        # Language
         if capsule.language_state and hasattr(self.brain, 'language'):
             try:
                 self.brain.language.load_state_dict(capsule.language_state)
@@ -978,7 +1012,6 @@ class NPCAgent:
 
         saved = capsule.model_state or {}
 
-        # Policy
         if self.policy and 'policy' in saved:
             try:
                 self.policy.load_state_dict(saved['policy'])
@@ -986,36 +1019,27 @@ class NPCAgent:
             except Exception as e:
                 log.warning(f"[{self.agent_id}] Policy restore failed: {e}")
 
-        # World model — use stored config so constructor args match
         if 'world_model' in saved:
             try:
                 from ai_core.world_model import WorldModel
                 wm_entry = saved['world_model']
-
                 if isinstance(wm_entry, dict) and 'config' in wm_entry:
-                    # New format: {config, state}
-                    config = wm_entry['config']
-                    wm     = WorldModel(config)
+                    wm = WorldModel(wm_entry['config'])
                     wm.load_state_dict(wm_entry['state'])
                 else:
-                    # Legacy format: raw state_dict saved directly
-                    # Re-use existing config if world model is already attached
                     if self.world_model is not None:
                         wm = WorldModel(self.world_model.config)
                         wm.load_state_dict(wm_entry, strict=False)
                     else:
                         raise ValueError(
-                            "Legacy world model checkpoint but no config available. "
-                            "Re-initialise the agent before loading."
+                            "Legacy world model checkpoint but no config available."
                         )
-
                 self.world_model = wm
                 self.brain.set_world_model(wm)
                 log.info(f"[{self.agent_id}] World model restored.")
             except Exception as e:
                 log.warning(f"[{self.agent_id}] World model restore failed: {e}")
 
-        # Vision vocab
         if 'vision' in saved and hasattr(self, 'vision') and self.vision is not None:
             try:
                 self.vision.load_state_dict(saved['vision'])
@@ -1023,7 +1047,6 @@ class NPCAgent:
             except Exception as e:
                 log.warning(f"[{self.agent_id}] Vision restore failed: {e}")
 
-        # RewardSystem — restore RND + ICM so curiosity calibration survives restarts
         if 'reward_system' in saved and self.reward_system is not None:
             try:
                 rs = saved['reward_system']
@@ -1035,16 +1058,27 @@ class NPCAgent:
             except Exception as e:
                 log.warning(f"[{self.agent_id}] RewardSystem restore failed: {e}")
 
-        # Metadata
-        self.step_count    = capsule.metadata.get('step_count', 0)
-        self.custom_name   = capsule.metadata.get('custom_name', self.custom_name)
-        self.agent_type    = capsule.metadata.get('agent_type', 'npc')
-        self.mode          = capsule.metadata.get('mode', 'autonomous')
-        self.autonomous_mode = capsule.metadata.get('autonomous', True)
+        self.step_count      = capsule.metadata.get('step_count',   0)
+        self.custom_name     = capsule.metadata.get('custom_name',  self.custom_name)
+        self.agent_type      = capsule.metadata.get('agent_type',   'npc')
+        self.mode            = capsule.metadata.get('mode',         'autonomous')
+        self.autonomous_mode = capsule.metadata.get('autonomous',   True)
 
-        # Stash pregnancy state so the breeding system can re-register it
-        # after load() returns.  The breeding system calls agent.resume_pregnancy()
-        # when it re-attaches to the agent.
+        # Restore persisted ports if they were not explicitly set at init time.
+        # This means a restarted agent always uses the same ports as the first
+        # run, even if agents.json is briefly unavailable.
+        if self._tcp_port == _TCP_PORT_DEFAULT:   # only override the fallback default
+            saved_tcp = capsule.metadata.get('tcp_port', 0)
+            if saved_tcp > 0:
+                self._tcp_port     = saved_tcp
+                self._backend_port = capsule.metadata.get(
+                    'backend_port', saved_tcp + _WS_PORT_OFFSET
+                )
+                log.info(
+                    f"[{self.agent_id}] Ports restored from brain: "
+                    f"TCP {self._tcp_port} / WS {self._backend_port}"
+                )
+
         if capsule.pregnancy_state is not None:
             self._pending_pregnancy = capsule.pregnancy_state
         else:
@@ -1053,11 +1087,10 @@ class NPCAgent:
         log.info(f"[{self.agent_id}] Loaded from {path}")
 
     # =========================================================================
-    # Neural stack (manual integration hook kept for external callers)
+    # Neural stack
     # =========================================================================
 
     def integrate_neural_stack(self, force: bool = False):
-        """Re-run world model init. No-op if already integrated."""
         if self._neural_integrated and not force:
             return
         self._init_world_model()
@@ -1069,10 +1102,6 @@ class NPCAgent:
     # =========================================================================
 
     def imagine_scenario(self, scenario: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Called by cognitive loop when it decides to visualise imagination.
-        Returns data for frontend Mental Matrix widget.
-        """
         if self.world_model is None:
             return {'type': 'thought_flow', 'label': 'No World Model'}
         try:
@@ -1095,19 +1124,16 @@ class NPCAgent:
 
     def generate_internal_thought(self,
                                    context: Dict[str, Any]) -> Optional[str]:
-        """Generate internal monologue when cognitive loop requests it."""
         try:
             if not hasattr(self.brain, 'language'):
                 return None
             if self.brain.language.language_stage < 1:
                 return None
-
             traits = self.personality.traits
             p      = (1.0 - traits.get('sociability', 0.5) +
                       traits.get('openness', 0.5)) / 2.0
             if np.random.rand() > p:
                 return None
-
             internal = self.brain.language.generate_speech(context)
             if internal and internal.strip():
                 self.thoughts.append({"timestamp": time.time(),
@@ -1124,54 +1150,36 @@ class NPCAgent:
     # =========================================================================
 
     async def shutdown(self):
-        """Gracefully stop the agent — saves brain, stops cognitive loop and vision."""
         if self.cognitive_loop:
             await self.stop_autonomous_mode()
-
         if hasattr(self, 'vision') and self.vision is not None:
             try:
                 self.vision.stop()
             except Exception:
                 pass
-
         brain_path = Path(
             self.metadata.get('brain_save_path',
                                f"data/brains/{self.agent_id}/brain.pcap")
         )
         brain_path.parent.mkdir(parents=True, exist_ok=True)
         self.save(str(brain_path))
-
         if hasattr(self.memory, 'close'):
             self.memory.close()
-
         log.info(f"[{self.agent_id}] Shutdown complete")
 
     def initialize_policy(self, obs_space, action_space):
-        """
-        Create the appropriate policy for this agent type.
-
-        NPC agents  → TransformerPolicy (11-dim action space)
-        God agents  → GodTransformerPolicy (16-dim action space)
-                      n_abilities is derived from the god's ability set so
-                      the policy head exactly matches the action choices.
-        """
         if self.policy is not None:
             return
-
         if self.god_type:
             from rl.policy import GodTransformerPolicy
             from ai_core.god_controls import GodControlSystem
             import gymnasium as gym
-
             n_abilities = len(GodControlSystem(self.god_type).abilities)
-
-            # Build a 16-dim Box action space for the god policy
             god_action_space = gym.spaces.Box(
                 low=-1.0, high=1.0,
                 shape=(GodTransformerPolicy.TOTAL_DIM,),
                 dtype=np.float32,
             )
-
             self.policy = GodTransformerPolicy(
                 observation_space=obs_space,
                 action_space=god_action_space,
@@ -1191,31 +1199,16 @@ class NPCAgent:
             )
             log.info(f"[{self.agent_id}] TransformerPolicy initialised (11-dim)")
 
-    def decide(self, obs: np.ndarray,
-               deterministic: bool = False) -> np.ndarray:
-        """
-        Run policy forward pass. Returns 11-dim for NPCs, 16-dim for gods.
-        The extra 5 dims for gods are handled by act_god().
-        """
+    def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         if self.policy is None:
-            # Fallback: random base action; gods get zeros for ability dims
             base = np.clip(np.random.randn(11) * 0.3, -1.0, 1.0)
             return np.concatenate([base, np.zeros(5)]) if self.god_type else base
-
         with torch.no_grad():
             obs_t  = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
             action = self.policy._predict(obs_t, deterministic=deterministic)
             return action.squeeze().cpu().numpy()
 
     def act(self, action: np.ndarray) -> dict:
-        """
-        Convert a policy action array (dims 0-10) into a controls dict.
-
-        Does NOT send directly to minecraft_client — the ActionFrame built
-        in communication_protocol.handle_agent_websocket is the canonical
-        send path. Keeping act() as a pure converter avoids double-sends
-        for god agents where act_god() calls act() internally.
-        """
         action   = np.clip(action[:11], -1.0, 1.0)
         controls = {
             'move_forward': float(action[0]),
@@ -1235,49 +1228,46 @@ class NPCAgent:
         return controls
 
     def act_god(self, action: np.ndarray) -> dict:
-        """
-        Execute a 16-dim god action.
+        # act() handles dims 0-10 (movement + camera).
+        # Dims 11-12 (sprint, hotbar_slot) are part of the base 13-dim layout
+        # but act() clips to [:11], so we handle them here.
+        controls = self.act(action)
 
-        1. Converts dims 0-10 → movement controls dict via act().
-        2. If dim 11 (trigger_flag) >= 0.5, reads the ability index from
-           dim 12, selects the ability name, and calls use_god_ability().
-        3. Adds god_ability + god_params to the returned dict so
-           communication_protocol.py can include them in the ActionFrame
-           that goes to the Minecraft mod.
+        # Sprint — dim 11
+        if len(action) >= 12 and float(action[11]) > 0.5:
+            controls['sprint'] = True
 
-        use_god_ability() routes the outcome through the RewardSystem when
-        the mod responds. It does NOT send to minecraft_client directly —
-        the ActionFrame is the canonical send path.
-        """
-        controls = self.act(action)   # pure conversion, no client send
+        # Hotbar slot — dim 12  (maps [-1,1] → slot 0-8, sentinel <= -0.5 = no change)
+        if len(action) >= 13:
+            raw_slot = float(action[12])
+            if raw_slot > -0.5:
+                controls['hotbar_slot'] = max(0, min(8,
+                    int(round((raw_slot + 1.0) / 2.0 * 8.0))))
 
+        # ── God ability dims (GodTransformerPolicy.TOTAL_DIM = 18) ──────────
+        # dim 13: trigger_flag  (>= 0.5 = use an ability this step)
+        # dim 14: ability_idx   (0 … n_abilities-1)
+        # dim 15: param1
+        # dim 16: param2
+        # dim 17: param3
+        # FIX B-03: old code read dim 11 as trigger and dim 12 as ability_idx,
+        # which are sprint and hotbar_slot respectively — abilities never fired.
         god_ability = None
         god_params  = None
 
         if (hasattr(self, 'god_controls') and
-                len(action) >= 16 and
-                float(action[11]) >= 0.5):
-
+                len(action) >= 18 and
+                float(action[13]) >= 0.5):
             names       = self.god_controls.ability_names()
-            ability_idx = int(round(float(action[12])))
-
+            ability_idx = int(round(float(action[14])))
             if 0 <= ability_idx < len(names):
                 god_ability = names[ability_idx]
                 god_params  = {
-                    'param1': float(action[13]),
-                    'param2': float(action[14]),
-                    'param3': float(action[15]),
+                    'param1': float(action[15]),
+                    'param2': float(action[16]),
+                    'param3': float(action[17]),
                 }
-                # Dispatch through reward-system-aware API.
-                # outcome=None here — updated when the mod responds.
-                # The ability is also sent to the mod via the ActionFrame
-                # (god_ability / god_params fields), not via minecraft_client
-                # directly, so we pass send_to_client=False if supported.
-                self.use_god_ability(
-                    god_ability,
-                    outcome=None,
-                    **god_params,
-                )
+                self.use_god_ability(god_ability, outcome=None, **god_params)
                 log.debug(
                     f"[{self.agent_id}] 🔥 God ability: {god_ability} "
                     f"p=({god_params['param1']:.2f},"
@@ -1285,11 +1275,9 @@ class NPCAgent:
                     f"{god_params['param3']:.2f})"
                 )
 
-        # Add to controls dict so ActionFrame builder can read them
         if god_ability:
             controls['god_ability'] = god_ability
             controls['god_params']  = god_params
-
         return controls
 
 
@@ -1306,24 +1294,37 @@ async def run_server(port: int = 8000):
 
 
 async def run_standalone_agent(
-    agent_id:          str,
-    mode:              str                        = 'autonomous',
-    load_brain:        Optional[str]              = None,
-    brain_save_path:   Optional[str]              = None,
-    duration:          Optional[float]            = None,
-    chat_interface:    bool                       = False,
-    god_type:          Optional[str]              = None,
-    gender:            Optional[Any]              = None,
-    personality_traits:Optional[Dict[str, float]] = None,
-    spawn_pos:         Optional[tuple]            = None,
-    genesis_ancestor:  bool                       = False,
-    port:              int                        = 8000,
-    custom_name:       Optional[str]              = None,
+    agent_id:           str,
+    mode:               str                        = 'autonomous',
+    load_brain:         Optional[str]              = None,
+    brain_save_path:    Optional[str]              = None,
+    duration:           Optional[float]            = None,
+    chat_interface:     bool                       = False,
+    god_type:           Optional[str]              = None,
+    gender:             Optional[Any]              = None,
+    personality_traits: Optional[Dict[str, float]] = None,
+    spawn_pos:          Optional[tuple]            = None,
+    genesis_ancestor:   bool                       = False,
+    port:               int                        = 0,    # WS backend port
+    tcp_port:           int                        = 0,    # TCP action-server port
+    custom_name:        Optional[str]              = None,
 ):
     global global_agent
 
+    # If port is still 0 here (standalone / test usage), derive sensible
+    # defaults so the agent starts without main.py providing them.
+    if port <= 0 and tcp_port <= 0:
+        tcp_port = _TCP_PORT_DEFAULT
+        port     = tcp_port + _WS_PORT_OFFSET
+    elif port <= 0:
+        port = tcp_port + _WS_PORT_OFFSET
+    elif tcp_port <= 0:
+        tcp_port = max(_TCP_PORT_DEFAULT, port - _WS_PORT_OFFSET)
+
     print(f"\n{'='*70}")
     print(f"  🤖 STARTING AGENT: {agent_id}")
+    print(f"  TCP action-server : {tcp_port}")
+    print(f"  WS backend port   : {port}")
     print(f"{'='*70}")
 
     agent = NPCAgent(
@@ -1334,6 +1335,8 @@ async def run_standalone_agent(
         gender=gender,
         persona_traits=personality_traits,
         custom_name=custom_name,
+        backend_port=port,
+        tcp_port=tcp_port,
     )
 
     if brain_save_path:
@@ -1347,10 +1350,7 @@ async def run_standalone_agent(
 
     server_task = asyncio.create_task(run_server(port=port))
 
-    # Initial save
-    initial_path = Path(
-        brain_save_path or f"data/brains/{agent_id}/brain.pcap"
-    )
+    initial_path = Path(brain_save_path or f"data/brains/{agent_id}/brain.pcap")
     initial_path.parent.mkdir(parents=True, exist_ok=True)
     agent.save(str(initial_path))
 
@@ -1368,43 +1368,59 @@ async def run_standalone_agent(
         print(f"  Language stage: {agent.brain.language.language_stage}")
     print(f"  Memory events: {len(agent.memory.events)}")
     print(f"\n  🌐 API: http://127.0.0.1:{port}")
-    print(f"  🔌 WS:  ws://127.0.0.1:{port}/ws\n")
+    print(f"  🔌 WS:  ws://127.0.0.1:{port}/ws")
+    print(f"  🎮 TCP: 127.0.0.1:{tcp_port}  (Java TCPServer)\n")
 
     if mode == 'autonomous':
         await agent.start_autonomous_mode()
     elif mode == 'minecraft':
-        # Uvicorn (server_task) must already be running before we wait —
-        # the Minecraft mod connects TO our WebSocket, so the server has to
-        # be listening first.  server_task was created above this block and
-        # asyncio will start scheduling it once we yield here (await).
-        
-        # Check if we're in a packaged environment with UltimMC available
+        # Start the TCP-driven action loop immediately.
+        # This sends actions over TCP regardless of WebSocket state,
+        # so the agent controls the body as soon as TCPServer accepts the connection.
+        asyncio.ensure_future(run_tcp_action_loop(agent, agent_id, loop_hz=20.0))
+
+        # ── UltimMC presence check ────────────────────────────────────────
+        # When the agent runs inside its own packaged exe, UltimMC is bundled
+        # alongside it (launched by main.py _auto_package_agent).  If it is
+        # NOT present the agent is being run in isolation (e.g. dev mode)
+        # without a Minecraft client — log clearly and suggest alternatives.
         ultimmc_path = Path(sys.argv[0]).parent / "UltimMC" / "bin" / "UltimMC"
-        if not getattr(sys, 'frozen', False):
-            # If not frozen, check if UltimMC exists in the agent directory
-            ultimmc_path = Path(sys.argv[0]).parent / "UltimMC" / "bin" / "UltimMC"
-        
-        if ultimmc_path.exists():
-            print("✅ Minecraft mode — waiting for mod connection (up to 120s)...")
-            print("   (UltimMC detected, Minecraft should launch automatically)")
-            try:
-                connected = await asyncio.wait_for(
-                    agent.minecraft_client.wait_for_connection(timeout=120.0),
-                    timeout=125.0,   # 5s grace over the inner timeout
-                )
-                if connected:
-                    print("✅ Minecraft connected!")
-                else:
-                    print("⚠️  Minecraft mod not yet connected — agent will connect "
-                          "when the mod joins the server.")
-            except asyncio.TimeoutError:
-                print("⚠️  Connection wait timed out — continuing without Minecraft.")
-        else:
-            print("ℹ️  Minecraft mode (no UltimMC launcher detected)")
-            print("   Manual Minecraft setup required or auto-packager will enable it")
-            # Don't wait for connection if UltimMC setup hasn't happened yet
-            # The agent will still accept Minecraft connections when the mod joins
-            await asyncio.sleep(2)  # Give backend time to start
+        if not ultimmc_path.exists():
+            log.warning(
+                "\n"
+                "╔══════════════════════════════════════════════════════════════╗\n"
+                "║  ⚠️  UltimMC NOT FOUND — Minecraft client will not launch  ║\n"
+                "║                                                              ║\n"
+                "║  Expected path: %s\n"
+                "║                                                              ║\n"
+                "║  This agent was started in minecraft mode but has no        ║\n"
+                "║  bundled UltimMC launcher.  Options:                        ║\n"
+                "║    • Let main.py launch the agent (auto-packages UltimMC)   ║\n"
+                "║    • Re-run with --mode autonomous (no Minecraft needed)    ║\n"
+                "║    • Re-run with --mode chat       (text-only interface)    ║\n"
+                "║                                                              ║\n"
+                "║  The agent will still start and wait for a mod connection.  ║\n"
+                "║  If one arrives it will work; otherwise actions are no-ops. ║\n"
+                "╚══════════════════════════════════════════════════════════════╝",
+                ultimmc_path,
+            )
+
+        # Wait for the Minecraft mod connection regardless of UltimMC presence.
+        # When launched by main.py, Minecraft is started separately after packaging
+        # and the mod will connect here once the player joins the server.
+        # The 300s timeout covers the worst-case where packaging takes >10 minutes.
+        print("✅ Minecraft mode — waiting for mod connection (up to 300s)...")
+        try:
+            connected = await asyncio.wait_for(
+                agent.minecraft_client.wait_for_connection(timeout=300.0),
+                timeout=305.0,
+            )
+            if connected:
+                print("✅ Minecraft connected!")
+            else:
+                print("⚠️  Minecraft mod not yet connected — will retry when mod joins.")
+        except asyncio.TimeoutError:
+            print("⚠️  Connection wait timed out — continuing anyway.")
 
     start_time = time.time()
     chat_task  = asyncio.create_task(chat_loop(agent)) if chat_interface else None
@@ -1471,11 +1487,11 @@ class AgentExecutableGenerator:
         self.build_temp.mkdir(parents=True, exist_ok=True)
 
     def generate_executable(self,
-                             agent_id:          str,
-                             agent_type:        Literal['npc', 'god'] = 'npc',
-                             god_type:          Optional[str]          = None,
-                             gender:            Optional[GenderType]   = None,
-                             personality_traits:Optional[Dict]         = None
+                             agent_id:           str,
+                             agent_type:         Literal['npc', 'god'] = 'npc',
+                             god_type:           Optional[str]          = None,
+                             gender:             Optional[GenderType]   = None,
+                             personality_traits: Optional[Dict]         = None
                              ) -> Optional[Path]:
         if gender is None:
             gender = assign_god_gender() if agent_type == 'god' else assign_npc_gender()
@@ -1527,14 +1543,19 @@ if __name__ == "__main__":
 
     def launch_executable(self,
                            exe_path:     Path,
-                           port:         int           = 8001,
+                           port:         int           = 0,
+                           tcp_port:     int           = 0,
                            minecraft:    bool          = False,
                            ultimmc_path: Optional[str] = None
                            ) -> Optional[subprocess.Popen]:
         if not exe_path.exists():
             log.error(f"Not found: {exe_path}")
             return None
-        cmd = [str(exe_path), '--port', str(port)]
+        cmd = [str(exe_path)]
+        if port:
+            cmd += ['--port', str(port)]
+        if tcp_port:
+            cmd += ['--tcp-port', str(tcp_port)]
         if minecraft:
             cmd.append('--minecraft')
             if ultimmc_path:
@@ -1556,24 +1577,29 @@ if __name__ == "__main__":
 def main():
     parser = argparse.ArgumentParser(description="Divine World Standalone Agent")
 
-    parser.add_argument('--agent-id',         default='demo')
-    parser.add_argument('--port',             type=int, default=8000)
-    parser.add_argument('--mode',             choices=['autonomous','chat','minecraft'],
+    parser.add_argument('--agent-id',    default='demo')
+    parser.add_argument('--port',        type=int, default=0,
+                        help='WebSocket backend port this agent listens on '
+                             '(set by main.py to tcp_port + 10000)')
+    parser.add_argument('--tcp-port',    type=int, default=0,
+                        help='TCP action-server port (from agents.json, '
+                             'starts at 11401; set by main.py via --tcp-port)')
+    parser.add_argument('--mode',        choices=['autonomous', 'chat', 'minecraft'],
                         default='autonomous')
     parser.add_argument('--god-type',
-                        choices=['ender_dragon','wither','warden','oracle',
-                                 'elder_guardian','creaking'])
+                        choices=['ender_dragon', 'wither', 'warden', 'oracle',
+                                 'elder_guardian', 'creaking'])
     parser.add_argument('--load-brain')
     parser.add_argument('--brain-save-path')
-    parser.add_argument('--duration',         type=float)
-    parser.add_argument('--chat',             action='store_true')
+    parser.add_argument('--duration',        type=float)
+    parser.add_argument('--chat',            action='store_true')
     parser.add_argument('--log-level',
-                        choices=['DEBUG','INFO','WARNING','ERROR'], default='INFO')
-    parser.add_argument('--gender',           choices=['male','female','dual'])
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='INFO')
+    parser.add_argument('--gender',          choices=['male', 'female', 'dual'])
     parser.add_argument('--personality')
-    parser.add_argument('--spawn-x',          type=float)
-    parser.add_argument('--spawn-y',          type=float)
-    parser.add_argument('--spawn-z',          type=float)
+    parser.add_argument('--spawn-x',         type=float)
+    parser.add_argument('--spawn-y',         type=float)
+    parser.add_argument('--spawn-z',         type=float)
     parser.add_argument('--genesis-ancestor')
     parser.add_argument('--custom-name')
 
@@ -1609,6 +1635,7 @@ def main():
             genesis_ancestor  = args.genesis_ancestor == 'true'
                                  if args.genesis_ancestor else False,
             port              = args.port,
+            tcp_port          = args.tcp_port,
             custom_name       = args.custom_name,
         ))
     except KeyboardInterrupt:

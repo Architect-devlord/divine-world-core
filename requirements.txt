@@ -1,63 +1,60 @@
+# Python version: 3.12 recommended for full compatibility
+# Python 3.13 requires cassandra-driver>=4.1.0, torch 2.4.0+
+# Use python3.12 for most stable experience
 # Core ML/DL
-numpy>=2.3.3
-torch>=2.4.0
-torchvision>=0.19.0
+numpy>=2.3.2           # Required for official Python 3.14 wheels
+torch>=2.5.0           # Minimum for stable 3.13/3.14 support
+torchvision>=0.20.0
 
 #download pytorch using pip install torch torchvision torchaudio  --index-url https://download.pytorch.org/whl/cpu if no gpu is present and you want to save space
 
 
 # RL Libraries
-stable-baselines3>=2.0.0
-torchrl>=0.5.0  # NEW: TorchRL for modular RL
-gymnasium>=0.29.0  # NEW: Updated gym
+stable-baselines3>=2.8.0 # Official support for Python 3.13+
+torchrl>=0.6.0
+gymnasium>=1.0.0
 
 # Continual Learning
-avalanche-lib>=0.5.0  # NEW: For lifelong learning
+avalanche-lib>=0.6.0   # Ensure 3.13 compatibility
 
 # Backend
-fastapi>=0.100.0
-uvicorn>=0.23.0
+fastapi>=0.115.0       # Better Pydantic 2.10 integration
+uvicorn>=0.31.0
 python-multipart>=0.0.6
 websockets>=11.0
 python-dotenv>=1.0.0
 pydantic>=2.10.0
 aiofiles>=24.1.0
-opencv-python-headless>=4.10.0
-
-# Vision/Audio
-opencv-python>=4.10.0
-pillow>=10.0.0
+opencv-python-headless>=4.11.0
+# Vision/Audio 
+opencv-python>=4.11.0  # Updated for latest Python builds
+pillow>=11.0.0         # Critical for 3.13/3.14 support
 
 #download opencv-python-headless and opencv-python using 
 #pip install opencv-python-headless --only-binary=:all:
  
 # Utilities
-scipy>=1.16.2
+scipy>=1.15.0          # Required for NumPy 2.x compatibility
 psutil>=5.9.0
 tqdm>=4.65.0
-playwright>=1.30.0  # For web automation
-
-# then use playwright install chromium
+playwright>=1.48.0
+# then use playwright install chromium 
 
 # Optional: GUI
-PyQt5>=5.15.0  use# For utils/gui.py
-
+PyQt5>=5.15.0  # For utils/gui.py
 # Optional: Audio
 sounddevice>=0.4.6  # For microphone input
 
 websockets>=11.0  # Used in unified_chat_system
-python-multipart>=0.0.6  # Used in main.py uploads
-pyinstaller>=6.10.0  # Used in packager.py
-
-flask>=3.0.0
-flask-socketio>=5.3.0
-sounddevice>=0.4.6
+pyinstaller>=6.11.0    # Improved support for Python 3.13+ internals
+flask>=2.0.0  # For web interface
+flask-socketio>=5.0.0  # For real-time communication in web interface
+sounddevice>=0.4.6  # For microphone input
 # Object storage and Scylla/Cassandra driver
-boto3>=1.28.0
-cassandra-driver>=3.25.0
-scylla-driver>=3.26.11
+boto3>=1.35.0
+scylla-driver>=3.26.0  # Supports Python 3.10 through 3.14
 msgpack>=1.0.5
-aiohttp>=3.8.5
+aiohttp>=3.10.0
 beautifulsoup4>=4.12.2
 lxml>=4.9.3
 pyaudio>=0.2.13

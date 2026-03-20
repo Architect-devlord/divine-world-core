@@ -693,6 +693,62 @@ def decompress_jpeg_to_frame(jpeg_data: bytes) -> np.ndarray:
 # Main WebSocket loop
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def run_tcp_action_loop(agent, agent_id: str, loop_hz: float = 20.0):
+    """
+    Standalone action loop driven purely by the agent's policy over TCP.
+
+    This runs when the agent is in minecraft mode and the WebSocket to the
+    mod is not yet connected (or as a supplement to the WS loop).
+    It does NOT receive perception frames — it uses the agent's last known
+    observation and sends actions at loop_hz via minecraft_client.send().
+
+    Usage in agent.py run_standalone_agent() (minecraft mode):
+        asyncio.ensure_future(run_tcp_action_loop(agent, agent_id))
+    """
+    import asyncio as _asyncio
+    interval = 1.0 / max(1.0, loop_hz)
+    log.info(f"[TCPActionLoop] Starting for {agent_id} at {loop_hz:.0f} Hz")
+
+    is_god = bool(getattr(agent, 'god_type', None) and
+                  hasattr(agent, 'god_controls'))
+
+    while True:
+        try:
+            mc = getattr(agent, 'minecraft_client', None)
+            if mc is None:
+                await _asyncio.sleep(interval)
+                continue
+
+            # Only act if TCP or WS is connected
+            tcp_pool = getattr(mc, '_tcp_pool', None)
+            ws_client = getattr(mc, '_ws_client', None)
+            tcp_ready = tcp_pool is not None and tcp_pool.is_connected()
+            ws_ready  = ws_client is not None and ws_client.is_connected()
+            if not tcp_ready and not ws_ready:
+                await _asyncio.sleep(interval)
+                continue
+
+            # Use last known obs or a zero vector
+            obs = agent.last_obs
+            if obs is None:
+                import numpy as np
+                obs = np.zeros(50, dtype=np.float32)
+
+            action_array = agent.decide(obs, deterministic=False)
+            if is_god and len(action_array) >= 18:  # FIX B-15: GodTransformerPolicy.TOTAL_DIM = 18
+                action_dict = agent.act_god(action_array)
+            else:
+                action_dict = agent.act(action_array)
+
+            # apply_action() routes TCP-first (prefer_tcp=True), WS as fallback
+            mc.apply_action(action_dict)
+
+        except Exception as e:
+            log.debug(f"[TCPActionLoop] {e}")
+
+        await _asyncio.sleep(interval)
+
+
 async def handle_agent_websocket(websocket, agent_id: str, agent):
     """
     Main per-agent WebSocket loop.
@@ -794,7 +850,25 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
             }
 
             # ── 5. Agent observation ──────────────────────────────────────
-            obs = agent.observe(frame_bgr, info)
+            # observe() stores the visual frame in memory/vision pipeline
+            # but returns shape (3,84,84) which the policy cannot use.
+            # Policy expects 50-dim obs (Box(50,) per env.py).
+            # perceive() builds the correct 50-dim vector and updates agent.last_obs.
+            agent.observe(frame_bgr, info)
+            agent.health = perception.health
+            agent.hunger = perception.hunger
+            obs = agent.perceive({
+                'health':   perception.health,
+                'hunger':   perception.hunger,
+                'position': {
+                    'x': perception.position[0],
+                    'y': perception.position[1],
+                    'z': perception.position[2],
+                },
+                'yaw':      perception.rotation[0],
+                'pitch':    perception.rotation[1],
+                'entities': perception.entities,
+            })   # returns 50-dim ndarray, updates agent.last_obs
 
             # ── 6. Route Minecraft audio through AudioProcessor ───────────
             # The Minecraft mod captures in-world audio (mob sounds, ambient,
@@ -881,7 +955,7 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
             # Gods use act_god() which handles the full 16-dim vector:
             # dims 0-10 → movement, dims 11-15 → ability trigger + params.
             # NPCs use act() which only looks at dims 0-10.
-            if is_god and len(action_array) >= 18:
+            if is_god and len(action_array) >= 18:  # FIX B-15: GodTransformerPolicy.TOTAL_DIM = 18
                 action_dict = agent.act_god(action_array)
             else:
                 action_dict = agent.act(action_array)

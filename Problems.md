@@ -1,6 +1,6 @@
 # PROBLEMS
 
-- ## Agent Packaging problem : 
+- ## Agent Packaging problem : (solved for npcs check for gods)
     Some how the packaging of the agents is always failing 
 
     *Confirmed error*  :
@@ -53,7 +53,7 @@
         return False
     ```
 
-- ## Agent launching minecraft problem :
+- ## Agent launching minecraft problem :(solved)
     The current codebase uses some other UltimMC script or executable and not the executable in the bin folder of the agents cause when the UltimMC launcher inside the agents' bin folder is used manually the accounts propely show up the mods are in the correct place and there is no prelaunching account creation java search required 
 
     *What was done*:
@@ -64,6 +64,9 @@
     cd npc_applications/adam_1/bin/UltimMC
     ./UltimMC
     ```
+- ## Agent not able to control its body in minecraft:
+    MAybe its the client side mod or the py_backend/ai_core dont really know about it and well need to check the agents' minecraft logs for solving this issue 
+
 ## The computer must be connected to the internet while agents are created so that the minecraft assets can be downloaded by UltimMC
 
 ## Note :

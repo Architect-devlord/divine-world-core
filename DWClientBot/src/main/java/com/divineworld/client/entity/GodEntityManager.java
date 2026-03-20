@@ -7,16 +7,21 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 
 /**
- * God Entity Manager
+ * God Entity Manager — client-side tracker.
  *
- * FIX Bug 4 — entities created but never added to the level:
- *   All spawn methods were returning `new AIWither(level)` etc. but never
- *   calling level.addFreshEntity().  The objects existed in RAM but the
- *   game engine never ticked them — tick(), ability cooldowns, physics,
- *   and rendering were all dead.
+ * FIX B-01: This class NO LONGER spawns entities into the level.
+ * The server mod (GodSpawnHandler) spawns the real boss body on ServerLevel.
+ * Calling level.addFreshEntity() on a ClientLevel is illegal in Forge 1.20.1
+ * (the entity exists only on this client, is invisible to the server, and all
+ * damage/ability methods that check !level.isClientSide() silently no-op).
  *
- *   Fix: createAndSpawn() positions the entity at the local player and
- *   calls level.addFreshEntity() so the engine owns and ticks it.
+ * This class is now a pure client-side tracker:
+ *   - currentGodType  — which god type the local player is
+ *   - executeGodAbility() — dispatches ability visuals to whichever
+ *     entity is already in the world (spawned by the server mod)
+ *
+ * Transformation calls still delegate to the legacy helpers for visual sync,
+ * but createAndSpawn() is removed.
  */
 public class GodEntityManager {
 
@@ -24,52 +29,16 @@ public class GodEntityManager {
     private static String  currentGodType;
     private static boolean isPlayerForm = false;
 
+    /**
+     * Called when the local player loads in as a god agent.
+     * Records the god type — the server mod handles the actual body spawn.
+     */
     public static void initializeGodEntity(String godType) {
         currentGodType = godType;
-        DWClientMod.LOGGER.info("Initializing god entity: {}", godType);
-
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || mc.player == null) {
-            DWClientMod.LOGGER.error("Cannot spawn god entity — level or player is null");
-            return;
-        }
-
-        // Discard any previously spawned body
-        if (currentGodEntity != null && !currentGodEntity.isRemoved()) {
-            currentGodEntity.remove(Entity.RemovalReason.DISCARDED);
-            currentGodEntity = null;
-        }
-
-        Level level = mc.level;
-
-        // FIX Bug 4: createAndSpawn() calls addFreshEntity() — old code did not
-        currentGodEntity = switch (godType.toLowerCase()) {
-            case "ender_dragon", "dragon" -> createAndSpawn(new AIEnderDragon(level), level);
-            case "wither"                 -> createAndSpawn(new AIWither(level),       level);
-            case "warden"                 -> createAndSpawn(new AIWarden(level),       level);
-            case "oracle"                 -> createAndSpawn(new AIOracle(level),       level);
-            case "elder_guardian"         -> createAndSpawn(new AIElderGuardian(level),level);
-            case "creaking"               -> createAndSpawn(new AICreaking(level),     level);
-            default -> { DWClientMod.LOGGER.warn("Unknown god type: {}", godType); yield null; }
-        };
-
-        if (currentGodEntity != null) {
-            DWClientMod.LOGGER.info("God entity added to level and will tick: {}", godType);
-        }
-    }
-
-    /**
-     * Position entity at player's feet and register it with the level engine.
-     * Without addFreshEntity() the entity is never ticked.
-     */
-    private static Entity createAndSpawn(Entity entity, Level level) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player != null) {
-            entity.moveTo(mc.player.getX(), mc.player.getY(), mc.player.getZ(),
-                          mc.player.getYRot(), mc.player.getXRot());
-        }
-        level.addFreshEntity(entity);  // FIX Bug 4: this line was entirely missing
-        return entity;
+        DWClientMod.LOGGER.info("[GodEntityManager] God type set to '{}' — body spawned by server mod", godType);
+        // FIX B-01: do NOT create entities or call level.addFreshEntity() here.
+        // The server mod (GodSpawnHandler.spawnGodBody) adds the boss entity to
+        // ServerLevel.  All clients see it through normal entity sync.
     }
 
     public static void transformToPlayerForm() {

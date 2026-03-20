@@ -3,8 +3,9 @@ package com.divineworld.client;
 
 import com.divineworld.client.entity.ModEntities;
 import com.divineworld.client.network.ClientNetworkHandler;
+import com.divineworld.client.network.TCPServer;
+import com.divineworld.client.util.AgentsJsonReader;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.common.Mod;
@@ -15,164 +16,227 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
- * Divine World Client Mod - PRODUCTION VERSION WITH RENDERING
+ * Divine World Client Mod — PORT RESOLUTION via agents.json
  *
- * Features:
- * - WebSocket communication with Python backend
- * - Vision capture for AI perception
- * - God entity rendering with transformations
- * - Custom Creaking entity with full model
- * - Player abilities for all agents
- * - Chat bubbles for AI speech
+ * Port resolution order (most reliable first):
  *
- * UPDATED:
- * - Added rendering system initialization
- * - Added transformation tracking
- * - Added god ability visual effects
+ *   1. agents.json lookup by player display name  (~/Documents/agents.json)
+ *      Called by ClientEventHandler.onPlayerLogin() once the Minecraft
+ *      session is live and getUser().getName() returns "Alice" etc.
+ *      This is the PRIMARY path — works even when JVM -D properties are not
+ *      delivered by the launcher.
+ *
+ *   2. JVM system properties  (-Ddw.tcp.port, -Ddw.backend.port)
+ *      Set via instance.cfg JvmArgs by the Python launcher.
+ *      Used as a pre-login hint when available.
+ *
+ *   3. Hard-coded defaults  (TCP=11401, WS=21401)
+ *      Last resort, only during the brief window before player login.
+ *
+ * Why agents.json is primary
+ * --------------------------
+ * UltimMC's INST_JAVA env var is the Java executable path — if -D flags are
+ * placed there, UltimMC ignores them and launches system Java with no
+ * properties.  agents.json is always on disk at ~/Documents/agents.json
+ * regardless of launcher behaviour.
  */
 @Mod(DWClientMod.MOD_ID)
 public class DWClientMod {
+
     public static final String MOD_ID = "dwclient";
     public static final Logger LOGGER = LogManager.getLogger();
 
-    // Configuration from system properties
-    private static String agentId;
-    private static String backendUrl;
-    private static int backendPort = 11400;
-    private static boolean isGodAgent = false;
-    private static String godType = null;
+    private static String  agentId;
+    private static String  backendUrl          = "ws://127.0.0.1";
+    private static int     tcpPort             = AgentsJsonReader.DEFAULT_TCP_PORT;
+    private static int     backendPort         = AgentsJsonReader.DEFAULT_WS_PORT;
+    private static boolean portsFromAgentsJson = false;
+    private static boolean isGodAgent          = false;
+    private static String  godType             = null;
 
     public DWClientMod() {
         IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
 
-        // Load configuration early
         loadConfiguration();
 
-        // Register common setup
         modEventBus.addListener(this::commonSetup);
         modEventBus.addListener(this::clientSetup);
 
-        // Register entities
         ModEntities.ENTITIES.register(modEventBus);
 
-        // Register to event bus
+        // NOTE: ClientEventHandler, TransformationHandler, GodAbilityVisualHandler,
+        // and ClientChatEventHandler are all annotated with @Mod.EventBusSubscriber
+        // so Forge auto-registers them at mod load — manual register() calls here
+        // would cause every event to fire twice.  Do NOT re-register them.
         MinecraftForge.EVENT_BUS.register(this);
 
-        // Register client-side event handlers
-        MinecraftForge.EVENT_BUS.register(ClientEventHandler.class);
-        MinecraftForge.EVENT_BUS.register(TransformationHandler.class);
-        MinecraftForge.EVENT_BUS.register(GodAbilityVisualHandler.class);
-        MinecraftForge.EVENT_BUS.register(ClientChatEventHandler.class);
-
         LOGGER.info("=".repeat(60));
-        LOGGER.info("  Divine World Client Mod v2.2 (CLIENT-SIDE)");
+        LOGGER.info("  Divine World Client Mod v2.3");
         LOGGER.info("=".repeat(60));
-        LOGGER.info("Agent Configuration:");
-        LOGGER.info("  Agent ID: {}", agentId);
-        LOGGER.info("  Mode: {}", isGodAgent ? "GOD (" + godType + ")" : "NORMAL");
-        LOGGER.info("  Backend: {}:{}", backendUrl, backendPort);
-        LOGGER.info("=".repeat(60));
-        LOGGER.info("Features:");
-        LOGGER.info("  ✅ WebSocket Communication");
-        LOGGER.info("  ✅ Vision Capture System");
-        LOGGER.info("  ✅ God Entity Rendering");
-        LOGGER.info("  ✅ Custom Creaking Model");
-        LOGGER.info("  ✅ Transformation System");
-        LOGGER.info("  ✅ Player Abilities");
-        LOGGER.info("  ✅ Chat Bubbles");
+        LOGGER.info("  Agent ID  : {}", agentId != null ? agentId : "<pending player login>");
+        LOGGER.info("  TCP port  : {} (provisional)", tcpPort);
+        LOGGER.info("  WS port   : {} (provisional)", backendPort);
+        LOGGER.info("  Backend   : {}", backendUrl);
+        LOGGER.info("  Mode      : {}", isGodAgent ? "GOD (" + godType + ")" : "NPC");
+        LOGGER.info("  Ports will be confirmed from agents.json after player login");
         LOGGER.info("=".repeat(60));
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Setup events
+    // ─────────────────────────────────────────────────────────────────────────
+
     private void commonSetup(final FMLCommonSetupEvent event) {
-        LOGGER.info("[CommonSetup] Initializing network handlers...");
-
-        // Register network handlers
         ClientNetworkHandler.register();
-
-        LOGGER.info("[CommonSetup] ✅ Network handlers registered");
+        LOGGER.info("[CommonSetup] Network handlers registered");
     }
 
     private void clientSetup(final FMLClientSetupEvent event) {
-        LOGGER.info("[ClientSetup] Initializing client components...");
-
-        event.enqueueWork(() -> {
-            // Client components are registered via @Mod.EventBusSubscriber
-            // See: ClientSetup.java for entity renderers
-            // See: ClientEventHandler.java for game events
-
-            LOGGER.info("[ClientSetup] ✅ Client components initialized");
-        });
+        event.enqueueWork(() ->
+            LOGGER.info("[ClientSetup] Client components initialised")
+        );
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 1  — mod construction (JVM properties, no player name yet)
+    // ─────────────────────────────────────────────────────────────────────────
 
     private void loadConfiguration() {
-        // Load from system properties (passed by Python launcher)
-        agentId = System.getProperty("dw.agent.id");
         backendUrl = System.getProperty("dw.backend.url", "ws://127.0.0.1");
+        godType    = System.getProperty("dw.god.type");
+        if (godType != null && !godType.isEmpty()) isGodAgent = true;
 
-        String portStr = System.getProperty("dw.backend.port", "11400");
-        try {
-            backendPort = Integer.parseInt(portStr);
-        } catch (NumberFormatException e) {
-            LOGGER.warn("Invalid backend port: {}, using default 11400", portStr);
-            backendPort = 11400;
+        // Agent ID from JVM property — may be null/stale if launcher didn't deliver it
+        String jvmAgentId = System.getProperty("dw.agent.id");
+        if (jvmAgentId != null && !jvmAgentId.isEmpty()
+                && !jvmAgentId.startsWith("DW_AGENT_")) {
+            agentId = jvmAgentId;
         }
 
-        // Check if god agent
-        godType = System.getProperty("dw.god.type");
-        if (godType != null && !godType.isEmpty()) {
-            isGodAgent = true;
-            LOGGER.info("Configured as GOD agent: {}", godType);
+        // TCP port from JVM property (highest priority override)
+        String tcpProp = System.getProperty("dw.tcp.port");
+        if (tcpProp != null && !tcpProp.isEmpty()) {
+            try {
+                int p = Integer.parseInt(tcpProp.trim());
+                if (p > 0 && p < 65536) {
+                    tcpPort     = p;
+                    backendPort = p + AgentsJsonReader.WS_PORT_OFFSET;
+                    LOGGER.info("[Config] Ports from -Ddw.tcp.port: TCP {} / WS {}", tcpPort, backendPort);
+                    return;
+                }
+            } catch (NumberFormatException ignored) {}
         }
 
-        // Validate configuration
-        if (agentId == null || agentId.isEmpty()) {
-            LOGGER.error("No agent ID provided! Using fallback.");
-            agentId = "DW_AGENT_" + System.currentTimeMillis();
+        // WS port from JVM property
+        String wsProp = System.getProperty("dw.backend.port");
+        if (wsProp != null && !wsProp.isEmpty()) {
+            try {
+                int p = Integer.parseInt(wsProp.trim());
+                if (p > 0 && p < 65536) {
+                    backendPort = p;
+                    tcpPort     = Math.max(AgentsJsonReader.PORT_START,
+                                           p - AgentsJsonReader.WS_PORT_OFFSET);
+                    LOGGER.info("[Config] Ports from -Ddw.backend.port: TCP {} / WS {}", tcpPort, backendPort);
+                    return;
+                }
+            } catch (NumberFormatException ignored) {}
         }
+
+        // Early agents.json lookup if we already have a usable agent ID
+        if (agentId != null && !agentId.isEmpty()) {
+            AgentsJsonReader.PortPair pp = AgentsJsonReader.lookupPorts(agentId);
+            if (pp != null) {
+                tcpPort            = pp.tcpPort;
+                backendPort        = pp.wsPort;
+                portsFromAgentsJson = true;
+                LOGGER.info("[Config] Early agents.json lookup for '{}': TCP {} / WS {}",
+                        agentId, tcpPort, backendPort);
+                return;
+            }
+        }
+
+        LOGGER.info("[Config] Using default ports TCP {} / WS {} — will re-resolve after login",
+                tcpPort, backendPort);
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 2  — called by ClientEventHandler.onPlayerLogin()
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Re-resolve ports from agents.json using the live Minecraft player name.
+     *
+     * Called by ClientEventHandler.onPlayerLogin() once the session is active
+     * and Minecraft.getInstance().getUser().getName() is reliable.
+     *
+     * @param playerName  Minecraft display name (e.g. "Alice")
+     * @return true if ports were successfully resolved from agents.json
+     */
+    public static boolean resolvePortsFromPlayerName(String playerName) {
+        if (playerName == null || playerName.isEmpty()) return false;
+
+        // Update agent ID to the actual player name if we didn't get it from JVM props
+        if (agentId == null || agentId.isEmpty() || agentId.startsWith("DW_AGENT_")) {
+            agentId = playerName;
+            LOGGER.info("[Config] Agent ID set from player name: '{}'", agentId);
+        }
+
+        AgentsJsonReader.PortPair pp = AgentsJsonReader.lookupPorts(playerName);
+        if (pp == null) {
+            LOGGER.warn("[Config] '{}' not found in agents.json — using TCP {} / WS {}",
+                    playerName, tcpPort, backendPort);
+            return false;
+        }
+
+        int oldTcp = tcpPort;
+        int oldWs  = backendPort;
+        tcpPort            = pp.tcpPort;
+        backendPort        = pp.wsPort;
+        portsFromAgentsJson = true;
+
+        LOGGER.info("[Config] ✅ agents.json resolved '{}': TCP {} / WS {}",
+                playerName, tcpPort, backendPort);
+
+        if (oldTcp != tcpPort || oldWs != backendPort) {
+            LOGGER.info("[Config] Ports changed ({}/{} → {}/{}) — TCPServer + WebSocket will reinit",
+                    oldTcp, oldWs, tcpPort, backendPort);
+        }
+        return true;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Public getters
-    public static String getAgentId() {
-        return agentId;
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public static String  getAgentId()             { return agentId != null ? agentId : "unknown"; }
+    public static String  getBackendUrl()          { return backendUrl; }
+    public static int     getBackendPort()         { return backendPort; }
+    public static int     getTcpPort()             { return tcpPort; }
+    public static boolean isGodAgent()             { return isGodAgent; }
+    public static String  getGodType()             { return godType; }
+    public static boolean isPortsFromAgentsJson()  { return portsFromAgentsJson; }
+
+    /** Full WebSocket URL the agent's Python backend listens on. */
+    public static String getWebSocketUrl() {
+        return backendUrl + ":" + backendPort + "/ws/agent";
     }
 
-    public static String getBackendUrl() {
-        return backendUrl;
-    }
-
-    public static int getBackendPort() {
-        return backendPort;
-    }
-
-    public static boolean isGodAgent() {
-        return isGodAgent;
-    }
-
-    public static String getGodType() {
-        return godType;
-    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // Entity helpers
+    // ─────────────────────────────────────────────────────────────────────────
 
     public static ResourceLocation id(String path) {
         return new ResourceLocation(MOD_ID, path);
     }
 
-    /**
-     * Check if an entity is a god entity (client-side helper)
-     */
     public static boolean isGodEntity(net.minecraft.world.entity.Entity entity) {
         return entity.getPersistentData().contains("dw_god");
     }
 
-    /**
-     * Check if a god is disguised (client-side helper)
-     */
     public static boolean isDisguised(net.minecraft.world.entity.Entity entity) {
         return entity.getPersistentData().getBoolean("dw_disguised");
     }
 
-    /**
-     * Get god type from entity (client-side helper)
-     */
     public static String getEntityGodType(net.minecraft.world.entity.Entity entity) {
         return entity.getPersistentData().getString("dw_god_type");
     }

@@ -910,6 +910,12 @@ class CognitiveLoop:
                                           thoughts:   Dict[str, Any],
                                           content:    Dict[str, Any]):
         try:
+            # FIX #17: brain.language could be None if language init failed
+            # silently. This method was the only speech call site without a guard.
+            if (not hasattr(self.agent.brain, 'language')
+                    or self.agent.brain.language is None):
+                return
+
             ctx = perception['state'].copy()
             ctx['recent_events']  = perception['recent_events']
             ctx['speech_reason']  = content['reason']
@@ -1024,6 +1030,7 @@ class CognitiveLoop:
 
                     # If the agent is verbal, let it comment on what it found
                     if (hasattr(self.agent.brain, 'language') and
+                            self.agent.brain.language is not None and
                             self.agent.brain.language.language_stage >= 1):
                         ctx = {
                             'web_page_title':   snapshot.title,
@@ -1069,7 +1076,7 @@ class CognitiveLoop:
         social speech, giving it grounding in what actions and perceptions mean.
         """
         try:
-            if hasattr(self.agent.brain, 'language'):
+            if hasattr(self.agent.brain, 'language') and self.agent.brain.language is not None:
                 batch = self.agent.memory.get_training_batch(
                     batch_size=32,
                     tags=['language', 'action', 'perception'],

@@ -1703,34 +1703,33 @@ class WorldModelTrainer:
         log.info(f"Offline training complete: {stats}")
         return stats
 
-    def train_online_step(self, trajectory: Dict[str, np.ndarray]) -> Dict[str, float]:
-        self.replay_buffer.start_trajectory()
+    def train_online_step(self, trajectory: Dict[str, np.ndarray] = None) -> Dict[str, float]:
+        """
+        Run one gradient step using buffered trajectories.
 
-        T = len(trajectory['reward'])
-        for t in range(T):
-            self.replay_buffer.add_step(
-                vision=trajectory['vision'][t] if 'vision' in trajectory else None,
-                audio=trajectory['audio'][t] if 'audio' in trajectory else None,
-                proprio=trajectory['proprio'][t],
-                action=trajectory['action'][t],
-                reward=trajectory['reward'][t],
-                termination=trajectory['termination'][t],
+        FIX: The old implementation called start_trajectory() / end_trajectory()
+        on self.replay_buffer before training.  self.replay_buffer is the SAME
+        object as agent.world_model_buffer which _feed_world_model() continuously
+        fills with live Minecraft frames.  Calling start_trajectory() reset the
+        ongoing episode, discarding all steps accumulated since the last game death.
+
+        The trajectory parameter is now ignored (kept for API compatibility).
+        Training uses whatever complete episodes are already in the shared buffer.
+        _feed_world_model() owns the write path; this method owns the read path.
+        """
+        if len(self.replay_buffer) < 1:
+            return {'total': 0.0, 'skipped': 'buffer_empty'}
+
+        try:
+            batch = self.replay_buffer.sample_batch(
+                self.batch_size, device=self.world_model.device
             )
-
-        self.replay_buffer.end_trajectory()
-
-        if len(self.replay_buffer) < 10:
-            return {'total': 0.0}
-
-        batch = self.replay_buffer.sample_batch(
-            self.batch_size, device=self.world_model.device
-        )
-        loss_dict = self.world_model.train_step(batch)
-
-        self.step_count += 1
-        self.loss_history.append(loss_dict['total'])
-
-        return loss_dict
+            loss_dict = self.world_model.train_step(batch)
+            self.step_count += 1
+            self.loss_history.append(loss_dict['total'])
+            return loss_dict
+        except Exception as e:
+            return {'total': 0.0, 'error': str(e)}
 
     def save_checkpoint(self, path: str):
         self.world_model.save(path)

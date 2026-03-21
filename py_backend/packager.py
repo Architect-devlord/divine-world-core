@@ -135,6 +135,18 @@ class AgentPackager:
             return install_root
 
         # ── Interactive prompt when not found automatically ────────────────────
+        # Guard: only prompt when running in an interactive terminal.
+        # Headless contexts (auto-packager background thread, Docker, PyInstaller
+        # build, CI) have no stdin — input() would block forever or raise EOFError.
+        import sys as _sys
+        if not _sys.stdin.isatty():
+            log.warning(
+                "⚠️  UltimMC not found and stdin is not a TTY — "
+                "skipping interactive prompt.  Set DW_ULTIMMC_PATH env var "
+                "or pass the path via -Ddw.ultimmc.path to avoid this."
+            )
+            return None
+
         log.warning("⚠️  UltimMC not found in standard locations")
         print("\n" + "="*70)
         print("UltimMC Launcher Not Found")
@@ -145,27 +157,40 @@ class AgentPackager:
         print()
 
         while True:
-            user_path = input("Enter the absolute path to your UltimMC folder (or press Enter to skip): ").strip()
-            
+            try:
+                user_path = input(
+                    "Enter the absolute path to your UltimMC folder "
+                    "(or press Enter to skip): "
+                ).strip()
+            except EOFError:
+                log.warning("⚠️  UltimMC prompt got EOF — skipping")
+                return None
+
             # Allow user to skip
             if not user_path:
                 log.warning("⚠️  UltimMC will not be packaged with agents")
                 print("Continuing without UltimMC...\n")
                 return None
-            
+
+            # Also accept the DW_ULTIMMC_PATH env var mid-session
+            import os as _os
+            env_path = _os.getenv("DW_ULTIMMC_PATH")
+            if env_path and not user_path:
+                user_path = env_path
+
             # Validate the provided path
             ultimmc_candidate = Path(user_path).expanduser().resolve()
-            
+
             if not ultimmc_candidate.exists():
                 print(f"❌ Path does not exist: {ultimmc_candidate}")
                 print("Please enter a valid path.\n")
                 continue
-            
+
             if not (ultimmc_candidate / "bin" / "UltimMC").exists():
                 print(f"❌ Not a valid UltimMC installation.")
                 print(f"   Expected {ultimmc_candidate / 'bin' / 'UltimMC'} to exist\n")
                 continue
-            
+
             # Valid path found
             log.info(f"✅ UltimMC: {ultimmc_candidate}")
             print(f"✅ UltimMC found at: {ultimmc_candidate}\n")
@@ -693,6 +718,30 @@ if __name__ == "__main__":
         """
         log.info(f"🔨 Building executable for {agent_id}…")
         exe_name = agent_id   # no DW_ prefix — matches main.py exe_path lookup
+
+        # ── Pre-flight validation ─────────────────────────────────────────
+        # Catch misconfiguration early rather than letting PyInstaller produce
+        # an exe that silently crashes at runtime due to missing imports.
+        preflight_warnings = []
+        if not Config.AGENT_HIDDEN_IMPORTS:
+            preflight_warnings.append("AGENT_HIDDEN_IMPORTS is empty — exe may be missing modules")
+        if not ai_core_path.exists():
+            raise FileNotFoundError(f"ai_core/ not found: {ai_core_path}")
+        if not py_backend_path.exists():
+            raise FileNotFoundError(f"py_backend/ not found: {py_backend_path}")
+        # Validate every hidden import resolves from the known source paths
+        import importlib.util as _ilu
+        bad_imports = []
+        for mod in (Config.AGENT_HIDDEN_IMPORTS or []):
+            if _ilu.find_spec(mod) is None:
+                bad_imports.append(mod)
+        if bad_imports:
+            preflight_warnings.append(
+                f"These hidden imports cannot be found (exe will crash on import): "
+                f"{bad_imports}"
+            )
+        for warn in preflight_warnings:
+            log.warning(f"⚠️  Pre-flight: {warn}")
 
         cwd  = Path.cwd()
         root = cwd.parent if cwd.name == "py_backend" else cwd

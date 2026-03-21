@@ -844,13 +844,10 @@ def _feed_world_model(agent, agent_id: str, frame_bgr, obs: "np.ndarray",
         if cnt % train_every == 0:
             trainer = getattr(agent, 'world_model_trainer', None)
             if trainer is not None and len(buf.trajectories) > 0:
-                trainer.train_online_step(trajectory={
-                    'vision':      _np.expand_dims(frame_sm, 0),
-                    'proprio':     _np.expand_dims(obs, 0),
-                    'action':      _np.expand_dims(action_array, 0),
-                    'reward':      _np.array([reward]),
-                    'termination': _np.array([float(done)]),
-                })
+                # FIX: train_online_step no longer accepts a trajectory arg —
+                # it trains on whatever complete episodes are in the shared buffer.
+                # Passing trajectory= was corrupting the live episode buffer.
+                trainer.train_online_step()
     except Exception as e:
         log.debug(f"[{agent_id}] _feed_world_model failed: {e}")
 
@@ -1154,6 +1151,21 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
         log.info(f"🔌 WebSocket disconnected: {agent_id}")
         log.info(f"Final stats: {handler.get_stats()}")
 
+        # FIX #23: save agent state on disconnect so progress since the last
+        # periodic save (up to 5 min) is not lost on network failures.
+        if agent is not None:
+            try:
+                sp = agent.metadata.get(
+                    'brain_save_path',
+                    f"data/brains/{agent_id}/brain.pcap"
+                )
+                import pathlib as _pl
+                _pl.Path(sp).parent.mkdir(parents=True, exist_ok=True)
+                agent.save(sp)
+                log.info(f"[{agent_id}] 💾 Disconnect save: {sp}")
+            except Exception as _se:
+                log.warning(f"[{agent_id}] Disconnect save failed: {_se}")
+
 
 async def handle_sound_event_websocket(websocket, agent_id: str, agent):
     """
@@ -1239,3 +1251,15 @@ async def handle_sound_event_websocket(websocket, agent_id: str, agent):
 
     finally:
         log.info(f"🔊 Sound WebSocket disconnected: {agent_id}")
+        # Save on sound WS disconnect too — keeps state consistent
+        if agent is not None:
+            try:
+                sp = agent.metadata.get(
+                    'brain_save_path',
+                    f"data/brains/{agent_id}/brain.pcap"
+                )
+                import pathlib as _pl
+                _pl.Path(sp).parent.mkdir(parents=True, exist_ok=True)
+                agent.save(sp)
+            except Exception:
+                pass  # best-effort — main WS save is authoritative

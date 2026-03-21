@@ -515,6 +515,13 @@ class NPCAgent:
         self.world_model_buffer  = None
         self._neural_integrated  = False
 
+        # FIX #1: EpisodicMemory was never initialized — learn() used a hasattr
+        # guard that was always False, keeping the PPO replay buffer empty for
+        # the entire live Minecraft session.  Initialize eagerly here so every
+        # call to learn() actually stores (obs, action, reward, next_obs, done).
+        from ai_core.memory import EpisodicMemory as _EM
+        self.episodic_memory = _EM(capacity=50_000)
+
         self.thoughts = [
             {"timestamp": time.time(), "thought": "Initializing agent systems..."},
             {"timestamp": time.time(), "thought": "Memory system online"},
@@ -546,6 +553,22 @@ class NPCAgent:
             f"(mode={mode}, autonomous={autonomous}, "
             f"tcp={self._tcp_port}, ws={self._backend_port})"
         )
+
+        # ── Auto-initialize policy so decide() never falls back to random ─────
+        # initialize_policy() was only available as a manual call — nothing
+        # called it, so self.policy stayed None and decide() used an 11-dim
+        # random vector.  Build the spaces here and initialize eagerly.
+        try:
+            import gymnasium as _gym
+            _obs_space = _gym.spaces.Box(
+                low=-np.inf, high=np.inf, shape=(50,), dtype=np.float32
+            )
+            _act_space = _gym.spaces.Box(
+                low=-1.0, high=1.0, shape=(13,), dtype=np.float32
+            )
+            self.initialize_policy(_obs_space, _act_space)
+        except Exception as _pe:
+            log.warning(f"[{agent_id}] Policy auto-init failed: {_pe}")
 
         # ── Optional integrations ─────────────────────────────────────────
         try:
@@ -583,9 +606,15 @@ class NPCAgent:
     # =========================================================================
 
     def _init_language(self):
-        from ai_core.brain_language import add_language_to_brain
-        add_language_to_brain(self.brain)
-        log.info(f"[{self.agent_id}] Language intelligence initialised")
+        try:
+            from ai_core.brain_language import add_language_to_brain
+            add_language_to_brain(self.brain)
+            log.info(f"[{self.agent_id}] Language intelligence initialised")
+        except Exception as e:
+            log.warning(
+                f"[{self.agent_id}] Language init failed — "
+                f"speech and language learning unavailable: {e}"
+            )
 
     def _init_cognitive_loop(self):
         self.cognitive_loop = CognitiveLoop(agent=self, loop_interval=0.5)
@@ -852,7 +881,7 @@ class NPCAgent:
             'tcp_port':        self._tcp_port,
             'backend_port':    self._backend_port,
         }
-        if hasattr(self.brain, 'language'):
+        if hasattr(self.brain, 'language') and self.brain.language is not None:
             info['language'] = self.brain.get_language_progress()
         if self.cognitive_loop:
             info['cognitive_status'] = self.cognitive_loop.get_status()
@@ -895,6 +924,7 @@ class NPCAgent:
         response = f"I am {self.agent_id}. You said: {message}"
         try:
             if (hasattr(self.brain, 'language') and
+                    self.brain.language is not None and
                     self.brain.language.language_stage >= 1):
                 ctx = {
                     'current_message': message,
@@ -934,7 +964,7 @@ class NPCAgent:
         from ai_core.brain_capsule import BrainCapsule
 
         language_state = None
-        if hasattr(self.brain, 'language'):
+        if hasattr(self.brain, 'language') and self.brain.language is not None:
             language_state = self.brain.language.state_dict()
 
         metadata = {
@@ -1019,6 +1049,32 @@ class NPCAgent:
             except Exception as e:
                 log.warning(f"[{self.agent_id}] RewardSystem state not saved: {e}")
 
+        # Bug #21 fix: persist EpisodicMemory replay buffer (capped at 10k
+        # transitions to bound file size to ~5 MB regardless of run length).
+        if getattr(self, 'episodic_memory', None) is not None:
+            try:
+                buf = self.episodic_memory
+                cap = min(len(buf.buffer), 10_000)
+                model_state['episodic_memory'] = {
+                    'transitions': list(buf.buffer)[-cap:],
+                    'priorities':  list(buf.priorities)[-cap:],
+                    'capacity':    buf.capacity,
+                }
+            except Exception as e:
+                log.warning(f"[{self.agent_id}] EpisodicMemory not saved: {e}")
+
+        # Bug #22 fix: persist WorldModelTrainer progress counter and recent
+        # loss history so training resumes from the correct step rather than 0.
+        if getattr(self, 'world_model_trainer', None) is not None:
+            try:
+                trainer = self.world_model_trainer
+                model_state['world_model_trainer'] = {
+                    'step_count':   trainer.step_count,
+                    'loss_history': list(trainer.loss_history),
+                }
+            except Exception as e:
+                log.warning(f"[{self.agent_id}] WorldModelTrainer state not saved: {e}")
+
         capsule.model_state = model_state
         capsule.save(path)
         log.info(f"[{self.agent_id}] Saved to {path}")
@@ -1038,7 +1094,7 @@ class NPCAgent:
             for event in capsule.memory_snapshot:
                 self.memory.remember(event, tags=event.get('tags', []))
 
-        if capsule.language_state and hasattr(self.brain, 'language'):
+        if capsule.language_state and hasattr(self.brain, 'language') and self.brain.language is not None:
             try:
                 self.brain.language.load_state_dict(capsule.language_state)
                 log.info(f"[{self.agent_id}] Language restored.")
@@ -1092,6 +1148,39 @@ class NPCAgent:
                 log.info(f"[{self.agent_id}] RewardSystem (RND/ICM) restored.")
             except Exception as e:
                 log.warning(f"[{self.agent_id}] RewardSystem restore failed: {e}")
+
+        # Bug #21 fix: restore EpisodicMemory replay buffer
+        if 'episodic_memory' in saved and getattr(self, 'episodic_memory', None) is not None:
+            try:
+                em = saved['episodic_memory']
+                self.episodic_memory.buffer.clear()
+                self.episodic_memory.priorities.clear()
+                for t in em.get('transitions', []):
+                    self.episodic_memory.buffer.append(t)
+                for p in em.get('priorities', []):
+                    self.episodic_memory.priorities.append(p)
+                log.info(
+                    f"[{self.agent_id}] EpisodicMemory restored "
+                    f"({len(self.episodic_memory.buffer)} transitions)"
+                )
+            except Exception as e:
+                log.warning(f"[{self.agent_id}] EpisodicMemory restore failed: {e}")
+
+        # Bug #22 fix: restore WorldModelTrainer progress
+        if 'world_model_trainer' in saved and getattr(self, 'world_model_trainer', None) is not None:
+            try:
+                ts = saved['world_model_trainer']
+                self.world_model_trainer.step_count = ts.get('step_count', 0)
+                from collections import deque as _dq
+                self.world_model_trainer.loss_history = _dq(
+                    ts.get('loss_history', []), maxlen=1000
+                )
+                log.info(
+                    f"[{self.agent_id}] WorldModelTrainer restored "
+                    f"(step {self.world_model_trainer.step_count})"
+                )
+            except Exception as e:
+                log.warning(f"[{self.agent_id}] WorldModelTrainer restore failed: {e}")
 
         self.step_count      = capsule.metadata.get('step_count',   0)
         self.custom_name     = capsule.metadata.get('custom_name',  self.custom_name)
@@ -1177,7 +1266,7 @@ class NPCAgent:
     def generate_internal_thought(self,
                                    context: Dict[str, Any]) -> Optional[str]:
         try:
-            if not hasattr(self.brain, 'language'):
+            if not hasattr(self.brain, 'language') or self.brain.language is None:
                 return None
             if self.brain.language.language_stage < 1:
                 return None
@@ -1240,7 +1329,7 @@ class NPCAgent:
             )
             log.info(
                 f"[{self.agent_id}] GodTransformerPolicy initialised "
-                f"({n_abilities} abilities, 16-dim action space)"
+                f"({n_abilities} abilities, 18-dim action space)"
             )
         else:
             from rl.policy import TransformerPolicy
@@ -1249,11 +1338,12 @@ class NPCAgent:
                 action_space=action_space,
                 lr_schedule=lambda _: 3e-4,
             )
-            log.info(f"[{self.agent_id}] TransformerPolicy initialised (11-dim)")
+            log.info(f"[{self.agent_id}] TransformerPolicy initialised (13-dim)")
 
     def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         if self.policy is None:
-            base = np.clip(np.random.randn(11) * 0.3, -1.0, 1.0)
+            # FIX: was 11-dim random — must match BASE_DIM=13 for NPCs, 18 for gods
+            base = np.clip(np.random.randn(13) * 0.3, -1.0, 1.0)
             return np.concatenate([base, np.zeros(5)]) if self.god_type else base  # 18-dim god fallback
         with torch.no_grad():
             obs_t  = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
@@ -1417,11 +1507,15 @@ async def run_standalone_agent(
 
     global_agent = agent
 
-    server_task = asyncio.create_task(run_server(port=port))
-
+    # FIX #4/#13: Save the initial brain capsule BEFORE starting the server.
+    # Previously server_task was created first — a client could connect before
+    # brain.pcap existed, causing load() failures in the /status endpoint.
+    # global_agent is already set above so no null-deref risk on first request.
     initial_path = Path(brain_save_path or f"data/brains/{agent_id}/brain.pcap")
     initial_path.parent.mkdir(parents=True, exist_ok=True)
     agent.save(str(initial_path))
+
+    server_task = asyncio.create_task(run_server(port=port))
 
     if load_brain and Path(load_brain).exists():
         try:
@@ -1433,7 +1527,7 @@ async def run_standalone_agent(
     print(f"\n📊 Agent Info:")
     print(f"  Personality: {agent.personality.to_dict()}")
     print(f"  Memory: {agent.memory.get_stats()['backend']}")
-    if hasattr(agent.brain, 'language'):
+    if hasattr(agent.brain, 'language') and agent.brain.language is not None:
         print(f"  Language stage: {agent.brain.language.language_stage}")
     print(f"  Memory events: {len(agent.memory.events)}")
     print(f"\n  🌐 API: http://127.0.0.1:{port}")
@@ -1494,17 +1588,25 @@ async def run_standalone_agent(
     start_time = time.time()
     chat_task  = asyncio.create_task(chat_loop(agent)) if chat_interface else None
 
+    _last_periodic_save = time.time()
     try:
         while True:
             if duration and (time.time() - start_time) >= duration:
                 break
-            if int(time.time() - start_time) % 300 == 0:
+            # FIX: old code used % 300 which skips when asyncio.sleep(1) drifts
+            # past the exact second boundary — guaranteed under event loop load.
+            if time.time() - _last_periodic_save >= 300:
+                _last_periodic_save = time.time()
                 sp = Path(
                     agent.metadata.get('brain_save_path',
                                        f"data/brains/{agent_id}/brain.pcap")
                 )
                 sp.parent.mkdir(parents=True, exist_ok=True)
-                agent.save(str(sp))
+                try:
+                    agent.save(str(sp))
+                    log.info(f"[{agent_id}] ⏱️  Periodic brain save: {sp}")
+                except Exception as _se:
+                    log.warning(f"[{agent_id}] Periodic save failed: {_se}")
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         print("\n\n🛑 Stopping...")

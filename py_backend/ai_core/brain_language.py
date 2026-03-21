@@ -1183,7 +1183,11 @@ class LanguageIntelligence:
                 'language_stage': self.language_stage,
                 'experience_count': self.experience_count,
                 'updates_done': self.updates_done,
-                'conversation_turns': self.conversation_buffer._turns[-20:]}
+                'conversation_turns': self.conversation_buffer._turns[-20:],
+                # FIX: brain_capsule sidecar JSON reads these keys for the
+                # human-readable summary.  Without them it always shows 0.
+                'vocabulary_size': len(self.vocab.id_to_token),
+                'pattern_count': self.experience_count}
 
     def load_state_dict(self, state):
         self.model.load_state_dict(state['model'])

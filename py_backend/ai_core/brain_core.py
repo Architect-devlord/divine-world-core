@@ -383,8 +383,38 @@ class BrainCore:
         # ── RewardSystem path ─────────────────────────────────────────────
         if self.reward_system is not None:
             try:
+                # FIX: pass obs/action tensors so RND and ICM curiosity modules
+                # actually compute intrinsic rewards.  Without them, raw_curiosity
+                # is always 0.0 — the agent has no intrinsic motivation from
+                # brain-level events (chat, sound, vision observations).
+                # We pull the agent's last cached obs when available.
+                obs_t    = None
+                action_t = None
+                if self.agent is not None:
+                    last_obs = getattr(self.agent, 'last_obs', None)
+                    if last_obs is not None:
+                        try:
+                            import torch as _torch
+                            obs_t = _torch.tensor(
+                                last_obs, dtype=_torch.float32
+                            ).unsqueeze(0)
+                        except Exception:
+                            pass
+                    last_act = getattr(self.agent, 'last_action', None)
+                    if last_act is not None and obs_t is not None:
+                        try:
+                            import torch as _torch
+                            action_t = _torch.tensor(
+                                last_act, dtype=_torch.float32
+                            ).unsqueeze(0)
+                        except Exception:
+                            pass
+
                 signal = self.reward_system.compute_reward(
-                    event=event, outcome=context or {}
+                    event=event,
+                    obs=obs_t,
+                    action=action_t,
+                    outcome=context or {},
                 )
                 self.reward_system.apply_signal(signal)
                 self._update_learning(event, event.get('payload', {}), signal.total)

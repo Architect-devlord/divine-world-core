@@ -1,4 +1,4 @@
-# py_backend/config.py
+# ai_core/config.py
 """
 Configuration management for Divine World Backend.
 Single source of truth for all paths, ports, and settings.
@@ -15,7 +15,7 @@ class Config:
     """Global configuration"""
 
     # ==================== PATHS ====================
-    # __file__ is: .../divine-world-core/py_backend/config.py
+    # __file__ is: .../divine-world-core/py_backend/ai_core/config.py
     PY_BACKEND_DIR = Path(__file__).parent.parent          # .../py_backend/
     BASE_DIR       = PY_BACKEND_DIR.parent          # .../divine-world-core/
     HOME           = BASE_DIR.parent                # parent of project root
@@ -173,12 +173,12 @@ class Config:
         'py_backend.auto_packager',
         'py_backend.packager',
         'py_backend.breeding_system',
-        'py_backend.agent_spawner',
+        'ai_core.agent_spawner',
         'py_backend.auto_connect_system',
         'py_backend.minecraft_launcher',
         'py_backend.chat_system',
         'py_backend.chat_launcher',
-        'ai_core.agent_spawner',
+
         # Heavy server-only deps (not needed inside an agent exe)
         'psutil',
         # Dev / test tools

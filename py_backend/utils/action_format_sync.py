@@ -53,11 +53,13 @@ GOD_ABILITY_NAMES: Dict[str, List[str]] = {
         "dash",                     # 1  — 3 s CD
         "summon_wither_skeletons",  # 2  — 10 s CD
         "explosion",                # 3  — 8 s CD
+        "fly",                      # 4  — FIX JC-01: Java AIWither dispatches "fly"
     ],
     "ender_dragon": [
         "dragon_breath",            # 0  — 5 s CD
         "fireball",                 # 1
         "perch",                    # 2
+        "fly",                      # 3  — FIX JC-01: Java AIEnderDragon dispatches "fly"
     ],
     "warden": [
         "sonic_boom",               # 0  — 5 s CD (ignores armor)
@@ -78,6 +80,7 @@ GOD_ABILITY_NAMES: Dict[str, List[str]] = {
         "teleport",                 # 2  — 3 s CD
         "healing_wave",             # 3
         "knowledge_beam",           # 4
+        "fly",                      # 5  — FIX JC-01: Java AIOracle dispatches "fly"
     ],
     "creaking": [
         "toggle_underground",       # 0
@@ -193,12 +196,12 @@ class ActionFormatter:
             )
             return controls
 
-        raw_idx = float(np.clip(action_array[14], -1.0, 1.0))
-        # Map [-1..1] → [0 .. len-1] index
-        ability_idx = max(0, min(
-            len(ability_names) - 1,
-            int(round((raw_idx + 1.0) / 2.0 * (len(ability_names) - 1)))
-        ))
+        # FIX DIM-03: GodAbilityHead.decode() outputs ability_idx as a raw integer
+        # (argmax cast to float: 0.0, 1.0, 2.0, ...).  The old code treated it as
+        # a continuous [-1..1] value and applied a range-mapping formula, selecting
+        # the wrong ability every time. Use direct round() to recover the integer.
+        raw_idx     = float(action_array[14])
+        ability_idx = max(0, min(len(ability_names) - 1, int(round(raw_idx))))
 
         controls['god_ability'] = ability_names[ability_idx]
         controls['god_params']  = {
@@ -263,8 +266,8 @@ class ActionFormatter:
         if god_ability and ability_names and god_ability in ability_names:
             trigger    = 1.0
             idx        = ability_names.index(god_ability)
-            # Map index back to [-1..1]
-            raw_idx    = (idx / max(len(ability_names) - 1, 1)) * 2.0 - 1.0
+            # FIX DIM-03: ability_idx is a raw integer in the output vector, not [-1..1]
+            raw_idx    = float(idx)
             god_params = controls.get('god_params') or {}
             p1 = float(god_params.get('param1', 0.0))
             p2 = float(god_params.get('param2', 0.0))

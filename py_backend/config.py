@@ -16,11 +16,11 @@ class Config:
 
     # ==================== PATHS ====================
     # __file__ is: .../divine-world-core/py_backend/config.py
-    PY_BACKEND_DIR = Path(__file__).parent.parent          # .../py_backend/
+    PY_BACKEND_DIR = Path(__file__).parent          # .../py_backend/
     BASE_DIR       = PY_BACKEND_DIR.parent          # .../divine-world-core/
     HOME           = BASE_DIR.parent                # parent of project root
 
-    
+
     # it would look for divine-world-core/py_backend/ai_core/ instead of
     # divine-world-core/py_backend/ai_core/
     AI_CORE_DIR = PY_BACKEND_DIR / "ai_core"              # .../divine-world-core/py_backend/ai_core/
@@ -139,7 +139,7 @@ class Config:
         'ai_core.actuators',               # action execution
         'ai_core.reward_system',           # reward / intrinsic motivation
         'ai_core.vision',                  # visual perception
-        'ai_core.audio_processors',         # audio perception
+        'ai_core.audio_processors',        # audio perception (FIX: plural, matches audio_processors.py)
         'ai_core.god_controls',            # god-tier abilities (no-op for NPCs)
         'ai_core.web_browser',             # web-browsing tool
         'ai_core.world_model',             # forward model (lazy)

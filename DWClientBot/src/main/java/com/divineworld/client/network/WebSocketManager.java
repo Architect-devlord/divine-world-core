@@ -6,6 +6,19 @@ import com.divineworld.client.vision.AudioCaptureSystem;
 import com.divineworld.client.vision.VisionCaptureSystem;
 import com.divineworld.client.control.ActionExecutor;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.animal.Animal;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
+import net.minecraft.world.entity.boss.wither.WitherBoss;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
@@ -13,63 +26,82 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * WebSocket Manager — Non-blocking rewrite
+ * WebSocket Manager — Full rewrite with entity perception + wire format fixes.
  *
- * KEY FIXES FOR FREEZE ON OLD HARDWARE
- * =====================================
+ * FIX F1 — wsFuture.join() removed from main thread (original)
+ * FIX F2 — JPEG encoding moved off main thread (original)
+ * FIX F3 — sendBinary() moved off main thread (original)
+ * FIX F4 — reduced default capture resolution (original)
  *
- * FIX F1 — wsFuture.join() removed from main thread
- *   The old code called CompletableFuture.join() on the Minecraft main thread
- *   while waiting for the WebSocket TCP handshake.  If the Python backend was
- *   not ready, this blocked the entire game loop (freeze until timeout).
- *   Fix: connect asynchronously via thenAccept().  The game continues normally
- *   while the connection is being established in the background.
+ * NEW FIX W1 — Wire format mismatch: audio metadata section
+ *   Java previously always wrote sampleRate + channels + bitsPerSample after
+ *   audio data, even when audio_len = 0.  Python only reads those fields when
+ *   audio_len > 0.  When the agent was silent, 6 bytes were left unconsumed and
+ *   got misread as the sound_count field.  Fix: only write audio metadata when
+ *   audio_len > 0, matching the Python decoder.
  *
- * FIX F2 — JPEG encoding moved off the main thread
- *   captureScreenAsJPEG() was called inside Minecraft.getInstance().execute()
- *   (= main thread) then JPEG-encoded there via ImageIO.write() — a CPU-heavy
- *   operation that took 100-500 ms on older hardware, starving the game loop
- *   at 20 FPS.
- *   Fix: VisionCaptureSystem.grabPixels() captures the NativeImage pixels on
- *   the main thread (required for GPU readback), then encoding is submitted
- *   to the encode executor (off-thread).  sendBinary() is also off-thread.
+ * NEW FIX W2 — Entity count hardcoded to 0
+ *   entity_count was always written as 0, so perception.entities was always [].
+ *   The agent could not see any nearby entity — zombies, players, animals were
+ *   invisible to the perception system, making the learning loop unable to
+ *   associate visual patterns with entity-related rewards.
+ *   Fix: collectNearbyEntities() gathers entities within 32 blocks, assigns
+ *   type_id bytes (hostile/passive/player/boss/item/projectile/god), and
+ *   serializes them into the frame using the exact format Python expects:
+ *     [1]  type_id  (uint8)
+ *     [4]  name_len (uint32)
+ *     [N]  name     (UTF-8 registry name, no "minecraft:" prefix)
+ *     [4]  distance (float32, metres)
+ *     [4]  angle    (float32, degrees relative to player's yaw)
  *
- * FIX F3 — sendBinary() moved off the main thread
- *   Sending a 20-100 KB WebSocket frame on the main thread blocked it for the
- *   duration of the kernel socket write.  Moved to the encode executor.
+ * NEW FIX W3 — Sound events never sent
+ *   Python's decoder reads a sound_count after the audio section, but Java
+ *   never wrote it.  The try/except in Python swallowed this silently.
+ *   Fix: add a static ConcurrentLinkedQueue<Map<String,Object>> for sound
+ *   events.  Other client-mod classes (ClientEventHandler, etc.) call
+ *   WebSocketManager.queueSoundEvent(map) when a relevant sound fires.
+ *   The perception frame now includes those events after the audio section,
+ *   exactly matching what Python's unpack_perception expects.
  *
- * FIX F4 — Reduced default capture resolution
- *   640×480 = 307 200 pixels per frame.  For old hardware the default is now
- *   320×240 (76 800 pixels) — ¼ the work.  Override with
- *   -Ddw.vision.width=640 -Ddw.vision.height=480 when needed.
+ * NEW FIX W4 — perceptionExecutor thread leak on reconnect
+ *   scheduleReconnect() ran on the old executor, which called initialize() and
+ *   reassigned perceptionExecutor to a new instance without shutting the old
+ *   one down.  One daemon thread leaked per disconnect cycle.
+ *   Fix: explicitly shutdownNow() the old executor before replacing it.
  *
- * Other bugs preserved from previous version:
- *   Bug C1 — ActionExecutor.initialize() removed (no such method)
- *   Bug C2 — god ability section fully read and dispatched
- *   Bug I  — per-connection ByteArrayOutputStream accumulator
+ * NEW FIX W5 — Reconnect stuck when initial connection fails
+ *   If the first TCP handshake failed before onOpen() → startPerceptionLoop(),
+ *   perceptionExecutor was null. scheduleReconnect() null-checked and returned
+ *   without scheduling a retry — the client was permanently stuck.
+ *   Fix: a static reconnect executor (separate from perceptionExecutor) is
+ *   created once and never reassigned, so it is always available for retries.
  */
 public class WebSocketManager {
 
-    private static volatile WebSocket       webSocket;
-    private static volatile String          agentId;
-    private static final AtomicBoolean      connected   = new AtomicBoolean(false);
-    private static final AtomicBoolean      connecting  = new AtomicBoolean(false);
+    private static volatile WebSocket  webSocket;
+    private static volatile String     agentId;
+    private static final AtomicBoolean connected  = new AtomicBoolean(false);
+    private static final AtomicBoolean connecting = new AtomicBoolean(false);
 
-    private static ScheduledExecutorService perceptionExecutor;
+    private static volatile ScheduledExecutorService perceptionExecutor;
 
-    /**
-     * FIX F2/F3: single-thread executor for JPEG encoding + WS sends.
-     * Keeps encoding sequential (no frame reordering) and off the main thread.
-     */
+    /** FIX W5: dedicated reconnect executor — never nulled or replaced. */
+    private static final ScheduledExecutorService reconnectExecutor =
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "DW-Reconnect");
+            t.setDaemon(true);
+            return t;
+        });
+
+    /** JPEG encoding + WS send — single thread keeps frames sequential. */
     private static final ExecutorService encodeExecutor =
         Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "DW-Encode-Send");
@@ -79,22 +111,66 @@ public class WebSocketManager {
         });
 
     private static final int MAGIC            = 0x44574149;
-    private static final int FRAME_CHAT       = 0x03;  // Python → Java chat message
+    private static final int FRAME_CHAT       = 0x03;
     private static final int FRAME_PERCEPTION = 0x01;
     private static final int FRAME_ACTION     = 0x02;
 
+    /** Entity type_id constants — must match Python protocol docstring. */
+    private static final byte ENTITY_UNKNOWN    = 0;
+    private static final byte ENTITY_PLAYER     = 1;
+    private static final byte ENTITY_HOSTILE    = 2;
+    private static final byte ENTITY_PASSIVE    = 3;
+    private static final byte ENTITY_ITEM       = 4;
+    private static final byte ENTITY_BOSS       = 5;
+    private static final byte ENTITY_PROJECTILE = 6;
+    private static final byte ENTITY_GOD        = 7;
+
+    /** Max entities serialised per frame — limits frame size on crowded servers. */
+    private static final int MAX_ENTITIES = 20;
+
+    /** Max entity detection radius (blocks). */
+    private static final double ENTITY_RADIUS = 32.0;
+
+    /**
+     * FIX W3: Sound event queue.
+     * Other client classes call queueSoundEvent(map) when sounds fire.
+     * Each map should have keys: sound_id, volume, distance, category.
+     * The queue is drained once per frame and included in the binary frame.
+     */
+    private static final ConcurrentLinkedQueue<Map<String, Object>> soundEventQueue =
+        new ConcurrentLinkedQueue<>();
+
+    /** Max sound events per frame to bound frame size. */
+    private static final int MAX_SOUND_EVENTS = 8;
+
+    /** Per-connection binary frame accumulator. */
     private static volatile ByteArrayOutputStream msgAccum =
         new ByteArrayOutputStream(1024 * 1024);
 
-    // -------------------------------------------------------------------------
-    // Initialise — NON-BLOCKING (FIX F1)
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Public API — sound event injection
+    // =========================================================================
+
+    /**
+     * FIX W3: Called by ClientEventHandler (or any client-mod class) when a
+     * Minecraft sound fires near the agent.
+     *
+     * Required keys: "sound_id" (String), "volume" (Float), "distance" (Float).
+     * Optional keys: "category" (String), "position" (Map with "x","y","z").
+     */
+    public static void queueSoundEvent(Map<String, Object> event) {
+        if (event != null && soundEventQueue.size() < 64) {
+            soundEventQueue.offer(event);
+        }
+    }
+
+    // =========================================================================
+    // Initialise
+    // =========================================================================
 
     public static void initialize(String url, int port, String agentIdParam) {
         agentId = agentIdParam;
 
-        // VisionCaptureSystem.initialize() only reads system properties
-        // and initialises AudioCaptureSystem — safe on main thread.
         VisionCaptureSystem.initialize();
 
         if (connecting.getAndSet(true)) {
@@ -105,9 +181,15 @@ public class WebSocketManager {
         URI serverUri = URI.create(url + ":" + port + "/ws/agent");
         DWClientMod.LOGGER.info("[WS] Connecting async to {}", serverUri);
 
+        // FIX W4: shut down the old perceptionExecutor before replacing it
+        ScheduledExecutorService oldExec = perceptionExecutor;
+        if (oldExec != null && !oldExec.isShutdown()) {
+            oldExec.shutdownNow();
+        }
+        perceptionExecutor = null;
+
         HttpClient client = HttpClient.newHttpClient();
 
-        // FIX F1: thenAccept() instead of join() — never blocks the main thread.
         client.newWebSocketBuilder()
             .buildAsync(serverUri, new WebSocket.Listener() {
 
@@ -118,10 +200,6 @@ public class WebSocketManager {
                     webSocket = ws;
                     connected.set(true);
                     connecting.set(false);
-                    // request(1) MUST come before sendHandshake so the Java
-                    // HTTP client's receive pump is running before we send.
-                    // Without this, the Python side's receive_json() hangs
-                    // waiting for a frame that the client hasn't flushed yet.
                     ws.request(1);
                     sendHandshake(ws);
                     startPerceptionLoop();
@@ -138,11 +216,11 @@ public class WebSocketManager {
                 public CompletionStage<?> onBinary(WebSocket ws, ByteBuffer data, boolean last) {
                     byte[] chunk = new byte[data.remaining()];
                     data.get(chunk);
+                    // msgAccum.write() is synchronized in JDK — safe from listener thread
                     try { msgAccum.write(chunk); } catch (Exception ignored) {}
                     if (last) {
                         ByteBuffer complete = ByteBuffer.wrap(msgAccum.toByteArray());
                         msgAccum.reset();
-                        // Peek at frame type to dispatch correctly
                         if (complete.remaining() >= 8) {
                             int peekMagic = complete.getInt();
                             int peekType  = complete.getInt();
@@ -183,12 +261,12 @@ public class WebSocketManager {
                 return null;
             });
 
-        DWClientMod.LOGGER.info("[WS] Connection initiated (non-blocking) — game will not freeze");
+        DWClientMod.LOGGER.info("[WS] Connection initiated (non-blocking)");
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Handshake
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     private static void sendHandshake(WebSocket ws) {
         String msg = String.format(
@@ -197,25 +275,23 @@ public class WebSocketManager {
         ws.sendText(msg, true);
     }
 
-    // -------------------------------------------------------------------------
-    // Perception loop (FIX F2 + F3)
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Perception loop
+    // =========================================================================
 
     private static void startPerceptionLoop() {
-        if (perceptionExecutor != null && !perceptionExecutor.isShutdown()) return;
+        ScheduledExecutorService current = perceptionExecutor;
+        if (current != null && !current.isShutdown()) return;
 
-        perceptionExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+        ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "DW-Perception-Scheduler");
             t.setDaemon(true);
             return t;
         });
+        perceptionExecutor = exec;
 
-        // Schedule the CAPTURE trigger at 20 FPS on the scheduler thread.
-        // The scheduler posts pixel-grab to the main thread, then hands off
-        // encoding + sending to the encode executor.
-        perceptionExecutor.scheduleAtFixedRate(() -> {
+        exec.scheduleAtFixedRate(() -> {
             if (!connected.get() || webSocket == null) return;
-            // Step 1: grab pixels on Minecraft main thread (GPU readback must be there)
             Minecraft.getInstance().execute(WebSocketManager::captureAndScheduleEncode);
         }, 200, 50, TimeUnit.MILLISECONDS);
 
@@ -223,8 +299,8 @@ public class WebSocketManager {
     }
 
     /**
-     * FIX F2: Runs on Minecraft main thread — only pixel readback here.
-     * Hands everything CPU-heavy to encodeExecutor immediately.
+     * Runs on Minecraft main thread — pixel readback and entity scan here.
+     * All CPU-heavy work (JPEG encode, WS send) handed to encodeExecutor.
      */
     private static void captureAndScheduleEncode() {
         try {
@@ -232,7 +308,7 @@ public class WebSocketManager {
             if (mc.player == null || mc.level == null) return;
             if (!connected.get() || webSocket == null) return;
 
-            // Grab game state — cheap
+            // Cheap state reads — safe on main thread
             final float  health = mc.player.getHealth();
             final float  hunger = mc.player.getFoodData().getFoodLevel();
             final double x      = mc.player.getX();
@@ -241,26 +317,34 @@ public class WebSocketManager {
             final float  yaw    = mc.player.getYRot();
             final float  pitch  = mc.player.getXRot();
 
-            // Grab raw pixels on main thread (MUST be here for GPU readback).
-            // VisionCaptureSystem.grabPixels() returns the raw int[] pixel data
-            // without doing any CPU-heavy encoding.
-            final int[] pixels  = VisionCaptureSystem.grabPixels();
-            final int   imgW    = VisionCaptureSystem.getWidth();
-            final int   imgH    = VisionCaptureSystem.getHeight();
+            // GPU readback — must be on main thread
+            final int[] pixels = VisionCaptureSystem.grabPixels();
+            final int   imgW   = VisionCaptureSystem.getWidth();
+            final int   imgH   = VisionCaptureSystem.getHeight();
             if (pixels == null) return;
 
-            // Audio capture — fine on main thread, just reads from a buffer
+            // FIX W2: collect nearby entities — safe on main thread
+            final List<EntityInfo> entities = collectNearbyEntities(mc);
+
+            // Audio — reads from a buffer, safe on main thread
             final byte[] audioData = AudioCaptureSystem.captureAudioFrame();
 
-            // FIX F2+F3: hand off JPEG encoding + WS send to encode executor
+            // FIX W3: drain sound event queue — snapshot this frame's events
+            final List<Map<String, Object>> soundEvents = drainSoundEvents();
+
             encodeExecutor.submit(() -> {
                 try {
                     byte[] imageData = VisionCaptureSystem.encodePixelsToJPEG(pixels, imgW, imgH);
                     if (imageData == null) return;
 
                     ByteBuffer frame = buildPerceptionFrame(
-                        imageData, audioData != null ? audioData : new byte[0],
-                        health, hunger, x, y, z, yaw, pitch, imgW, imgH);
+                        imageData,
+                        audioData != null ? audioData : new byte[0],
+                        health, hunger, x, y, z, yaw, pitch,
+                        imgW, imgH,
+                        entities,
+                        soundEvents
+                    );
 
                     WebSocket ws = webSocket;
                     if (ws != null && connected.get()) {
@@ -276,95 +360,337 @@ public class WebSocketManager {
         }
     }
 
+    // =========================================================================
+    // FIX W2 — Entity collection
+    // =========================================================================
+
+    private static final class EntityInfo {
+        final byte   typeId;
+        final String name;
+        final float  distance;
+        final float  angle;  // degrees, relative to player yaw
+
+        EntityInfo(byte typeId, String name, float distance, float angle) {
+            this.typeId   = typeId;
+            this.name     = name;
+            this.distance = distance;
+            this.angle    = angle;
+        }
+    }
+
+    /**
+     * Collect entities the agent can currently SEE — not all nearby entities.
+     *
+     * Two-phase pipeline:
+     *
+     * Phase 1 — VISUAL (in frustum + line of sight):
+     *   Use entitiesForRendering() which Minecraft already frustum-culls to the
+     *   camera view.  For each candidate we additionally fire a ClipContext ray
+     *   from the player's eye to the entity's centre — if the ray hits a solid
+     *   block before reaching the entity, it is occluded and excluded.
+     *   These entities are serialised with their real type_id and name so the
+     *   agent can learn to associate visual patterns with entity types.
+     *
+     * Phase 2 — AUDIBLE (nearby but not visible, within SOUND_RADIUS):
+     *   Entities inside SOUND_RADIUS that did NOT pass the visibility test are
+     *   sent with type_id = ENTITY_UNKNOWN and name = "" so the agent gets a
+     *   distance/angle signal (it "hears" something close) without knowing what
+     *   it is.  This mirrors real perception: you hear rustling before you see
+     *   the zombie.  The agent must turn toward the sound to identify it.
+     *
+     * Both phases run on the Minecraft main thread.
+     */
+    private static final double SOUND_RADIUS    = 16.0;   // audible but not visible
+    private static final double SOUND_RADIUS_SQ = SOUND_RADIUS * SOUND_RADIUS;
+    private static final double ENTITY_RADIUS_SQ = ENTITY_RADIUS * ENTITY_RADIUS;
+
+    private static List<EntityInfo> collectNearbyEntities(Minecraft mc) {
+        List<EntityInfo> result = new ArrayList<>();
+        if (mc.player == null || mc.level == null) return result;
+
+        Vec3   eyePos    = mc.player.getEyePosition();
+        Vec3   playerPos = mc.player.position();
+        double playerYaw = mc.player.getYRot();
+
+        // ── Phase 1: frustum-culled + line-of-sight visible entities ──────
+        // entitiesForRendering() returns only entities already in the camera
+        // frustum — no need for a separate Frustum object.
+        java.util.Set<java.util.UUID> visibleIds = new java.util.HashSet<>();
+
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (entity == mc.player) continue;
+            if (result.size() >= MAX_ENTITIES) break;
+
+            double distSq = entity.distanceToSqr(playerPos);
+            if (distSq > ENTITY_RADIUS_SQ) continue;
+
+            // Line-of-sight raycast: player eye → entity centre
+            Vec3 entityCentre = entity.getBoundingBox().getCenter();
+            HitResult hit = mc.level.clip(new ClipContext(
+                eyePos,
+                entityCentre,
+                ClipContext.Block.COLLIDER,
+                ClipContext.Fluid.NONE,
+                mc.player
+            ));
+
+            // If the ray hit a block before reaching the entity, it is occluded
+            double hitDistSq = hit.getType() == HitResult.Type.BLOCK
+                ? hit.getLocation().distanceToSqr(eyePos)
+                : Double.MAX_VALUE;
+            if (hitDistSq < entityCentre.distanceToSqr(eyePos) * 0.95) continue;
+
+            float dist  = (float) Math.sqrt(distSq);
+            float angle = computeRelativeAngle(playerPos, playerYaw, entity.position());
+            byte  typeId = classifyEntity(entity);
+
+            String regName = entity.getType().toString();
+            if (regName.startsWith("minecraft:")) regName = regName.substring("minecraft:".length());
+            if (regName.length() > 48) regName = regName.substring(0, 48);
+
+            visibleIds.add(entity.getUUID());
+            result.add(new EntityInfo(typeId, regName, dist, angle));
+        }
+
+        // ── Phase 2: nearby-but-not-visible (audible range) ───────────────
+        // Use getEntities() for the full nearby set — includes entities that may
+        // not be in the frustum (e.g. behind the player within 16 blocks).
+        if (result.size() < MAX_ENTITIES) {
+            AABB soundBox = mc.player.getBoundingBox().inflate(SOUND_RADIUS);
+            for (Entity entity : mc.level.getEntities(mc.player, soundBox)) {
+                if (entity == mc.player) continue;
+                if (visibleIds.contains(entity.getUUID())) continue;  // already in phase 1
+                if (result.size() >= MAX_ENTITIES) break;
+
+                double distSq = entity.distanceToSqr(playerPos);
+                if (distSq > SOUND_RADIUS_SQ) continue;
+
+                float dist  = (float) Math.sqrt(distSq);
+                float angle = computeRelativeAngle(playerPos, playerYaw, entity.position());
+
+                // ENTITY_UNKNOWN + empty name: agent senses presence but cannot
+                // identify it without turning to look.  Encourages exploration behaviour.
+                result.add(new EntityInfo(ENTITY_UNKNOWN, "", dist, angle));
+            }
+        }
+
+        return result;
+    }
+
+    private static byte classifyEntity(Entity entity) {
+        if (entity instanceof EnderDragon || entity instanceof WitherBoss) return ENTITY_BOSS;
+        if (entity instanceof Monster)    return ENTITY_HOSTILE;
+        if (entity instanceof Animal)     return ENTITY_PASSIVE;
+        if (entity instanceof Player)     return ENTITY_PLAYER;
+        if (entity instanceof ItemEntity) return ENTITY_ITEM;
+        if (entity instanceof Projectile) return ENTITY_PROJECTILE;
+        // Check if this is the local agent's own god body
+        if (GodEntityManager.isGodEntity(entity)) return ENTITY_GOD;
+        return ENTITY_UNKNOWN;
+    }
+
+    /**
+     * Angle of `target` relative to `observer`'s yaw, in degrees.
+     * 0° = directly in front, ±90° = to the sides, ±180° = behind.
+     */
+    private static float computeRelativeAngle(Vec3 observer, double observerYaw, Vec3 target) {
+        double dx    = target.x - observer.x;
+        double dz    = target.z - observer.z;
+        double angle = Math.toDegrees(Math.atan2(dx, dz)) - observerYaw;
+        // Normalise to [-180, 180]
+        while (angle >  180) angle -= 360;
+        while (angle < -180) angle += 360;
+        return (float) angle;
+    }
+
+    // =========================================================================
+    // FIX W3 — Sound event queue drain
+    // =========================================================================
+
+    private static List<Map<String, Object>> drainSoundEvents() {
+        List<Map<String, Object>> events = new ArrayList<>();
+        Map<String, Object> ev;
+        while ((ev = soundEventQueue.poll()) != null && events.size() < MAX_SOUND_EVENTS) {
+            events.add(ev);
+        }
+        return events;
+    }
+
+    // =========================================================================
+    // Frame builder
+    // =========================================================================
+
+    /**
+     * Build a FRAME_PERCEPTION binary frame.
+     *
+     * Wire layout (must match BinaryProtocol.unpack_perception in Python):
+     *   [4]  MAGIC
+     *   [4]  frame type (0x01)
+     *   [4]  agent_id length
+     *   [N]  agent_id UTF-8
+     *   [8]  timestamp (double, seconds)
+     *   [4]  image_data length
+     *   [N]  image_data (JPEG)
+     *   [2]  image_width (uint16)
+     *   [2]  image_height (uint16)
+     *   [4]  health (float32)
+     *   [4]  hunger (float32)
+     *   [4]  x (float32)
+     *   [4]  y (float32)
+     *   [4]  z (float32)
+     *   [4]  yaw (float32)
+     *   [4]  pitch (float32)
+     *   [2]  entity_count (uint16)
+     *   per entity:
+     *     [1]  type_id (uint8)
+     *     [4]  name_len (uint32)
+     *     [N]  name UTF-8
+     *     [4]  distance (float32)
+     *     [4]  angle (float32)
+     *   [4]  audio_data length
+     *   [N]  audio_data (only present when length > 0)
+     *   [4]  sample_rate (uint32)  ← FIX W1: only written when audio_len > 0
+     *   [1]  channels (uint8)       ← FIX W1: only written when audio_len > 0
+     *   [1]  bits_per_sample (uint8) ← FIX W1: only written when audio_len > 0
+     *   [2]  sound_event_count (uint16)   ← FIX W3: new field
+     *   per sound event:
+     *     [4]  event_json_len (uint32)
+     *     [N]  event_json UTF-8
+     */
     private static ByteBuffer buildPerceptionFrame(
-            byte[] imageData, byte[] audioData,
+            byte[] imageData,
+            byte[] audioData,
             float health, float hunger,
             double x, double y, double z,
             float yaw, float pitch,
-            int imgW, int imgH) {
+            int imgW, int imgH,
+            List<EntityInfo> entities,
+            List<Map<String, Object>> soundEvents) {
 
         byte[] idBytes = agentId.getBytes(StandardCharsets.UTF_8);
-        int audioSection = 4 + audioData.length + 4 + 1 + 1;
-        int total = 4 + 4
-                  + 4 + idBytes.length
-                  + 8
-                  + 4 + imageData.length
-                  + 2 + 2
-                  + 4 + 4
-                  + 4 + 4 + 4
-                  + 4 + 4
-                  + 2
-                  + audioSection;
+        boolean hasAudio = audioData.length > 0;
+
+        // Serialise entity bytes
+        List<byte[]> entityBlobs = new ArrayList<>();
+        for (EntityInfo ei : entities) {
+            byte[] nameBytes = ei.name.getBytes(StandardCharsets.UTF_8);
+            // 1(typeId) + 4(nameLen) + N(name) + 4(dist) + 4(angle)
+            ByteBuffer eb = ByteBuffer.allocate(1 + 4 + nameBytes.length + 4 + 4);
+            eb.put(ei.typeId);
+            eb.putInt(nameBytes.length);
+            eb.put(nameBytes);
+            eb.putFloat(ei.distance);
+            eb.putFloat(ei.angle);
+            entityBlobs.add(eb.array());
+        }
+
+        // Serialise sound event JSON blobs
+        List<byte[]> soundBlobs = new ArrayList<>();
+        for (Map<String, Object> ev : soundEvents) {
+            try {
+                StringBuilder sb = new StringBuilder("{");
+                ev.forEach((k, v) -> {
+                    sb.append("\"").append(k).append("\":");
+                    if (v instanceof String) sb.append("\"").append(v).append("\"");
+                    else sb.append(v);
+                    sb.append(",");
+                });
+                if (sb.charAt(sb.length() - 1) == ',') sb.setCharAt(sb.length() - 1, '}');
+                else sb.append('}');
+                soundBlobs.add(sb.toString().getBytes(StandardCharsets.UTF_8));
+            } catch (Exception ignored) {}
+        }
+
+        // Calculate total frame size
+        int entityBytes = entityBlobs.stream().mapToInt(b -> b.length).sum();
+        // FIX W1: audio metadata section size depends on whether audio is present
+        int audioSection = 4 + audioData.length + (hasAudio ? 4 + 1 + 1 : 0);
+        int soundSection = 2 + soundBlobs.stream().mapToInt(b -> 4 + b.length).sum();
+
+        int total = 4 + 4                          // MAGIC + type
+                  + 4 + idBytes.length             // agent_id
+                  + 8                               // timestamp
+                  + 4 + imageData.length           // image
+                  + 2 + 2                           // imgW, imgH
+                  + 4 + 4                           // health, hunger
+                  + 4 + 4 + 4                       // x, y, z
+                  + 4 + 4                           // yaw, pitch
+                  + 2 + entityBytes                 // entities
+                  + audioSection
+                  + soundSection;
 
         ByteBuffer buf = ByteBuffer.allocate(total);
+
         buf.putInt(MAGIC);
         buf.putInt(FRAME_PERCEPTION);
-        buf.putInt(idBytes.length); buf.put(idBytes);
+        buf.putInt(idBytes.length);
+        buf.put(idBytes);
         buf.putDouble(System.currentTimeMillis() / 1000.0);
-        buf.putInt(imageData.length); buf.put(imageData);
-        buf.putShort((short) imgW); buf.putShort((short) imgH);
-        buf.putFloat(health); buf.putFloat(hunger);
-        buf.putFloat((float) x); buf.putFloat((float) y); buf.putFloat((float) z);
-        buf.putFloat(yaw); buf.putFloat(pitch);
-        buf.putShort((short) 0); // entity count
+        buf.putInt(imageData.length);
+        buf.put(imageData);
+        buf.putShort((short) imgW);
+        buf.putShort((short) imgH);
+        buf.putFloat(health);
+        buf.putFloat(hunger);
+        buf.putFloat((float) x);
+        buf.putFloat((float) y);
+        buf.putFloat((float) z);
+        buf.putFloat(yaw);
+        buf.putFloat(pitch);
+
+        // Entities (FIX W2)
+        buf.putShort((short) entityBlobs.size());
+        for (byte[] eb : entityBlobs) buf.put(eb);
+
+        // Audio (FIX W1: metadata only written when audio present)
         buf.putInt(audioData.length);
-        if (audioData.length > 0) buf.put(audioData);
-        buf.putInt(AudioCaptureSystem.getSampleRate());
-        buf.put((byte) AudioCaptureSystem.getChannels());
-        buf.put((byte) AudioCaptureSystem.getBitsPerSample());
+        if (hasAudio) {
+            buf.put(audioData);
+            buf.putInt(AudioCaptureSystem.getSampleRate());
+            buf.put((byte) AudioCaptureSystem.getChannels());
+            buf.put((byte) AudioCaptureSystem.getBitsPerSample());
+        }
+
+        // Sound events (FIX W3)
+        buf.putShort((short) soundBlobs.size());
+        for (byte[] sb : soundBlobs) {
+            buf.putInt(sb.length);
+            buf.put(sb);
+        }
+
         buf.flip();
         return buf;
     }
 
-    // -------------------------------------------------------------------------
-    // Inbound: ChatFrame (Python → Minecraft, agent speaks in-world)
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Inbound: ChatFrame (Python → Minecraft)
+    // =========================================================================
 
-    /**
-     * Parse a FRAME_CHAT (0x03) from the Python backend and send it as
-     * in-game chat via the Minecraft client.
-     *
-     * Wire layout (matches BinaryProtocol.pack_chat() in communication_protocol.py):
-     *   [4]  MAGIC  0x44574149
-     *   [4]  type   0x03
-     *   [4]  agent-ID length
-     *   [N]  agent-ID UTF-8
-     *   [8]  timestamp (double, ignored)
-     *   [4]  message length
-     *   [N]  message UTF-8
-     */
     private static void handleChatFrame(ByteBuffer buf) {
         try {
             if (buf.remaining() < 8) return;
-            int magic = buf.getInt();
-            if (magic != MAGIC) return;
-            int type = buf.getInt();
-            if (type != FRAME_CHAT) return;
+            if (buf.getInt() != MAGIC) return;
+            if (buf.getInt() != FRAME_CHAT) return;
 
-            // Skip agent ID
             int aidLen = buf.getInt();
             if (aidLen > 0 && buf.remaining() >= aidLen)
                 buf.position(buf.position() + aidLen);
 
-            // Skip timestamp
-            if (buf.remaining() >= 8) buf.getDouble();
+            if (buf.remaining() >= 8) buf.getDouble(); // timestamp
 
-            // Read message
             if (buf.remaining() < 4) return;
             int msgLen = buf.getInt();
             if (msgLen <= 0 || buf.remaining() < msgLen) return;
+
             byte[] msgBytes = new byte[msgLen];
             buf.get(msgBytes);
             final String message = new String(msgBytes, StandardCharsets.UTF_8);
 
-            // Send on Minecraft main thread
             Minecraft.getInstance().execute(() -> {
                 net.minecraft.client.multiplayer.ClientPacketListener conn =
                     Minecraft.getInstance().getConnection();
                 if (conn != null && !message.isEmpty()) {
-                    // Trim to Minecraft chat limit (256 chars)
-                    String trimmed = message.length() > 256
-                        ? message.substring(0, 256) : message;
+                    String trimmed = message.length() > 256 ? message.substring(0, 256) : message;
                     conn.sendChat(trimmed);
                     DWClientMod.LOGGER.info("[WS] Agent spoke: {}", trimmed);
                 }
@@ -375,16 +701,15 @@ public class WebSocketManager {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Inbound: ActionFrame
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Inbound: ActionFrame (Python → Minecraft)
+    // =========================================================================
 
     private static void handleActionFrame(ByteBuffer buf) {
         try {
             if (buf.remaining() < 8) return;
-            int magic = buf.getInt();
-            if (magic != MAGIC) {
-                DWClientMod.LOGGER.warn("[WS] Bad magic 0x{}", Integer.toHexString(magic));
+            if (buf.getInt() != MAGIC) {
+                DWClientMod.LOGGER.warn("[WS] Bad magic in action frame");
                 return;
             }
             if (buf.getInt() != FRAME_ACTION) return;
@@ -412,14 +737,16 @@ public class WebSocketManager {
                     buf.get(ab);
                     godAbility = new String(ab, StandardCharsets.UTF_8);
                     if (buf.remaining() >= 12) {
-                        p1 = buf.getFloat(); p2 = buf.getFloat(); p3 = buf.getFloat();
+                        p1 = buf.getFloat();
+                        p2 = buf.getFloat();
+                        p3 = buf.getFloat();
                     }
                 }
             }
 
-            final String fa = godAbility;
-            final float fp1 = p1, fp2 = p2, fp3 = p3;
-            final int   fHotbar = hotbar;
+            final String fa  = godAbility;
+            final float fp1  = p1, fp2 = p2, fp3 = p3;
+            final int fHotbar = hotbar;
 
             Minecraft.getInstance().execute(() -> {
                 ActionExecutor.executeAction(
@@ -434,24 +761,26 @@ public class WebSocketManager {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Reconnect
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Reconnect — FIX W4 + W5
+    // =========================================================================
 
     private static void scheduleReconnect(String url, int port) {
-        if (perceptionExecutor != null && !perceptionExecutor.isShutdown()) {
-            perceptionExecutor.schedule(() ->
-                initialize(url, port, agentId), 5, TimeUnit.SECONDS);
-        }
+        // FIX W5: use reconnectExecutor (never null) instead of perceptionExecutor
+        // (which is null if the first connection fails before onOpen fires).
+        reconnectExecutor.schedule(() -> {
+            DWClientMod.LOGGER.info("[WS] Attempting reconnect...");
+            initialize(url, port, agentId);
+        }, 5, TimeUnit.SECONDS);
     }
 
-    // -------------------------------------------------------------------------
-    // Chat
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Outbound text — proximity chat observation
+    // =========================================================================
 
     public static void sendChatObservation(String speaker, String message) {
         if (!connected.get() || webSocket == null) return;
-        String s = message.replace("\\", "\\\\").replace("\"", "\\\"");
+        String s  = message.replace("\\", "\\\\").replace("\"", "\\\"");
         String sp = speaker.replace("\\", "\\\\").replace("\"", "\\\"");
         String json = String.format(
             "{\"type\":\"chat_heard\",\"agent_id\":\"%s\","
@@ -460,18 +789,15 @@ public class WebSocketManager {
         webSocket.sendText(json, true);
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Lifecycle
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     public static void shutdown() {
         connected.set(false);
         connecting.set(false);
-        if (perceptionExecutor != null) perceptionExecutor.shutdown();
-        // Do NOT call encodeExecutor.shutdown() — it is static final and cannot
-        // be restarted.  Shutting it down here means captureAndScheduleEncode()
-        // throws RejectedExecutionException on the next login.  It is a daemon
-        // thread and will die naturally with the JVM / game process.
+        ScheduledExecutorService exec = perceptionExecutor;
+        if (exec != null) exec.shutdownNow();
         WebSocket ws = webSocket;
         if (ws != null) ws.sendClose(WebSocket.NORMAL_CLOSURE, "Shutting down");
         VisionCaptureSystem.cleanup();

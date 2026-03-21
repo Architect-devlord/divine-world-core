@@ -160,12 +160,17 @@ public class DWMod {
         return instance;
     }
 
+    private boolean oracleSystemRegistered = false;  // FIX M-09: prevent double-registration on server restart
+
     @SubscribeEvent
     public void onServerStarting(ServerStartingEvent evt) {
         this.server = evt.getServer();
         LOGGER.info("[DivineWorld] Server starting - registering Oracle handlers");
 
-        MinecraftForge.EVENT_BUS.register(oracleSystem);
+        if (!oracleSystemRegistered) {
+            MinecraftForge.EVENT_BUS.register(oracleSystem);
+            oracleSystemRegistered = true;
+        }
 
         LOGGER.info("[DivineWorld] Oracle handlers registered");
     }
@@ -204,11 +209,9 @@ public class DWMod {
         // Initialize network handler
         NetworkHandler.register();
 
-        // Commands registration happens via RegisterCommandsEvent
-        event.enqueueWork(() -> {
-            CommandRegistrar.register();
-            LOGGER.info("[DivineWorld] CommandRegistrar setup complete");
-        });
+        // FIX M-05: CommandRegistrar.register() was called here AND handled by
+        // onRegisterCommands(), causing every command to be registered twice.
+        // Brigadier throws on duplicate registrations. Removed — onRegisterCommands owns this.
 
         LOGGER.info("[DivineWorld] Common setup complete");
     }

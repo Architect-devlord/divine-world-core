@@ -144,8 +144,26 @@ public class DWEventHandler {
     // Backend notification (fire-and-forget on a daemon thread)
     // -------------------------------------------------------------------------
 
+    /**
+     * Notify Python backend and — on "connected" events — read back the
+     * spawn_pos the backend stored when it launched this agent.
+     *
+     * SPAWN COORDINATE FIX:
+     * When an agent is spawned via /api/agents/spawn_single (or genesis/god spawn),
+     * main.py stores the requested coordinates in agent_info["spawn_pos"].
+     * The /api/player_event "connected" response now includes that field.
+     * We read it here and teleport the ServerPlayer immediately so the agent
+     * arrives at the position that was specified in the API call — not at
+     * vanilla world spawn or their last bed.
+     *
+     * If no spawn_pos is returned (auto-connect, or no position was set),
+     * the player stays wherever Minecraft placed them.
+     */
     private static void notifyBackend(String agentId, String playerUuid,
                                       String agentType, String eventType) {
+        // Capture the server reference once so the lambda can schedule work on it
+        net.minecraft.server.MinecraftServer srv = DWMod.getInstance().getServer();
+
         Thread t = new Thread(() -> {
             try {
                 String url = System.getProperty("dw.backend", "http://127.0.0.1:11400")
@@ -164,11 +182,42 @@ public class DWEventHandler {
                         .build();
 
                 var resp = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
-                if (resp.statusCode() == 200)
-                    DWMod.LOGGER.info("✅ Backend notified: {} {}", agentId, eventType);
-                else
+
+                if (resp.statusCode() != 200) {
                     DWMod.LOGGER.warn("⚠ Backend notify failed for {} (HTTP {})",
                             agentId, resp.statusCode());
+                    return;
+                }
+
+                DWMod.LOGGER.info("✅ Backend notified: {} {}", agentId, eventType);
+
+                // On "connected" events, check if the backend returned a spawn_pos.
+                if (!"connected".equals(eventType) || srv == null) return;
+
+                com.google.gson.JsonObject body = new com.google.gson.Gson()
+                        .fromJson(resp.body(), com.google.gson.JsonObject.class);
+                if (body == null || !body.has("spawn_pos")) return;
+
+                com.google.gson.JsonObject pos = body.getAsJsonObject("spawn_pos");
+                if (!pos.has("x") || !pos.has("y") || !pos.has("z")) return;
+
+                double tx = pos.get("x").getAsDouble();
+                double ty = pos.get("y").getAsDouble();
+                double tz = pos.get("z").getAsDouble();
+
+                DWMod.LOGGER.info("[SpawnPos] Teleporting {} to ({}, {}, {})", agentId, tx, ty, tz);
+
+                // Schedule teleport on the server thread — teleportTo is NOT thread-safe
+                srv.execute(() -> {
+                    net.minecraft.server.level.ServerPlayer player =
+                            srv.getPlayerList().getPlayerByName(agentId);
+                    if (player != null) {
+                        player.teleportTo(tx, ty, tz);
+                        DWMod.LOGGER.info("✅ Teleported {} to ({}, {}, {})", agentId, tx, ty, tz);
+                    } else {
+                        DWMod.LOGGER.warn("[SpawnPos] Player {} not found for teleport", agentId);
+                    }
+                });
 
             } catch (Exception e) {
                 DWMod.LOGGER.error("Failed to notify backend ({}): {}", eventType, e.getMessage());

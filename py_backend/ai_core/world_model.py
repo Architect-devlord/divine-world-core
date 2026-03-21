@@ -54,38 +54,38 @@ log = logging.getLogger("world_model")
 @dataclass
 class WorldModelConfig:
     """World model configuration"""
-    
+
     # Architecture
     d_model: int = 512
     n_heads: int = 8
     n_layers: int = 6
     d_ff: int = 2048
     dropout: float = 0.1
-    
+
     # Input dimensions
     vision_channels: int = 3
     vision_size: int = 84  # 84x84 frames
     audio_dim: int = 128
     proprio_dim: int = 32  # Proprioception (health, hunger, position, etc.)
-    action_dim: int = 11
+    action_dim: int = 13  # FIX INT-05: was 11, must match TransformerPolicy.BASE_DIM=13
     language_vocab: int = 10000
-    
+
     # Latent space
     latent_dim: int = 256
     use_vae: bool = True  # Variational encoding for uncertainty
     kl_weight: float = 0.1
-    
+
     # Training
     learning_rate: float = 3e-4
     batch_size: int = 32
     sequence_length: int = 64
     grad_clip: float = 1.0
-    
+
     # Prediction
     predict_steps: int = 16  # How many steps to imagine ahead
     use_ensemble: bool = True  # Ensemble for uncertainty estimation
     n_ensemble: int = 5
-    
+
     # Optimization
     use_mixed_precision: bool = True
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'

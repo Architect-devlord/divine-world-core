@@ -121,7 +121,10 @@ class BreedingSystem:
         Register the breeding system on the agent so save() can serialise
         pregnancy state, and restore any pending pregnancy from a previous run.
 
-        Call this after spawning or loading every NPC agent.
+        FIX B-06: Must be called for BOTH NPC and god agents.
+        God agents can now carry pregnancies (when acting as female role),
+        and their pregnancy_state must survive brain save/load cycles.
+        Call this after spawning or loading every agent regardless of type.
         """
         agent._breeding_system = self
 
@@ -175,10 +178,11 @@ class BreedingSystem:
         is_god_a = agent_a.agent_type.startswith('god')
         is_god_b = agent_b.agent_type.startswith('god')
 
-        if is_god_a or is_god_b:
-            return False, "Only NPCs can breed traditionally"
-
-        if needs_beds := not (is_god_a or is_god_b):
+        # FIX B-01 / B-08: gods are dual-gendered — they CAN breed with
+        # NPCs and with other gods.  Beds are only required for NPC × NPC
+        # pairs; god involvement waives the adjacency requirement (gods are
+        # divine beings and don't need beds to reproduce).
+        if not (is_god_a or is_god_b):
             if not beds_adjacent:
                 return False, "Beds must be adjacent"
 
@@ -228,26 +232,65 @@ class BreedingSystem:
         agent_a = self.spawner.get_agent(agent_a_id)
         agent_b = self.spawner.get_agent(agent_b_id)
 
-        # Determine which agent carries the pregnancy
-        if agent_a.personality.gender == 'female':
+        # Determine which agent carries the pregnancy.
+        #
+        # FIX B-05: Dual-gender (god) agents flip their reproductive role
+        # based on their partner:
+        #   god + male NPC  → god acts as FEMALE  (god carries pregnancy)
+        #   god + female NPC → god acts as MALE    (NPC carries pregnancy)
+        #   god + god        → first god carries   (arbitrary but consistent)
+        #   male + female    → female carries       (standard NPC case)
+        #
+        # This implements the spec: "when breeding with males they are female,
+        # when breeding with females they are male."
+        gender_a = agent_a.personality.gender
+        gender_b = agent_b.personality.gender
+
+        if gender_a == 'female' and gender_b != 'female':
+            # A is female (or A is dual acting as female when B is male)
             female_id, male_id = agent_a_id, agent_b_id
             female, male = agent_a, agent_b
-        elif agent_b.personality.gender == 'female':
+        elif gender_b == 'female' and gender_a != 'female':
             female_id, male_id = agent_b_id, agent_a_id
             female, male = agent_b, agent_a
-        else:
-            # dual × dual or dual × male — first agent carries
+        elif gender_a == 'dual' and gender_b == 'male':
+            # Dual god + male NPC → god acts as female
             female_id, male_id = agent_a_id, agent_b_id
             female, male = agent_a, agent_b
+        elif gender_b == 'dual' and gender_a == 'male':
+            # Male NPC + dual god → god acts as female
+            female_id, male_id = agent_b_id, agent_a_id
+            female, male = agent_b, agent_a
+        elif gender_a == 'dual' and gender_b == 'female':
+            # Dual god + female NPC → god acts as male, NPC carries
+            female_id, male_id = agent_b_id, agent_a_id
+            female, male = agent_b, agent_a
+        elif gender_b == 'dual' and gender_a == 'female':
+            # Female NPC + dual god → god acts as male, NPC carries
+            female_id, male_id = agent_a_id, agent_b_id
+            female, male = agent_a, agent_b
+        else:
+            # dual × dual (god × god): randomly assign reproductive roles each
+            # time so neither god is permanently locked as the pregnant party.
+            if random.random() < 0.5:
+                female_id, male_id = agent_a_id, agent_b_id
+                female, male = agent_a, agent_b
+            else:
+                female_id, male_id = agent_b_id, agent_a_id
+                female, male = agent_b, agent_a
 
         child_traits  = self._generate_child_traits(
             female.personality.to_dict(),
             male.personality.to_dict(),
         )
-        child_gender  = determine_child_gender(
+        # Child gender is always 'male' or 'female' regardless of parent types.
+        # determine_child_gender() already returns one of those; the guard
+        # here is defensive for any future extension to GenderType.
+        raw_child_gender = determine_child_gender(
             female.personality.gender,
             male.personality.gender,
         )
+        child_gender = raw_child_gender if raw_child_gender in ('male', 'female')             else random.choice(['male', 'female'])
 
         now      = time.time()
         due_time = now + PREGNANCY_DAYS * MINECRAFT_DAY_SECONDS
@@ -258,7 +301,7 @@ class BreedingSystem:
             conception_time = now,
             due_time        = due_time,
             child_traits    = child_traits,
-            child_gender    = child_gender,
+            child_gender    = child_gender,   # always 'male' or 'female'
         )
         self.pregnancies[female_id] = pregnancy
 
@@ -306,7 +349,7 @@ class BreedingSystem:
             signal = reward_system.compute_reward(event)
             reward_system.apply_signal(signal)
             log.debug(
-                f"[{agent.agent_id}] Breeding reward: {signal.bonding:.3f} "
+                f"[{agent.agent_id}] Breeding reward: {signal.social:.3f} "
                 f"(total={signal.total:.3f})"
             )
         except Exception as e:
@@ -346,13 +389,24 @@ class BreedingSystem:
         return births
 
     def _spawn_child(self, pregnancy: PregnancyData):
-        """Spawn the newborn agent with inherited traits."""
+        """Spawn the newborn agent with inherited traits.
+
+        Offspring are ALWAYS NPCs — even when one or both parents are gods.
+        Divine heritage is expressed purely through inherited personality
+        traits, not through the agent type.  Child gender is always
+        'male' or 'female' (never 'dual') so the child can participate
+        in standard NPC breeding when they grow up.
+        """
         child_id = f"npc_child_{int(time.time() * 1000)}"
         try:
+            # Ensure child gender is male or female, never dual
+            child_gender = pregnancy.child_gender
+            if child_gender not in ('male', 'female'):
+                child_gender = random.choice(['male', 'female'])
             child = self.spawner.spawn_npc(
-                agent_id    = child_id,
+                agent_id       = child_id,
                 persona_traits = pregnancy.child_traits,
-                gender      = pregnancy.child_gender,
+                gender         = child_gender,
             )
 
             self.growth_stages[child_id] = time.time()
@@ -363,7 +417,7 @@ class BreedingSystem:
                 'parent_a':  pregnancy.female_id,
                 'parent_b':  pregnancy.male_id,
                 'birth_time':time.time(),
-                'gender':    pregnancy.child_gender,
+                'gender':    child_gender,
             })
 
             # Attach breeding system to child immediately
@@ -410,9 +464,14 @@ class BreedingSystem:
         parent_b: Dict[str, Any],
         mutation_rate: float = 0.15,
     ) -> Dict[str, float]:
-        """Blend parent traits with random weighting and mild mutation."""
+        """Blend parent traits with random weighting and mild mutation.
+
+        Trait keys from both parents are merged so all personality
+        dimensions are inherited regardless of which parent carries them.
+        """
+        all_keys = set(parent_a) | set(parent_b)
         child: Dict[str, float] = {}
-        for key in parent_a:
+        for key in all_keys:
             if key == 'gender':
                 continue
             val_a  = float(parent_a.get(key, 0.0))

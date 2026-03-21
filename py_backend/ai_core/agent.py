@@ -644,7 +644,7 @@ class NPCAgent:
     # Reward system
     # =========================================================================
 
-    def initialize_reward_system(self, obs_dim: int = 50, action_dim: int = 11):
+    def initialize_reward_system(self, obs_dim: int = 50, action_dim: int = 13):  # FIX DIM-02: was 11, must match TransformerPolicy.BASE_DIM
         if self.reward_system is not None:
             return
         self.reward_system = RewardSystem(
@@ -697,7 +697,29 @@ class NPCAgent:
 
         obs_parts.append(raw_observation.get('yaw',   0.0) / 360.0)
         obs_parts.append(raw_observation.get('pitch', 0.0) /  90.0)
-        obs_parts.append(len(raw_observation.get('entities', [])) / 10.0)
+        # FIX INT-04: old code only stored len(entities)/10 — full entity data
+        # (type_id, name, distance, angle) discarded. Agents never learned which
+        # entity types are near. Now encode the nearest 3 entities explicitly:
+        #   dim = [type_id/7, distance/32, sin(angle_rad), cos(angle_rad)]
+        # type_id range: 0=unknown 1=player 2=hostile 3=passive 4=item 5=boss 6=projectile 7=god
+        # Absent entities → [0, 0, 0, 0] (type=unknown, distance=0 signals nothing present)
+        entities = raw_observation.get('entities', [])
+        obs_parts.append(len(entities) / 10.0)  # keep count for backward compat
+        # Sort by distance ascending so nearest 3 are always in the same slots
+        sorted_ents = sorted(entities, key=lambda e: e[2] if len(e) > 2 else 999)[:3]
+        for ent in sorted_ents:
+            type_id  = ent[0] if len(ent) > 0 else 0
+            distance = ent[2] if len(ent) > 2 else 0.0
+            angle    = ent[3] if len(ent) > 3 else 0.0
+            angle_rad = float(angle) * 3.14159265 / 180.0
+            obs_parts.append(float(type_id) / 7.0)
+            obs_parts.append(min(float(distance), 32.0) / 32.0)
+            obs_parts.append(float(np.sin(angle_rad)))
+            obs_parts.append(float(np.cos(angle_rad)))
+        # Pad missing entities with zeros
+        for _ in range(3 - len(sorted_ents)):
+            obs_parts.extend([0.0, 0.0, 0.0, 0.0])
+
         obs_parts.append(raw_observation.get('inventory', {}).get('slot_count', 0) / 36.0)
 
         obs_parts.extend(self.personality.as_array().tolist())
@@ -792,6 +814,15 @@ class NPCAgent:
         exp_event = {'type': 'experience', 'tags': ['rl'], 'payload': outcome}
         self.brain._update_learning(exp_event, outcome, signal.total)
         self.brain._store_continual_experience(exp_event, signal.total, outcome)
+
+        # FIX INT-01: populate EpisodicMemory so PPO batch training has samples.
+        # Was never called — replay buffer stayed empty during all live play.
+        done = bool(outcome.get('is_dead', False))
+        if hasattr(self, 'episodic_memory') and self.episodic_memory is not None:
+            self.episodic_memory.add(
+                obs, action, signal.total, next_obs, done,
+                priority=abs(signal.total) + 1e-6,
+            )
 
     # =========================================================================
     # Status
@@ -915,6 +946,10 @@ class NPCAgent:
             'step_count':  self.step_count,
             'saved_at':    time.time(),
             'autonomous':  self.autonomous_mode,
+            # FIX: god_type was never persisted — a restarted god agent had
+            # god_type=None, so god_controls, ability space, and 18-dim policy
+            # never re-initialised after load().
+            'god_type':    self.god_type,
             # Persist resolved ports so they survive restarts without
             # needing another agents.json lookup on cold start.
             'tcp_port':    self._tcp_port,
@@ -1064,6 +1099,23 @@ class NPCAgent:
         self.mode            = capsule.metadata.get('mode',         'autonomous')
         self.autonomous_mode = capsule.metadata.get('autonomous',   True)
 
+        # FIX: restore god_type and re-integrate god controls.
+        # Without this, a restarted god agent has god_type=None, the 18-dim
+        # GodTransformerPolicy never initialises (policy falls back to 11-dim
+        # random), and all god abilities are silently lost on restart.
+        restored_god_type = capsule.metadata.get('god_type')
+        if restored_god_type and not self.god_type:
+            self.god_type = restored_god_type
+            try:
+                from ai_core.god_controls import integrate_god_controls
+                integrate_god_controls(self)
+                log.info(
+                    f"[{self.agent_id}] God controls re-integrated "
+                    f"for {restored_god_type} from brain capsule"
+                )
+            except Exception as e:
+                log.warning(f"[{self.agent_id}] God controls restore failed: {e}")
+
         # Restore persisted ports if they were not explicitly set at init time.
         # This means a restarted agent always uses the same ports as the first
         # run, even if agents.json is briefly unavailable.
@@ -1202,29 +1254,46 @@ class NPCAgent:
     def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         if self.policy is None:
             base = np.clip(np.random.randn(11) * 0.3, -1.0, 1.0)
-            return np.concatenate([base, np.zeros(5)]) if self.god_type else base
+            return np.concatenate([base, np.zeros(5)]) if self.god_type else base  # 18-dim god fallback
         with torch.no_grad():
             obs_t  = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
             action = self.policy._predict(obs_t, deterministic=deterministic)
             return action.squeeze().cpu().numpy()
 
     def act(self, action: np.ndarray) -> dict:
-        action   = np.clip(action[:11], -1.0, 1.0)
+        """
+        Convert a 13-dim policy output to a controls dict.
+
+        FIX DIM-01 / INT-02: old code clipped to [:11], silently dropping
+        sprint (dim 11) and hotbar_slot (dim 12) for every NPC agent.
+        TransformerPolicy outputs 13 dims (BASE_DIM = 13) — all must be used.
+        """
+        # Keep full array in last_action so ICM gets correct dims
+        self.last_action = action
+        self.step_count += 1
+
+        a = np.clip(action[:13], -1.0, 1.0)
+
+        # hotbar_slot: dim 12 > -0.5 → active slot [0..8]; ≤ -0.5 → no change
+        raw_slot = float(a[12]) if len(a) > 12 else -1.0
+        hotbar   = (max(0, min(8, int(round((raw_slot + 1.0) / 2.0 * 8.0))))
+                    if raw_slot > -0.5 else None)
+
         controls = {
-            'move_forward': float(action[0]),
-            'move_strafe':  float(action[1]),
-            'jump':         bool(action[2] > 0.5),
-            'sneak':        bool(action[3] > 0.5),
-            'attack':       bool(action[4] > 0.5),
-            'use':          bool(action[5] > 0.5),
-            'drop':         bool(action[6] > 0.5),
-            'open_inv':     bool(action[7] > 0.5),
-            'swap_hand':    bool(action[8] > 0.5),
-            'yaw_delta':    float(action[9]  * 2.0),
-            'pitch_delta':  float(action[10] * 1.2),
+            'move_forward': float(a[0]),
+            'move_strafe':  float(a[1]),
+            'jump':         bool(a[2] > 0.5),
+            'sneak':        bool(a[3] > 0.5),
+            'attack':       bool(a[4] > 0.5),
+            'use':          bool(a[5] > 0.5),
+            'drop':         bool(a[6] > 0.5),
+            'open_inv':     bool(a[7] > 0.5),
+            'swap_hand':    bool(a[8] > 0.5),
+            'yaw_delta':    float(a[9]  * 2.0),
+            'pitch_delta':  float(a[10] * 1.2),
+            'sprint':       bool(a[11] > 0.5) if len(a) > 11 else False,
+            'hotbar_slot':  hotbar,
         }
-        self.last_action  = action
-        self.step_count  += 1
         return controls
 
     def act_god(self, action: np.ndarray) -> dict:

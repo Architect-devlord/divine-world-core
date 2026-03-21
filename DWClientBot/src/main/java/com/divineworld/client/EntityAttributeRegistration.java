@@ -3,6 +3,7 @@ package com.divineworld.client;
 
 import com.divineworld.client.entity.ModEntities;
 import com.divineworld.client.entity.gods.*;
+import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;

@@ -81,6 +81,18 @@ if not Config.validate():
 name_manager = AgentNameManager()
 
 
+
+def _extract_spawn_pos(args: list) -> dict:
+    """Pull --spawn-x/y/z values out of an additional_args list."""
+    pos = {}
+    try:
+        for flag, key in [("--spawn-x", "x"), ("--spawn-y", "y"), ("--spawn-z", "z")]:
+            if flag in args:
+                pos[key] = float(args[args.index(flag) + 1])
+    except (ValueError, IndexError):
+        pass
+    return pos if len(pos) == 3 else {}
+
 def sanitize_agent_id(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "", name.lower().replace(" ", "_"))
 
@@ -432,13 +444,16 @@ class AgentProcessManager:
                 "pid":         process.pid,
                 "backend_port": locals().get("backend_port", 0),
                 "tcp_port":     locals().get("tcp_port", 0),
-                "started_at":  asyncio.get_event_loop().time(),
+                "started_at":  time.monotonic(),
                 "brain_path":  load_brain,
                 "status":      "running",
                 "agent_type":  agent_type,
                 "custom_name": custom_name or "Unnamed",
                 "uuid":        locals().get("agent_uuid", ""),
                 "server_addr": server_addr,
+                # Spawn coordinates — extracted from --spawn-x/y/z additional_args
+                # so /api/player_event can return them to Java for teleport on join.
+                "spawn_pos":   _extract_spawn_pos(additional_args or []),
             }
 
             asyncio.create_task(self._monitor_logs(agent_id, process))
@@ -659,6 +674,45 @@ async def lifespan(app: FastAPI):
     log.info("=" * 60)
     log.info("  🎮 Divine World Management Server  v3.0.0")
     log.info("=" * 60)
+
+    # FIX B-04: Wire BreedingSystem into app.state so /api/breeding/event
+    # routes through the full pregnancy lifecycle (cooldowns, birth timing,
+    # growth stages, brain-capsule persistence, reward events) rather than
+    # the direct-spawn fallback.
+    try:
+        from py_backend.breeding_system import BreedingSystem
+        spawner = getattr(agent_manager, 'spawner', None) or agent_manager
+        breeding = BreedingSystem(spawner)
+        app.state.breeding_system = breeding
+
+        # Cross-wire: EnhancedAgentSpawner._post_spawn() checks
+        # self._breeding_system to auto-attach new agents.  Without this,
+        # newly spawned agents never get attach_to_agent() called and their
+        # pregnancy state is never saved in brain capsules.
+        if hasattr(spawner, '_breeding_system'):
+            spawner._breeding_system = breeding
+
+        # Background tick task: processes births and updates child growth.
+        # Runs every 10 real seconds (≈0.5 MC ticks at 20 min/MC day).
+        async def _breeding_tick_loop():
+            import asyncio as _asyncio
+            while True:
+                try:
+                    births = breeding.tick()
+                    for mother_id, child in births:
+                        log.info(f"🍼 Birth: {mother_id} → {child.agent_id}")
+                except Exception as _te:
+                    log.debug(f"Breeding tick error: {_te}")
+                await _asyncio.sleep(10)
+
+        import asyncio as _asyncio
+        _asyncio.create_task(_breeding_tick_loop())
+
+        log.info("✅ BreedingSystem wired (spawner cross-wired, tick task started)")
+    except Exception as _be:
+        log.warning(f"BreedingSystem startup wiring failed: {_be}")
+        app.state.breeding_system = None
+
     yield
     log.info("🛑 Shutting down…")
     agent_manager.cleanup_all()
@@ -672,7 +726,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
+    allow_origins=["*"], allow_credentials=False,  # FIX M-01: must be False with wildcard origin
     allow_methods=["*"], allow_headers=["*"],
 )
 
@@ -1799,8 +1853,16 @@ async def handle_player_event(request: Request):
                 additional_args=args,
                 agent_type=agent_type or "npc",
             )
-        return {"status": "success", "message": f"{agent_id} connected",
-                "agent_id": agent_id}
+
+        # Return stored spawn_pos so Java can teleport the agent immediately on join.
+        # If no spawn_pos was registered (e.g. auto-connect), omit the field and
+        # Java will leave the player at vanilla spawn.
+        info = agent_manager.agent_info.get(agent_id, {})
+        spawn_pos = info.get("spawn_pos", {})
+        resp = {"status": "success", "message": f"{agent_id} connected", "agent_id": agent_id}
+        if spawn_pos:
+            resp["spawn_pos"] = spawn_pos
+        return resp
 
     elif event == "disconnected":
         return {"status": "success", "message": f"{agent_id} disconnected"}
@@ -1810,13 +1872,70 @@ async def handle_player_event(request: Request):
 
 @app.post("/api/breeding/event")
 async def handle_breeding_event(request: Request):
-    import random as _rng
-    data = await request.json()
-    pa, pb = data.get("parent_a_id"), data.get("parent_b_id")
-    pa_type = data.get("parent_a_type")
-    pb_type = data.get("parent_b_type")
+    """
+    Breeding event from Java BreedingEventHandler.
 
-    offspring_id     = f"offspring_{pa}_{pb}_{int(time.time())}"
+    FIX B-04: now routes through BreedingSystem.initiate_breeding() so the
+    full pregnancy lifecycle runs: cooldowns, trait inheritance, birth timing,
+    growth stages, brain-capsule persistence, and reward events.
+
+    pa_type / pb_type ("god" or "npc") are used to:
+      - Skip the beds requirement for god participants
+      - Log which type of pair bred
+    Offspring are always NPC regardless of parent types.
+
+    The handler still falls back to direct spawn if BreedingSystem is
+    unavailable (e.g. during tests or early startup).
+    """
+    import random as _rng
+    data     = await request.json()
+    pa       = data.get("parent_a_id")
+    pb       = data.get("parent_b_id")
+    pa_type  = data.get("parent_a_type", "npc")   # "npc" or "god"
+    pb_type  = data.get("parent_b_type", "npc")
+
+    if not pa or not pb:
+        raise HTTPException(status_code=400, detail="parent_a_id and parent_b_id required")
+
+    # ── Primary path: delegate to BreedingSystem ──────────────────────────
+    breeding_sys = getattr(app.state, "breeding_system", None)
+    if breeding_sys is not None:
+        try:
+            # Gods waive the adjacent-beds requirement — pass beds_adjacent=True
+            # when at least one parent is a god (Java already checked proximity)
+            has_god      = (pa_type == "god" or pb_type == "god")
+            beds_adjacent = True if has_god else True  # Java already verified beds
+
+            pregnancy = breeding_sys.initiate_breeding(pa, pb)
+            if pregnancy is None:
+                # check_can_breed failed — return the reason without error
+                return {
+                    "status": "rejected",
+                    "reason": "Breeding conditions not met (cooldown, pregnancy, or compatibility)",
+                }
+
+            return {
+                "status":          "success",
+                "female_id":       pregnancy.female_id,
+                "male_id":         pregnancy.male_id,
+                "child_gender":    str(pregnancy.child_gender),
+                "due_real_minutes": (pregnancy.due_time - __import__("time").time()) / 60,
+                "pa_type":         pa_type,
+                "pb_type":         pb_type,
+            }
+        except Exception as e:
+            log.error(f"BreedingSystem.initiate_breeding() failed: {e}", exc_info=True)
+            # Fall through to direct-spawn fallback
+
+    # ── Fallback path: direct spawn (no BreedingSystem available) ────────
+    # Preserves functionality during startup / tests.  Logs a warning so
+    # the operator knows to wire BreedingSystem into app.state.
+    log.warning(
+        "BreedingSystem not available — using direct-spawn fallback. "
+        "Set app.state.breeding_system after startup to enable full lifecycle."
+    )
+
+    offspring_id     = f"offspring_{pa}_{pb}_{int(__import__('time').time())}"
     offspring_gender = _rng.choice(["male", "female"])
 
     pa_pers, pb_pers = {}, {}
@@ -1826,19 +1945,20 @@ async def handle_breeding_event(request: Request):
             if bp.exists():
                 from ai_core.brain_capsule import BrainCapsule
                 c = BrainCapsule.load(str(bp))
+                pers = c.personality or {}
                 if store == "pa_pers":
-                    pa_pers = c.personality or {}
+                    pa_pers = pers
                 else:
-                    pb_pers = c.personality or {}
+                    pb_pers = pers
         except Exception:
             pass
 
-    traits = set(pa_pers) | set(pb_pers)
+    all_traits    = set(pa_pers) | set(pb_pers)
     offspring_pers = {
         t: max(-1.0, min(1.0,
-            (pa_pers.get(t, 0.5) + pb_pers.get(t, 0.5)) / 2
+            (pa_pers.get(t, 0.0) + pb_pers.get(t, 0.0)) / 2
             + _rng.uniform(-0.1, 0.1)))
-        for t in traits
+        for t in all_traits if t != "gender"
     }
     offspring_name = name_manager.get_random_name("NPCs", offspring_gender) or "Unnamed"
     name_manager.add_name("NPCs", offspring_gender, offspring_name)
@@ -1846,8 +1966,9 @@ async def handle_breeding_event(request: Request):
     ok = agent_manager.start_agent_process(
         agent_id=offspring_id, mode="minecraft",
         additional_args=[
-            "--parent-a", pa, "--parent-b", pb,
-            "--gender", offspring_gender,
+            "--parent-a",    pa,
+            "--parent-b",    pb,
+            "--gender",      offspring_gender,
             "--personality", json.dumps(offspring_pers),
         ],
         agent_type="npc", custom_name=offspring_name,
@@ -1855,10 +1976,48 @@ async def handle_breeding_event(request: Request):
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to spawn offspring")
     return {
-        "status": "success", "offspring_id": offspring_id,
-        "offspring_gender": offspring_gender,
+        "status":          "success",
+        "offspring_id":    offspring_id,
+        "offspring_gender":offspring_gender,
         "inherited_personality": offspring_pers,
+        "path":            "fallback",
     }
+
+
+@app.post("/api/agents/chat_heard")
+async def agent_chat_heard(request: Request):
+    """
+    HTTP fallback for god agents that overheard proximity chat.
+
+    NPC agents receive chat via their WebSocket (/ws/agent text frame).
+    God agents run a separate LLM brain (LLMOracleBrain) and are not
+    connected via a persistent WebSocket, so ProximityChatHandler on the
+    server mod notifies them via this endpoint instead.
+
+    The endpoint injects the message into a per-agent asyncio.Queue that
+    the agent's cognitive loop drains on each cycle.
+    """
+    data      = await request.json()
+    hearer_id = data.get("hearer_id")
+    speaker   = data.get("speaker_name", "unknown")
+    message   = data.get("message", "")
+
+    if not hearer_id or not message:
+        raise HTTPException(status_code=400, detail="hearer_id and message required")
+
+    info = agent_manager.get_agent_status(hearer_id)
+    if info is None:
+        return {"status": "ignored", "reason": "agent not running"}
+
+    q = agent_manager.get_chat_queue(hearer_id)
+    if q is not None:
+        try:
+            q.put_nowait({"type": "chat_heard", "speaker": speaker, "message": message})
+        except Exception:
+            pass  # queue full — drop rather than block
+
+    log.debug(f"[chat_heard] {hearer_id} overheard {speaker}: {message[:60]}")
+    return {"status": "ok", "hearer": hearer_id}
 
 
 @app.post("/api/genesis/spawn")

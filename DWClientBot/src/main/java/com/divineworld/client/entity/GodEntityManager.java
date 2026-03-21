@@ -69,4 +69,13 @@ public class GodEntityManager {
     public static Entity  getCurrentGodEntity() { return currentGodEntity; }
     public static String  getCurrentGodType()   { return currentGodType;   }
     public static boolean isPlayerForm()        { return isPlayerForm;     }
+
+    /**
+     * Returns true if the given entity is the current client-side god body.
+     * WebSocketManager uses this to tag the entity with ENTITY_GOD type_id
+     * so the agent's perception system identifies its own body in the field.
+     */
+    public static boolean isGodEntity(Entity entity) {
+        return currentGodEntity != null && entity == currentGodEntity;
+    }
 }

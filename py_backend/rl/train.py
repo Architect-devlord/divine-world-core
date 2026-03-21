@@ -11,7 +11,14 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 
-# Import from ai_core (no circular dependency)
+# FIX P-01: bare 'from env import' / 'from policy import' fail when the script
+# is run as 'python rl/train.py' from the project root because rl/ is not on
+# sys.path.  Insert rl/'s own directory so the relative siblings resolve.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent))         # adds rl/ → env, policy visible
+_sys.path.insert(0, str(_Path(__file__).parent.parent))  # adds project root → ai_core visible
+
 from ai_core import NPCAgent
 from env import DivineWorldEnv
 from policy import TransformerPolicy

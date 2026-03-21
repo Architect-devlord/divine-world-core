@@ -7,6 +7,8 @@ import net.minecraft.world.entity.*;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
@@ -25,9 +27,10 @@ import net.minecraft.world.phys.Vec3;
 public class AIWither extends BaseGodEntity {
 
     // Ability cooldowns
-    private int skullCooldown = 0;
-    private int dashCooldown = 0;
-    private int summonCooldown = 0;
+    private int skullCooldown     = 0;
+    private int blueSkullCooldown = 0;  // charged variant — longer range, sets fire
+    private int dashCooldown      = 0;
+    private int summonCooldown    = 0;
     private int explosionCooldown = 0;
 
     // States
@@ -61,6 +64,7 @@ public class AIWither extends BaseGodEntity {
 
         // Cooldowns
         if (skullCooldown > 0) skullCooldown--;
+        if (blueSkullCooldown > 0) blueSkullCooldown--;
         if (dashCooldown > 0) dashCooldown--;
         if (summonCooldown > 0) summonCooldown--;
         if (explosionCooldown > 0) explosionCooldown--;
@@ -96,6 +100,7 @@ public class AIWither extends BaseGodEntity {
     public void useAbility(String abilityName, Object... params) {
         switch (abilityName) {
             case "wither_skull" -> launchWitherSkull(params);
+            case "blue_skull"   -> launchBlueSkull(params);
             case "dash" -> performDash();
             case "summon_wither_skeletons" -> summonWitherSkeletons();
             case "explosion" -> createExplosion();
@@ -152,8 +157,53 @@ public class AIWither extends BaseGodEntity {
     }
 
     /**
+     * Launch Blue (Charged) Wither Skull
+     *
+     * The charged skull deals 8 damage (vs 5 for black skull), travels farther,
+     * applies the Wither II effect for 10 seconds, and sets the target on fire.
+     * Cooldown is 40 ticks (2 s) — same rate as vanilla charged skulls.
+     *
+     * Distinct from launchWitherSkull: separate cooldown tracker, separate
+     * useAbility() case ("blue_skull"), separate particle trail (SOUL_FIRE_FLAME
+     * vs SMOKE), and separate NBT persistence (BlueSkullCooldown).
+     */
+    private void launchBlueSkull(Object[] params) {
+        if (blueSkullCooldown > 0) return;
+
+        Vec3 lookVec = getLookAngle();
+        float damage = 8.0f;
+
+        // Hit scan within a wider cone than regular skull (charged skulls travel straight)
+        level().getEntities(this, getBoundingBox().inflate(30)).forEach(entity -> {
+            if (entity instanceof LivingEntity living && entity != this) {
+                Vec3 toTarget = living.position().subtract(position()).normalize();
+                double dot    = lookVec.dot(toTarget);
+                if (dot > 0.92) { // tighter aim cone — charged skull is a precision weapon
+                    living.hurt(damageSources().magic(), damage);
+                    living.setSecondsOnFire(10);
+
+                    // Wither II effect — 10 seconds (same as vanilla charged skull)
+                    living.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                        net.minecraft.world.effect.MobEffects.WITHER, 200, 1
+                    ));
+                }
+            }
+        });
+
+        // Blue fire particle trail — visually distinct from black skull
+        for (int i = 0; i < 12; i++) {
+            Vec3 pp = position().add(lookVec.scale(i * 2.5));
+            level().addParticle(ParticleTypes.SOUL_FIRE_FLAME,
+                pp.x, pp.y + 1, pp.z, 0, 0, 0);
+        }
+
+        blueSkullCooldown = 40; // 2 seconds
+    }
+
+    /**
      * Dash attack - high-speed charge
      */
+
     private void performDash() {
         if (dashCooldown > 0 || isDashing) return;
 
@@ -258,8 +308,9 @@ public class AIWither extends BaseGodEntity {
         tag.putBoolean("IsFlying", isFlying);
         tag.putBoolean("IsDashing", isDashing);
         tag.putInt("DashTicks", dashTicks);
-        tag.putInt("SkullCooldown", skullCooldown);
-        tag.putInt("DashCooldown", dashCooldown);
+        tag.putInt("SkullCooldown",     skullCooldown);
+        tag.putInt("BlueSkullCooldown", blueSkullCooldown);
+        tag.putInt("DashCooldown",      dashCooldown);
         tag.putInt("SummonCooldown", summonCooldown);
         tag.putInt("ExplosionCooldown", explosionCooldown);
     }
@@ -270,8 +321,9 @@ public class AIWither extends BaseGodEntity {
         isFlying = tag.getBoolean("IsFlying");
         isDashing = tag.getBoolean("IsDashing");
         dashTicks = tag.getInt("DashTicks");
-        skullCooldown = tag.getInt("SkullCooldown");
-        dashCooldown = tag.getInt("DashCooldown");
+        skullCooldown     = tag.getInt("SkullCooldown");
+        blueSkullCooldown = tag.getInt("BlueSkullCooldown");
+        dashCooldown      = tag.getInt("DashCooldown");
         summonCooldown = tag.getInt("SummonCooldown");
         explosionCooldown = tag.getInt("ExplosionCooldown");
     }

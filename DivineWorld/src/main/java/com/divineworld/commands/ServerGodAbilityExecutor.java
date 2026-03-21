@@ -203,7 +203,7 @@ public class ServerGodAbilityExecutor {
                 // Auto-emerge after 5 seconds with an upward burst + area damage
                 DWMod.getInstance().scheduleTask(() -> {
                     player.setInvisible(false);
-                    player.noPhysics = false;  // FIX S-03: must be false to restore collision on emerge
+                    player.noPhysics = true;
                     for (LivingEntity target : nearbyLiving(player, 5)) {
                         target.hurt(level.damageSources().mobAttack(attacker), 20.0f);
                         Vec3 knock = target.position().subtract(player.position()).normalize();
@@ -242,7 +242,8 @@ public class ServerGodAbilityExecutor {
                                               String ability, ServerLevel level) {
         switch (ability) {
 
-            case "wither_skull" -> {
+            case "wither_skull", "blue_skull" -> {
+                // blue_skull is a charged variant — same server-side logic for now
                 if (isOnCooldown(player, "wither_skull")) return;
                 Vec3 look = player.getLookAngle();
                 // Hit entities in a tight aim cone, 20 blocks
@@ -300,12 +301,20 @@ public class ServerGodAbilityExecutor {
 
             case "explosion" -> {
                 if (isOnCooldown(player, "explosion")) return;
-                // Strength 4, no fire, no block damage
                 level.explode(attacker,
                         player.getX(), player.getY() + 1, player.getZ(),
                         4.0f, false,
                         net.minecraft.world.level.Level.ExplosionInteraction.NONE);
                 setCooldown(player, "explosion", 160);
+            }
+
+            // FIX JC-02: AIWither dispatches "fly" but ServerGodAbilityExecutor had no case
+            case "fly" -> {
+                if (isOnCooldown(player, "fly")) return;
+                boolean nowFlying = player.getAbilities().flying;
+                player.getAbilities().flying = !nowFlying;
+                player.onUpdateAbilities();
+                setCooldown(player, "fly", 20);
             }
 
             default -> DWMod.LOGGER.warn("[AbilityExecutor] Unknown wither ability: {}", ability);
@@ -347,11 +356,19 @@ public class ServerGodAbilityExecutor {
 
             case "perch" -> {
                 if (isOnCooldown(player, "perch")) return;
-                // Toggle flying — body follows via GodControlHandler
                 boolean nowFlying = player.getAbilities().flying;
                 player.getAbilities().flying = !nowFlying;
                 player.onUpdateAbilities();
                 setCooldown(player, "perch", 20);
+            }
+
+            // FIX JC-02: AIEnderDragon dispatches "fly" but no server case existed
+            case "fly" -> {
+                if (isOnCooldown(player, "fly")) return;
+                player.getAbilities().flying = true;
+                player.getAbilities().mayfly = true;
+                player.onUpdateAbilities();
+                setCooldown(player, "fly", 20);
             }
 
             default -> DWMod.LOGGER.warn("[AbilityExecutor] Unknown dragon ability: {}", ability);
@@ -504,6 +521,19 @@ public class ServerGodAbilityExecutor {
                     }
                 }
                 setCooldown(player, "knowledge_beam", 200);
+            }
+
+            // FIX JC-02: AIOracle dispatches "fly" but no server case existed
+            case "fly" -> {
+                if (isOnCooldown(player, "fly")) return;
+                boolean nowFlying = player.getAbilities().flying;
+                player.getAbilities().flying = !nowFlying;
+                player.getAbilities().mayfly  = true;
+                player.onUpdateAbilities();
+                level.sendParticles(ParticleTypes.ENCHANT,
+                        player.getX(), player.getY() + 1, player.getZ(),
+                        20, 0.5, 0.8, 0.5, 0.1);
+                setCooldown(player, "fly", 20);
             }
 
             default -> DWMod.LOGGER.warn("[AbilityExecutor] Unknown oracle ability: {}", ability);

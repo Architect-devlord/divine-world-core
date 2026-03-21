@@ -134,8 +134,42 @@ class AgentPackager:
             log.info(f"✅ UltimMC found in PATH: {install_root}")
             return install_root
 
-        log.warning("⚠️  UltimMC not found")
-        return None
+        # ── Interactive prompt when not found automatically ────────────────────
+        log.warning("⚠️  UltimMC not found in standard locations")
+        print("\n" + "="*70)
+        print("UltimMC Launcher Not Found")
+        print("="*70)
+        print("\nSearched locations:")
+        for cand in candidates:
+            print(f"  • {cand}")
+        print()
+
+        while True:
+            user_path = input("Enter the absolute path to your UltimMC folder (or press Enter to skip): ").strip()
+            
+            # Allow user to skip
+            if not user_path:
+                log.warning("⚠️  UltimMC will not be packaged with agents")
+                print("Continuing without UltimMC...\n")
+                return None
+            
+            # Validate the provided path
+            ultimmc_candidate = Path(user_path).expanduser().resolve()
+            
+            if not ultimmc_candidate.exists():
+                print(f"❌ Path does not exist: {ultimmc_candidate}")
+                print("Please enter a valid path.\n")
+                continue
+            
+            if not (ultimmc_candidate / "bin" / "UltimMC").exists():
+                print(f"❌ Not a valid UltimMC installation.")
+                print(f"   Expected {ultimmc_candidate / 'bin' / 'UltimMC'} to exist\n")
+                continue
+            
+            # Valid path found
+            log.info(f"✅ UltimMC: {ultimmc_candidate}")
+            print(f"✅ UltimMC found at: {ultimmc_candidate}\n")
+            return ultimmc_candidate
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -470,9 +504,13 @@ def start_backend(port):
     try:
         import uvicorn
         try:
-            from agent import app as _agent_app          # frozen path
+            # FIX: 'from agent import app' fails in frozen mode because
+            # the file is at _MEIPASS/ai_core/agent.py, not _MEIPASS/agent.py.
+            # Both frozen and dev paths use the ai_core.agent import since
+            # sys._MEIPASS/ai_core is already in sys.path (added above).
+            from ai_core.agent import app as _agent_app
         except ImportError:
-            from ai_core.agent import app as _agent_app  # dev path
+            from agent import app as _agent_app  # fallback if path differs
         t = threading.Thread(
             target=lambda: uvicorn.run(_agent_app, host="127.0.0.1", port=port, log_level="error"),
             daemon=True,

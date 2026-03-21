@@ -28,7 +28,10 @@ import time
 
 from ai_core.agent import NPCAgent
 from ai_core.agent_spawner import AgentSpawner       # base class only
-from packager import AgentPackager
+try:
+    from packager import AgentPackager
+except ImportError:
+    from py_backend.packager import AgentPackager  # package-import fallback
 from py_backend.config import Config
 
 log = logging.getLogger("auto_packager")

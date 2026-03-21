@@ -38,49 +38,49 @@ class PolicyNetwork(nn.Module):
     Policy network compatible with Avalanche.
     Predicts actions from observations.
     """
-    
-    def __init__(self, obs_dim: int = 50, action_dim: int = 11, hidden_dim: int = 256):
+
+    def __init__(self, obs_dim: int = 50, action_dim: int = 13, hidden_dim: int = 256):  # FIX RL-05: was 11
         super().__init__()
-        
+
         self.network = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim),
             nn.ReLU(),
             nn.LayerNorm(hidden_dim),
             nn.Dropout(0.1),
-            
+
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.LayerNorm(hidden_dim),
             nn.Dropout(0.1),
-            
+
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
-            
+
             nn.Linear(hidden_dim // 2, action_dim),
             nn.Tanh()  # Actions in [-1, 1]
         )
-    
+
     def forward(self, x):
         return self.network(x)
 
 
 class ValueNetwork(nn.Module):
     """Value function for critic"""
-    
+
     def __init__(self, obs_dim: int = 50, hidden_dim: int = 256):
         super().__init__()
-        
+
         self.network = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim),
             nn.ReLU(),
             nn.LayerNorm(hidden_dim),
-            
+
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
-            
+
             nn.Linear(hidden_dim // 2, 1)
         )
-    
+
     def forward(self, x):
         return self.network(x)
 
@@ -90,37 +90,37 @@ class ContinualLearner:
     Avalanche-based continual learning for NPCAgent.
     Manages lifelong learning without catastrophic forgetting.
     """
-    
-    def __init__(self, agent, strategy: str = 'replay', 
+
+    def __init__(self, agent, strategy: str = 'replay',
                  hidden_dim: int = 256, memory_size: int = 2000):
-        
+
         if not AVALANCHE_AVAILABLE:
             raise RuntimeError("Avalanche not installed. Install with: pip install avalanche-lib")
-        
+
         self.agent = agent
         self.strategy_name = strategy
         self.hidden_dim = hidden_dim
         self.memory_size = memory_size
-        
+
         # Dimensions
         self.obs_dim = 50
-        self.action_dim = 11
-        
+        self.action_dim = 13   # FIX: must match TransformerPolicy.BASE_DIM
+
         # Networks
         self.policy_net = PolicyNetwork(self.obs_dim, self.action_dim, hidden_dim)
         self.value_net = ValueNetwork(self.obs_dim, hidden_dim)
-        
+
         # Avalanche components
         self.strategy = None
         self.eval_plugin = None
-        
+
         # Task tracking
         self.current_task_id = 0
         self.task_history: List[int] = []
-        
+
         # Experience buffer for Avalanche
         self.experience_buffer: List[Tuple] = []
-        
+
         # Statistics
         self.stats = {
             'tasks_learned': 0,
@@ -128,30 +128,30 @@ class ContinualLearner:
             'avg_loss': 0.0,
             'forgetting_measure': 0.0
         }
-        
+
         self._init_avalanche_strategy()
-        
+
         log.info(f"ContinualLearner initialized with {strategy} strategy")
-    
+
     def _init_avalanche_strategy(self):
         """Initialize Avalanche training strategy"""
-        
+
         # Optimizer
         optimizer = torch.optim.Adam([
             {'params': self.policy_net.parameters(), 'lr': 3e-4},
             {'params': self.value_net.parameters(), 'lr': 1e-3}
         ])
-        
+
         # Loss criterion
         criterion = nn.MSELoss()
-        
+
         # Evaluation plugin
         self.eval_plugin = EvaluationPlugin(
             accuracy_metrics(minibatch=True, epoch=True, experience=True, stream=True),
             loss_metrics(minibatch=True, epoch=True, experience=True, stream=True),
             loggers=[InteractiveLogger()]
         )
-        
+
         # Select strategy
         if self.strategy_name == 'naive':
             self.strategy = Naive(
@@ -163,7 +163,7 @@ class ContinualLearner:
                 device='cuda' if torch.cuda.is_available() else 'cpu',
                 evaluator=self.eval_plugin
             )
-            
+
         elif self.strategy_name == 'replay':
             self.strategy = Replay(
                 model=self.policy_net,
@@ -175,7 +175,7 @@ class ContinualLearner:
                 device='cuda' if torch.cuda.is_available() else 'cpu',
                 evaluator=self.eval_plugin
             )
-            
+
         elif self.strategy_name == 'ewc':
             self.strategy = EWC(
                 model=self.policy_net,
@@ -187,7 +187,7 @@ class ContinualLearner:
                 device='cuda' if torch.cuda.is_available() else 'cpu',
                 evaluator=self.eval_plugin
             )
-            
+
         elif self.strategy_name == 'lwf':
             self.strategy = LwF(
                 model=self.policy_net,
@@ -202,53 +202,138 @@ class ContinualLearner:
             )
         else:
             raise ValueError(f"Unknown strategy: {self.strategy_name}")
-        
+
         log.info(f"Avalanche strategy initialized: {self.strategy_name}")
-    
+
     def collect_experiences(self, min_batch_size: int = 32) -> bool:
+        """
+        Convert brain.continual_buffer entries into (obs, action, reward) tensors.
+
+        FIX: The old implementation built obs as [health/20, hunger/20, 0…0] —
+        48 zeros regardless of what the agent actually perceived. Every training
+        sample was near-identical, so the policy network learned nothing useful.
+
+        Now: use agent.last_obs (the cached 50-dim perception vector from the
+        most recent agent.perceive() call) when the buffer entry does not carry
+        a stored observation, and fall back to a context-derived vector only when
+        last_obs is unavailable. Also use the stored raw action array when present.
+        """
         buffer = list(getattr(self.agent.brain, 'continual_buffer', []))
         if len(buffer) < min_batch_size:
             return False
+
+        import numpy as _np
+
+        # Snapshot agent.last_obs once — used as fallback for entries without obs
+        agent_last_obs = getattr(self.agent, 'last_obs', None)
+
         templates = ['collect','craft','attack','flee','use_item',
-                    'explore','eat','sleep','build','trade','interact']
+                     'explore','eat','sleep','build','trade','interact']
+
         for exp in buffer:
             context = exp.get('context') or {}
             event   = exp.get('event', {})
-            # Build obs vector from context
-            obs_list = [
-                context.get('health', 20.0) / 20.0,
-                context.get('hunger', 20.0) / 20.0,
-            ] + [0.0] * (self.obs_dim - 2)
-            obs = torch.tensor(obs_list[:self.obs_dim], dtype=torch.float32)
-            # Build action vector from event type
-            action_vec = [0.0] * self.action_dim
-            etype = event.get('type', '')
-            if etype in templates:
-                action_vec[templates.index(etype) % self.action_dim] = 1.0
-            action   = torch.tensor(action_vec, dtype=torch.float32)
-            task_id  = exp.get('task', self.current_task_id)
-            reward   = float(exp.get('reward', 0.0))
+            reward  = float(exp.get('reward', 0.0))
+            task_id = exp.get('task', self.current_task_id)
+
+            # ── Observation ───────────────────────────────────────────────
+            # Priority: stored obs in memory event → agent.last_obs → context stub
+            stored_obs = event.get('obs')   # agent.learn() stores obs.tolist()
+            if stored_obs is not None:
+                obs_arr = _np.array(stored_obs, dtype=_np.float32)[:self.obs_dim]
+                if len(obs_arr) < self.obs_dim:
+                    obs_arr = _np.pad(obs_arr, (0, self.obs_dim - len(obs_arr)))
+            elif agent_last_obs is not None:
+                obs_arr = _np.array(agent_last_obs, dtype=_np.float32)[:self.obs_dim]
+                if len(obs_arr) < self.obs_dim:
+                    obs_arr = _np.pad(obs_arr, (0, self.obs_dim - len(obs_arr)))
+            else:
+                # Last resort: build a minimal but normalised context vector
+                obs_list = [
+                    context.get('health', 20.0) / 20.0,
+                    context.get('hunger', 20.0) / 20.0,
+                    float(context.get('novelty', 0.0)),
+                    float(context.get('urgency', 0.0)),
+                ] + [0.0] * (self.obs_dim - 4)
+                obs_arr = _np.array(obs_list[:self.obs_dim], dtype=_np.float32)
+
+            obs = torch.tensor(obs_arr, dtype=torch.float32)
+
+            # ── Action ────────────────────────────────────────────────────
+            # Priority: stored raw action array → event-type one-hot
+            stored_action = event.get('action')  # agent.learn() stores action.tolist()
+            if stored_action is not None:
+                act_arr = _np.array(stored_action, dtype=_np.float32)[:self.action_dim]
+                if len(act_arr) < self.action_dim:
+                    act_arr = _np.pad(act_arr, (0, self.action_dim - len(act_arr)))
+                action = torch.tensor(act_arr, dtype=torch.float32)
+            else:
+                action_vec = [0.0] * self.action_dim
+                etype = event.get('type', '')
+                if etype in templates:
+                    action_vec[templates.index(etype) % self.action_dim] = 1.0
+                action = torch.tensor(action_vec, dtype=torch.float32)
+
             self.experience_buffer.append((obs, action, reward, obs, False, task_id))
+
         return len(self.experience_buffer) >= min_batch_size
-    
+
+    def _sync_weights_from_live_policy(self) -> None:
+        """
+        FIX RL-05: ContinualLearner.PolicyNetwork (2-layer MLP) and
+        TransformerPolicy (attention encoder) have different architectures
+        so direct weight copying is impossible.
+
+        Instead, run policy distillation: feed stored observations through
+        the live TransformerPolicy to get action targets, then add those
+        (obs, target_action) pairs to the experience buffer alongside the
+        stored rewards. This causes the continual learner to track the live
+        policy's behaviour rather than drifting independently.
+        """
+        import torch as _torch
+        try:
+            live_policy = getattr(self.agent, 'policy', None)
+            if live_policy is None:
+                return
+            last_obs = getattr(self.agent, 'last_obs', None)
+            if last_obs is None:
+                return
+
+            obs_t = _torch.tensor(last_obs, dtype=_torch.float32).unsqueeze(0)
+            with _torch.no_grad():
+                action_t = live_policy._predict(obs_t, deterministic=True)
+                action_np = action_t.squeeze().cpu().numpy()
+
+            # Inject a distillation experience: obs from live game, action from
+            # live policy, zero reward (distillation target, not game reward)
+            obs_tensor    = _torch.tensor(last_obs[:self.obs_dim], dtype=_torch.float32)
+            action_tensor = _torch.tensor(action_np[:self.action_dim], dtype=_torch.float32)
+            self.experience_buffer.append(
+                (obs_tensor, action_tensor, 0.0, obs_tensor, False, self.current_task_id)
+            )
+        except Exception as e:
+            log.debug(f"[ContinualLearner] weight sync failed: {e}")
+
     def learn_from_buffer(self, epochs: int = 1) -> Dict[str, float]:
         """
         Perform continual learning update from collected experiences.
+        Includes policy distillation from live TransformerPolicy (FIX RL-05).
         Returns metrics dict.
         """
+        self._sync_weights_from_live_policy()  # FIX RL-05: add distillation target
         if not self.collect_experiences():
             return {'status': 'insufficient_data'}
-        
+
         try:
             # Convert buffer to Avalanche dataset
             dataset = self._create_avalanche_dataset()
-            
+
             # Train on experience
             results = self.strategy.train(dataset, num_workers=0)
-            
+
             # Update statistics
             self.stats['total_updates'] += 1
-            
+
             # Extract metrics
             metrics = {
                 'status': 'success',
@@ -256,78 +341,78 @@ class ContinualLearner:
                 'task_id': self.current_task_id,
                 'buffer_size': len(self.experience_buffer)
             }
-            
+
             # Clear processed experiences
             self.experience_buffer.clear()
-            
+
             log.info(f"Continual learning update complete: {metrics}")
-            
+
             return metrics
-            
+
         except Exception as e:
             log.error(f"Continual learning failed: {e}", exc_info=True)
             return {'status': 'error', 'error': str(e)}
-    
+
     def _create_avalanche_dataset(self):
         """Create Avalanche dataset from experience buffer"""
         # Extract observations and actions
         observations = []
         actions = []
         task_labels = []
-        
+
         for obs, action, reward, next_obs, done, task_id in self.experience_buffer:
             observations.append(obs)
             actions.append(action)
             task_labels.append(task_id)
-        
+
         # Stack into tensors
         obs_tensor = torch.stack(observations)
         action_tensor = torch.stack(actions)
         task_tensor = torch.tensor(task_labels, dtype=torch.long)
-        
+
         # Create Avalanche dataset
         dataset = AvalancheTensorDataset(
             obs_tensor,
             action_tensor,
             task_labels=task_tensor
         )
-        
+
         return dataset
-    
+
     def switch_task(self, new_task_id: int):
         """Switch to a new learning task"""
         if new_task_id != self.current_task_id:
             log.info(f"Switching task: {self.current_task_id} → {new_task_id}")
-            
+
             # Store old task
             self.task_history.append(self.current_task_id)
-            
+
             # Update task
             self.current_task_id = new_task_id
             self.agent.brain.current_task = new_task_id
-            
+
             # Update statistics
             self.stats['tasks_learned'] = len(set(self.task_history))
-    
+
     def predict_action(self, observation: torch.Tensor) -> torch.Tensor:
         """Use learned policy to predict action"""
         self.policy_net.eval()
         with torch.no_grad():
             action = self.policy_net(observation)
         return action
-    
+
     def predict_value(self, observation: torch.Tensor) -> torch.Tensor:
         """Use value network to estimate state value"""
         self.value_net.eval()
         with torch.no_grad():
             value = self.value_net(observation)
         return value
-    
+
     def save(self, path: str):
         """Save continual learning state"""
         save_path = Path(path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         state = {
             'policy_net': self.policy_net.state_dict(),
             'value_net': self.value_net.state_dict(),
@@ -336,28 +421,28 @@ class ContinualLearner:
             'stats': self.stats,
             'strategy_name': self.strategy_name
         }
-        
+
         torch.save(state, save_path)
         log.info(f"Continual learner saved to {save_path}")
-    
+
     def load(self, path: str):
         """Load continual learning state"""
         save_path = Path(path)
-        
+
         if not save_path.exists():
             log.warning(f"No saved state found at {save_path}")
             return
-        
+
         state = torch.load(save_path, map_location='cpu')
-        
+
         self.policy_net.load_state_dict(state['policy_net'])
         self.value_net.load_state_dict(state['value_net'])
         self.current_task_id = state['current_task_id']
         self.task_history = state['task_history']
         self.stats = state['stats']
-        
+
         log.info(f"Continual learner loaded from {save_path}")
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get learning statistics"""
         return {
@@ -373,7 +458,7 @@ class ContinualLearner:
 def add_continual_learning(agent, strategy: str = 'replay', **kwargs):
     """
     Add continual learning capabilities to an agent.
-    
+
     Usage:
         from ai_core.continual_learner import add_continual_learning
         add_continual_learning(agent, strategy='replay')
@@ -381,9 +466,9 @@ def add_continual_learning(agent, strategy: str = 'replay', **kwargs):
     if not AVALANCHE_AVAILABLE:
         log.warning("Avalanche not available - continual learning disabled")
         return None
-    
+
     learner = ContinualLearner(agent, strategy=strategy, **kwargs)
     agent.continual_learner = learner
-    
+
     log.info(f"Continual learning added to {agent.agent_id}")
     return learner

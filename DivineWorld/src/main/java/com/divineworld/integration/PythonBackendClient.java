@@ -208,12 +208,12 @@ public class PythonBackendClient {
     private static void sendAsync(JsonObject json, String endpoint) {
         new Thread(() -> {
             try {
-                // Generous timeout: 60 seconds for agent spawning, breeding, executable generation
+                // Generous timeout: 600 seconds for agent spawning, breeding, executable generation
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(BACKEND_URL + endpoint))
                         .header("Content-Type", "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString(json.toString()))
-                        .timeout(java.time.Duration.ofSeconds(60))  // INCREASED: 10s → 60s
+                        .timeout(java.time.Duration.ofSeconds(600))  // INCREASED: 10s → 600s
                         .build();
 
                 HttpResponse<String> response = HTTP_CLIENT.send(

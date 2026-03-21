@@ -80,8 +80,11 @@ class GodControlSystem:
             "revert":        GodAbility("revert",        cooldown=1.0),
         },
         "wither": {
+            # FIX: blue_skull removed — no Java client case and no ServerGodAbilityExecutor
+            # case exists for it. It was causing an index mismatch (wither idx 1 was
+            # blue_skull in god_controls but dash in action_format_sync — wrong ability
+            # selected on every index-1 output from the policy).
             "wither_skull":            GodAbility("wither_skull",            cooldown=1.0),
-            "blue_skull":              GodAbility("blue_skull",              cooldown=1.0),
             "dash":                    GodAbility("dash",                    cooldown=3.0),
             "summon_wither_skeletons": GodAbility("summon_wither_skeletons", cooldown=10.0),
             "explosion":               GodAbility("explosion",               cooldown=8.0),
@@ -117,11 +120,14 @@ class GodControlSystem:
             "revert":           GodAbility("revert",           cooldown=1.0),
         },
         "creaking": {
+            # FIX: life_steal and tentacle_whip swapped to match action_format_sync index order
+            # action_format_sync: [..., "life_steal"(3), "tentacle_whip"(4)]
+            # Old god_controls had tentacle_whip(3), life_steal(4) — policy selected wrong ability
             "toggle_underground": GodAbility("toggle_underground", cooldown=1.0),
             "toggle_ceiling":     GodAbility("toggle_ceiling",     cooldown=1.0),
             "deploy_tentacles":   GodAbility("deploy_tentacles",   cooldown=0.5),
-            "tentacle_whip":      GodAbility("tentacle_whip",      cooldown=0.8),
             "life_steal":         GodAbility("life_steal",         cooldown=2.0),
+            "tentacle_whip":      GodAbility("tentacle_whip",      cooldown=0.8),
             "transform":          GodAbility("transform",          cooldown=5.0),
             "revert":             GodAbility("revert",             cooldown=1.0),
         },
@@ -186,36 +192,46 @@ class GodControlSystem:
         params:        Optional[Dict[str, float]] = None,
     ) -> np.ndarray:
         """
-        Extend a base 11-dim action vector with 5 god-ability dimensions.
+        Extend a base 13-dim action vector with 5 god-ability dimensions.
 
-        Result shape: (16,)
-        Dimensions 11-15: [trigger_flag, ability_idx, param1, param2, param3]
+        FIX: was concatenating base_action[:11] + 5 god dims = 16-dim.
+        GodTransformerPolicy.TOTAL_DIM = 18 (13 base + 5 god).
+        Dims 11-12 are sprint/hotbar (base dims), dims 13-17 are god dims.
+        Old code placed trigger at dim 11 (sprint) and ability_idx at dim 12
+        (hotbar) — abilities never triggered because act_god() reads trigger
+        at dim 13 and ability_idx at dim 14.
+
+        Result shape: (18,)
+        Dimensions 13-17: [trigger_flag, ability_idx, param1, param2, param3]
         """
         god_ext = np.zeros(5, dtype=np.float32)
 
         if ability_name and ability_name in self.abilities:
-            names      = self.ability_names()
+            names       = self.ability_names()
             ability_idx = names.index(ability_name)
-            god_ext[0]  = 1.0                   # trigger flag
-            god_ext[1]  = float(ability_idx)
+            god_ext[0]  = 1.0                   # trigger flag  → dim 13
+            god_ext[1]  = float(ability_idx)    # ability index → dim 14
             if params:
                 for i, v in enumerate(list(params.values())[:3]):
                     god_ext[2 + i] = float(v)
 
-        return np.concatenate([base_action[:11], god_ext])
+        return np.concatenate([base_action[:13], god_ext])  # FIX: [:13] not [:11]
 
     def decode_action(
         self, extended_action: np.ndarray
     ) -> Optional[str]:
         """
-        Decode a 16-dim god action vector back to an ability name.
-        Returns None if the trigger flag is not set or idx is out of range.
+        Decode an 18-dim god action vector back to an ability name.
+
+        FIX: was reading trigger at dim 11 and ability_idx at dim 12.
+        GodTransformerPolicy layout: dims 0-12 = base (13), dims 13-17 = god.
+        Trigger is at dim 13, ability_idx at dim 14.
         """
-        if len(extended_action) < 16:
+        if len(extended_action) < 18:
             return None
-        if extended_action[11] < 0.5:   # trigger flag
+        if extended_action[13] < 0.5:   # trigger flag at dim 13
             return None
-        idx   = int(round(extended_action[12]))
+        idx   = int(round(extended_action[14]))   # ability_idx at dim 14
         names = self.ability_names()
         if 0 <= idx < len(names):
             return names[idx]
@@ -224,13 +240,13 @@ class GodControlSystem:
     def get_params_from_action(
         self, extended_action: np.ndarray
     ) -> Dict[str, float]:
-        """Extract param1/2/3 from a 16-dim action vector."""
-        if len(extended_action) < 16:
+        """Extract param1/2/3 from an 18-dim action vector (dims 15-17)."""
+        if len(extended_action) < 18:
             return {}
         return {
-            'param1': float(extended_action[13]),
-            'param2': float(extended_action[14]),
-            'param3': float(extended_action[15]),
+            'param1': float(extended_action[15]),
+            'param2': float(extended_action[16]),
+            'param3': float(extended_action[17]),
         }
 
 
@@ -253,7 +269,7 @@ def integrate_god_controls(agent) -> None:
 
     What this does NOT do
     ---------------------
-    - Does NOT monkey-patch agent.act() — act() still handles base 11-dim
+    - Does NOT monkey-patch agent.act() — act() still handles base 13-dim
       controls. God abilities are triggered explicitly by the cognitive loop
       or planner via agent.use_god_ability().
     """
@@ -262,7 +278,7 @@ def integrate_god_controls(agent) -> None:
         return
 
     agent.god_controls  = GodControlSystem(agent.god_type)
-    agent.god_action_dim = 16   # 11 base + 5 god extension
+    agent.god_action_dim = 18   # FIX: 13 base + 5 god extension (GodTransformerPolicy.TOTAL_DIM)
 
     def use_god_ability(ability_name: str,
                         outcome: Optional[Dict[str, Any]] = None,

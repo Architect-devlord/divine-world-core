@@ -31,6 +31,53 @@ import logging
 log = logging.getLogger("cognitive_loop")
 
 
+def _event_to_text(event: dict) -> str:
+    """
+    Convert a perception/action/experience event dict to a brief natural-language
+    description so the language system can train on non-chat experience.
+
+    Examples:
+      {'type': 'audio_input', 'payload': {'emotion_label': 'hostile'}}
+        → "heard hostile audio"
+      {'type': 'experience', 'payload': {'health': 15.0, 'is_dead': False}}
+        → "experience: health 15.0 hunger 0 is_dead False"
+      {'type': 'chat_heard', 'payload': {'speaker': 'Eve', 'message': 'hello'}}
+        → "Eve said: hello"
+    """
+    etype   = event.get('type', 'unknown')
+    payload = event.get('payload', {}) or {}
+    tags    = event.get('tags', [])
+
+    if etype == 'chat_heard':
+        speaker = payload.get('speaker', 'someone')
+        msg     = payload.get('message', '')
+        return f"{speaker} said: {msg}" if msg else ''
+
+    if etype == 'audio_input':
+        label = payload.get('emotion_label', '')
+        trans = payload.get('transcription', '')
+        if trans: return f"heard speech: {trans}"
+        if label and label not in ('neutral', None): return f"heard {label} audio"
+        return ''
+
+    if etype in ('experience', 'action'):
+        parts = []
+        for k in ('health', 'hunger', 'is_dead', 'task_reward', 'killed_enemy'):
+            if k in payload:
+                parts.append(f"{k.replace('_', ' ')} {payload[k]}")
+        return (etype + ': ' + ', '.join(parts)) if parts else ''
+
+    if 'action' in tags:
+        return f"performed {etype}"
+
+    if 'perception' in tags:
+        keys = list(payload.keys())[:4]
+        parts = [f"{k} {payload[k]}" for k in keys if payload.get(k) is not None]
+        return f"perceived {etype}: {', '.join(parts)}" if parts else f"perceived {etype}"
+
+    return ''
+
+
 class CognitiveState:
     """Tracks agent's cognitive state across cycles."""
 
@@ -1008,6 +1055,19 @@ class CognitiveLoop:
             log.error(f"Learning execution error: {e}")
 
     def _learning_worker(self):
+        """
+        Language learning from memory batch.
+
+        FIX: Old code filtered for events that had a 'text' field, which meant
+        only chat messages ever trained the language system.  Perception and
+        action events (tagged 'action', 'perception') rarely have a text field
+        — they have type, payload, tags.
+
+        Now: serialize any event that lacks a text field into a brief natural-
+        language description before passing it to process_language_input().
+        This trains the language system on the full experience stream, not just
+        social speech, giving it grounding in what actions and perceptions mean.
+        """
         try:
             if hasattr(self.agent.brain, 'language'):
                 batch = self.agent.memory.get_training_batch(
@@ -1016,9 +1076,13 @@ class CognitiveLoop:
                 )
                 if batch:
                     for event in batch:
-                        if 'text' in event:
+                        text = event.get('text', '') or ''
+                        if not text:
+                            # Serialize perception/action events to text
+                            text = _event_to_text(event)
+                        if text:
                             self.agent.brain.process_language_input(
-                                event['text'],
+                                text,
                                 event.get('context_snapshot', {}),
                             )
         except Exception as e:

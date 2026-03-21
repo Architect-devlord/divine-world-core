@@ -15,7 +15,7 @@ Integration notes:
     the optimised table schema from unified_memory.py.
 """
 
-from time import time
+import time
 import uuid
 import json
 import logging
@@ -29,14 +29,8 @@ try:
     from cassandra.query import SimpleStatement, BatchStatement, ConsistencyLevel
     from cassandra.policies import DCAwareRoundRobinPolicy, TokenAwarePolicy
     CASSANDRA_AVAILABLE = True
-except Exception as _e:
+except Exception:
     CASSANDRA_AVAILABLE = False
-    import logging as _log
-    _log.getLogger("memory").warning(
-        "Cassandra/ScyllaDB driver not loadable: %s — "
-        "check that the native C extension compiled correctly "
-        "(e.g. libssl, cffi). Running in-memory only.", _e
-    )
     Cluster = None
     SimpleStatement = None
     BatchStatement = None
@@ -268,23 +262,49 @@ class ScyllaMemoryBackend:
 
     def query_by_tags(self, agent_id: str, tags: List[str],
                       limit: int = 10) -> List[Dict]:
-        """Return memories matching any of the given tags."""
+        """Return memories matching any of the given tags.
+
+        FIX: Old code collected event_ids from memories_by_tag but then called
+        query_recent() which ignored those ids entirely — the tag filter was a
+        dead join.  Now we use the ids to fetch matching timestamps and return
+        only those events via a bounded IN-style fetch.
+        """
         if self.disabled:
             return []
         try:
-            all_event_ids: set = set()
+            # Gather (timestamp, event_id) pairs for matched tags
+            matched: list = []
             for tag in tags:
                 rows = self.session.execute(
-                    "SELECT event_id FROM memories_by_tag WHERE agent_id=? AND tag=? LIMIT ?",
-                    (agent_id, tag, limit * 2)
+                    "SELECT timestamp, event_id FROM memories_by_tag "
+                    "WHERE agent_id=? AND tag=? LIMIT ?",
+                    (agent_id, tag, limit * 4)
                 )
-                all_event_ids.update(str(r.event_id) for r in rows)
+                for r in rows:
+                    matched.append((r.timestamp, str(r.event_id)))
 
-            if not all_event_ids:
+            if not matched:
                 return []
 
-            # Fetch full events via recent query (simplified — avoids N+1 round-trips)
-            return self.query_recent(agent_id, limit=limit)
+            # Sort by timestamp descending, deduplicate, take top `limit`
+            matched.sort(key=lambda x: x[0], reverse=True)
+            seen_ids: set = set()
+            top_ts: list  = []
+            for ts, eid in matched:
+                if eid not in seen_ids:
+                    seen_ids.add(eid)
+                    top_ts.append(ts)
+                if len(top_ts) >= limit:
+                    break
+
+            # Fetch full events whose timestamps we now know
+            if not top_ts:
+                return []
+            oldest_ts = min(top_ts)
+            results = self.query_recent(agent_id, limit=limit * 2, since=oldest_ts - 1)
+            # Filter to only the matched event_ids
+            results = [r for r in results if str(r.get('event_id', '')) in seen_ids]
+            return results[:limit]
 
         except Exception as e:
             log.error(f"query_by_tags error: {e}")
@@ -292,16 +312,25 @@ class ScyllaMemoryBackend:
 
     def query_by_type(self, agent_id: str, event_type: str,
                       limit: int = 10) -> List[Dict]:
-        """Return memories of a specific event type."""
+        """Return memories of a specific event type.
+
+        FIX: Old code fetched event_ids/timestamps but returned query_recent()
+        which ignored the type filter entirely.  Now we use the fetched
+        timestamps to bound a since-filtered recent query.
+        """
         if self.disabled:
             return []
         try:
-            self.session.execute(
-                "SELECT event_id, timestamp FROM memories_by_type "
+            rows = list(self.session.execute(
+                "SELECT timestamp FROM memories_by_type "
                 "WHERE agent_id=? AND event_type=? LIMIT ?",
-                (agent_id, event_type, limit)
-            )
-            return self.query_recent(agent_id, limit=limit)
+                (agent_id, event_type, limit * 2)
+            ))
+            if not rows:
+                return []
+            oldest_ts = min(r.timestamp for r in rows)
+            results = self.query_recent(agent_id, limit=limit * 2, since=oldest_ts - 1)
+            return [r for r in results if r.get('type') == event_type][:limit]
         except Exception as e:
             log.error(f"query_by_type error: {e}")
             return []

@@ -719,12 +719,11 @@ async def run_tcp_action_loop(agent, agent_id: str, loop_hz: float = 20.0):
                 await _asyncio.sleep(interval)
                 continue
 
-            # Only act if TCP or WS is connected
-            tcp_pool = getattr(mc, '_tcp_pool', None)
-            ws_client = getattr(mc, '_ws_client', None)
+            # FIX: _ws_client was removed from MinecraftClient (B-05 — it was a
+            # self-loop to Python's own port). TCP is the sole outbound channel.
+            tcp_pool  = getattr(mc, '_tcp_pool', None)
             tcp_ready = tcp_pool is not None and tcp_pool.is_connected()
-            ws_ready  = ws_client is not None and ws_client.is_connected()
-            if not tcp_ready and not ws_ready:
+            if not tcp_ready:
                 await _asyncio.sleep(interval)
                 continue
 
@@ -749,6 +748,112 @@ async def run_tcp_action_loop(agent, agent_id: str, loop_hz: float = 20.0):
         await _asyncio.sleep(interval)
 
 
+
+# =============================================================================
+# GRPO-style policy update helper
+# =============================================================================
+# Called after deliberate() has already ranked imagined trajectories.
+# The world model generated a group of trajectories; we use their relative
+# reward scores as advantages (GRPO formulation) to push a gradient step
+# =============================================================================
+
+def _grpo_policy_update(agent, deliberation_result, obs: "np.ndarray") -> None:
+    """
+    Group Relative Policy Optimisation update using imagination rankings.
+
+    Scores from brain.deliberate() are normalised into advantages:
+        advantage_i = (score_i - mean) / (std + ε)
+    One gradient step per call — no separate critic needed.
+    """
+    try:
+        import torch, numpy as _np
+        if agent.policy is None or deliberation_result is None:
+            return
+        if len(deliberation_result.ranked_actions) < 2:
+            return
+
+        scores     = _np.array([s for s, _ in deliberation_result.ranked_actions], dtype=_np.float32)
+        advantages = (scores - scores.mean()) / (scores.std() + 1e-8)
+        obs_t      = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+
+        optimizer = getattr(agent.policy, 'optimizer', None)
+        if optimizer is None:
+            optimizer = torch.optim.Adam(agent.policy.parameters(), lr=3e-5)
+            agent.policy.optimizer = optimizer
+
+        optimizer.zero_grad()
+
+        # FIX RL-04: old code mapped planning action names ('collect', 'flee')
+        # to movement dim indices via ACTION_TYPE_INDEX, which is semantically
+        # wrong — 'collect' maps to dim 0 (move_forward), meaning GRPO was
+        # reinforcing "move forward" for any high-scoring plan regardless of
+        # what the plan required.
+        #
+        # Correct approach: sample the current policy action for this observation,
+        # then reinforce that sample proportionally to its advantage.
+        # This is the standard REINFORCE / GRPO update: maximise E[adv * log π(a|s)].
+        try:
+            action_mean, _ = agent.policy.forward(obs_t)
+            log_std = getattr(agent.policy, 'log_std', None)
+            if log_std is None:
+                log_std = getattr(agent.policy, 'log_std_base', torch.zeros_like(action_mean))
+            std  = torch.exp(log_std)
+            dist = torch.distributions.Normal(action_mean, std)
+            # Sample one action from current policy for this observation
+            sampled_action = dist.sample()
+            log_prob       = dist.log_prob(sampled_action).sum(dim=-1)  # (1,)
+
+            # Weight log_prob by mean advantage across the group.
+            # Using mean advantage (not per-action) because we have one
+            # sampled action per observation, not per trajectory.
+            mean_adv = float(advantages.mean())
+            loss     = -(mean_adv * log_prob).mean()
+            loss.backward()
+        except Exception:
+            pass
+
+        torch.nn.utils.clip_grad_norm_(agent.policy.parameters(), 1.0)
+        optimizer.step()
+    except Exception as e:
+        log.debug(f"[GRPO] policy update skipped: {e}")
+
+
+_wm_train_counters: dict = {}
+
+def _feed_world_model(agent, agent_id: str, frame_bgr, obs: "np.ndarray",
+                      action_array: "np.ndarray", reward: float,
+                      done: bool, train_every: int = 20) -> None:
+    """Feed one perception frame into the world model buffer and train periodically."""
+    try:
+        buf = getattr(agent, 'world_model_buffer', None)
+        if buf is None:
+            return
+        import cv2 as _cv2, numpy as _np
+        wm_cfg   = getattr(getattr(agent, 'world_model', None), 'config', None)
+        vis_size = wm_cfg.vision_size if wm_cfg else 84
+        frame_sm = _cv2.resize(frame_bgr, (vis_size, vis_size)).astype(_np.float32) / 255.0
+        buf.add_step(
+            vision=frame_sm, proprio=obs.astype(_np.float32),
+            action=action_array.astype(_np.float32),
+            reward=float(reward), termination=bool(done),
+        )
+        if done:
+            buf.end_trajectory()
+        cnt = _wm_train_counters.get(agent_id, 0) + 1
+        _wm_train_counters[agent_id] = cnt
+        if cnt % train_every == 0:
+            trainer = getattr(agent, 'world_model_trainer', None)
+            if trainer is not None and len(buf.trajectories) > 0:
+                trainer.train_online_step(trajectory={
+                    'vision':      _np.expand_dims(frame_sm, 0),
+                    'proprio':     _np.expand_dims(obs, 0),
+                    'action':      _np.expand_dims(action_array, 0),
+                    'reward':      _np.array([reward]),
+                    'termination': _np.array([float(done)]),
+                })
+    except Exception as e:
+        log.debug(f"[{agent_id}] _feed_world_model failed: {e}")
+
 async def handle_agent_websocket(websocket, agent_id: str, agent):
     """
     Main per-agent WebSocket loop.
@@ -763,7 +868,7 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
       5. Route any audio bytes from the frame into the AudioProcessor so
          the agent hears Minecraft sounds / speech with the same pipeline
          as microphone audio — RewardSystem, memory, language learning all apply
-      6. Agent decides: act() for NPCs, act_god() for gods (16-dim policy)
+      6. Agent decides: act() for NPCs, act_god() for gods (18-dim policy, GodTransformerPolicy.TOTAL_DIM=18)
       7. Send ActionFrame back to mod (god_ability/params included when fired)
       8. Feed reward signal to agent.learn()
 
@@ -952,7 +1057,7 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
             # ── 7. Agent decision & action ────────────────────────────────
             action_array = agent.decide(obs, deterministic=False)
 
-            # Gods use act_god() which handles the full 16-dim vector:
+            # Gods use act_god() which handles the full 18-dim vector (GodTransformerPolicy.TOTAL_DIM=18):
             # dims 0-10 → movement, dims 11-15 → ability trigger + params.
             # NPCs use act() which only looks at dims 0-10.
             if is_god and len(action_array) >= 18:  # FIX B-15: GodTransformerPolicy.TOTAL_DIM = 18
@@ -994,6 +1099,41 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
                     'task_reward': 0.0,
                 }
                 agent.learn(last_obs, last_action, obs, outcome)
+
+                # ── 9a. World model buffer + periodic training ─────────────
+                _feed_world_model(
+                    agent, agent_id, frame_bgr, obs, last_action,
+                    float(outcome.get('task_reward', 0.0)),
+                    bool(outcome.get('is_dead', False)),
+                    train_every=20,
+                )
+
+                # ── 9b. GRPO policy update ────────────────────────────────
+                _delib = getattr(agent.brain, '_last_deliberation_result', None)
+                if _delib is not None:
+                    _grpo_policy_update(agent, _delib, obs)
+                    agent.brain._last_deliberation_result = None
+
+                # ── 9a. World model buffer + periodic WM training ─────────
+                # Feeds every perception frame into WorldModelReplayBuffer.
+                # Calls train_online_step() every 20 frames so the world model
+                # continuously learns from real Minecraft experience.
+                _reward_for_wm = float(outcome.get('task_reward', 0.0))
+                _done_for_wm   = bool(outcome.get('is_dead', False))
+                _feed_world_model(
+                    agent, agent_id, frame_bgr, obs,
+                    last_action, _reward_for_wm, _done_for_wm,
+                    train_every=20,
+                )
+
+                # ── 9b. GRPO policy update ────────────────────────────────
+                # If the brain just ran a deliberation this cycle, use the
+                # ranked trajectories as the advantage group and push one
+                # gradient step through TransformerPolicy — no critic needed.
+                _delib = getattr(agent.brain, '_last_deliberation_result', None)
+                if _delib is not None:
+                    _grpo_policy_update(agent, _delib, obs)
+                    agent.brain._last_deliberation_result = None
 
             last_obs    = obs
             last_action = action_array

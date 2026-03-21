@@ -48,7 +48,7 @@ import java.util.UUID;
 public abstract class BaseGodEntity extends Player implements IGodEntity {
 
     // Use Player's standard Inventory - has getDestroySpeed()
-    
+    private final Inventory godInventory;
 
     // Transformation state
     protected boolean isTransformed = false;
@@ -73,7 +73,7 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
     public BaseGodEntity(EntityType<? extends Player> type, Level level) {
         super(level, BlockPos.ZERO, 0.0F, createGodProfile());
         // FIXED: Use Player's Inventory class which has getDestroySpeed()
-        
+        this.godInventory = new Inventory(this);
     }
 
     /**
@@ -86,10 +86,10 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
     @Override
     public void tick() {
         super.tick();
-        // FIX B-02: ++this.attackStrengthTicker REMOVED.
-        // Player.tick() already calls tickAttackStrength() which increments it.
-        // Having it here too made attack cooldown recharge at 2× speed and
-        // caused every second hit to become a premature critical.
+        // FIX M-06: do NOT increment attackStrengthTicker here.
+        // Player.tick() already calls tickAttackStrength() which does ++attackStrengthTicker.
+        // A second increment here doubled the recharge speed, making every second
+        // swing a premature critical hit.
 
         // Handle item usage
         if (!this.useItem.isEmpty() && this.useItemRemaining > 0) {
@@ -99,7 +99,8 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
             }
         }
 
-        
+        // Tick inventory (for item animations, etc.)
+        this.godInventory.tick();
     }
 
     // ==================== MINING - PRODUCTION READY ====================
@@ -165,7 +166,7 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
      */
     @Override
     public float getDestroySpeed(BlockState state) {
-        float speed = this.inventory.getDestroySpeed(state);
+        float speed = godInventory.getDestroySpeed(state);
 
         // Efficiency enchantment bonus
         if (speed > 1.0F) {
@@ -346,7 +347,7 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
                 if (item.isEmpty()) {
                     setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.BUCKET));
                 } else {
-                    this.inventory.add(new ItemStack(Items.BUCKET));
+                    godInventory.add(new ItemStack(Items.BUCKET));
                 }
             }
         }
@@ -431,7 +432,7 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
                 if (itemstack.isEmpty()) {
                     setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.GLASS_BOTTLE));
                 } else {
-                    this.inventory.add(new ItemStack(Items.GLASS_BOTTLE));
+                    godInventory.add(new ItemStack(Items.GLASS_BOTTLE));
                 }
             }
         }
@@ -567,8 +568,8 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
     }
 
     private ItemStack findArrow() {
-        for (int i = 0; i < this.inventory.getContainerSize(); i++) {
-            ItemStack stack = this.inventory.getItem(i);
+        for (int i = 0; i < godInventory.getContainerSize(); i++) {
+            ItemStack stack = godInventory.getItem(i);
             if (stack.getItem() instanceof ArrowItem) {
                 return stack;
             }
@@ -628,15 +629,15 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
 
     @Override
     public ItemStack getMainHandItem() {
-        return this.inventory.getSelected();
+        return godInventory.getSelected();
     }
 
     @Override
     public void setItemInHand(InteractionHand hand, ItemStack stack) {
         if (hand == InteractionHand.MAIN_HAND) {
-            this.inventory.setItem(this.inventory.selected, stack);
+            godInventory.setItem(godInventory.selected, stack);
         } else {
-            this.inventory.offhand.set(0, stack);
+            godInventory.offhand.set(0, stack);
         }
     }
 
@@ -647,21 +648,21 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
 
     @Override
     public ItemStack getOffhandItem() {
-        return this.inventory.offhand.get(0);
+        return godInventory.offhand.get(0);
     }
 
     public void setOffhandItem(ItemStack stack) {
-        this.inventory.offhand.set(0, stack);
+        godInventory.offhand.set(0, stack);
     }
 
     public void selectHotbarSlot(int slot) {
         if (slot >= 0 && slot < 9) {
-            this.inventory.selected = slot;
+            godInventory.selected = slot;
         }
     }
 
     public boolean addItem(ItemStack stack) {
-        return this.inventory.add(stack);
+        return godInventory.add(stack);
     }
 
     public void dropItem(ItemStack stack) {
@@ -701,7 +702,7 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
     public ItemStack getItemBySlot(EquipmentSlot slot) {
         return switch (slot.getType()) {
             case HAND -> slot == EquipmentSlot.MAINHAND ? getMainHandItem() : getOffhandItem();
-            case ARMOR -> this.inventory.armor.get(slot.getIndex());
+            case ARMOR -> godInventory.armor.get(slot.getIndex());
             default -> ItemStack.EMPTY;
         };
     }
@@ -711,13 +712,18 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
         switch (slot.getType()) {
             case HAND -> {
                 if (slot == EquipmentSlot.MAINHAND) {
-                    this.inventory.setItem(this.inventory.selected, stack);
+                    godInventory.setItem(godInventory.selected, stack);
                 } else {
                     setOffhandItem(stack);
                 }
             }
-            case ARMOR -> this.inventory.armor.set(slot.getIndex(), stack);
+            case ARMOR -> godInventory.armor.set(slot.getIndex(), stack);
         }
+    }
+
+    @Override
+    public Inventory getInventory() {
+        return this.godInventory;
     }
 
     // ==================== HELPER METHODS ====================
@@ -971,8 +977,8 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
     }
 
     private boolean hasIngredient(net.minecraft.world.item.crafting.Ingredient ingredient) {
-        for (int i = 0; i < this.inventory.getContainerSize(); i++) {
-            if (ingredient.test(this.inventory.getItem(i))) {
+        for (int i = 0; i < godInventory.getContainerSize(); i++) {
+            if (ingredient.test(godInventory.getItem(i))) {
                 return true;
             }
         }
@@ -980,12 +986,12 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
     }
 
     private void consumeIngredient(net.minecraft.world.item.crafting.Ingredient ingredient) {
-        for (int i = 0; i < this.inventory.getContainerSize(); i++) {
-            ItemStack stack = this.inventory.getItem(i);
+        for (int i = 0; i < godInventory.getContainerSize(); i++) {
+            ItemStack stack = godInventory.getItem(i);
             if (ingredient.test(stack)) {
                 stack.shrink(1);
                 if (stack.isEmpty()) {
-                    this.inventory.setItem(i, ItemStack.EMPTY);
+                    godInventory.setItem(i, ItemStack.EMPTY);
                 }
                 return;
             }
@@ -1007,7 +1013,7 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
 
         // Save inventory using Player's Inventory save method
         ListTag inventoryTag = new ListTag();
-        this.inventory.save(inventoryTag);
+        godInventory.save(inventoryTag);
         tag.put("Inventory", inventoryTag);
 
         // Save item in use
@@ -1033,7 +1039,7 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
         // Load inventory using Player's Inventory load method
         if (tag.contains("Inventory", 9)) {
             ListTag inventoryTag = tag.getList("Inventory", 10);
-            this.inventory.load(inventoryTag);
+            godInventory.load(inventoryTag);
         }
 
         // Load item in use
@@ -1146,8 +1152,8 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
     private boolean hasStack(ItemStack stack) {
         int needed = stack.getCount();
 
-        for (int i = 0; i < this.inventory.getContainerSize(); i++) {
-            ItemStack inv = this.inventory.getItem(i);
+        for (int i = 0; i < godInventory.getContainerSize(); i++) {
+            ItemStack inv = godInventory.getItem(i);
             if (ItemStack.isSameItemSameTags(inv, stack)) {
                 needed -= inv.getCount();
                 if (needed <= 0) return true;
@@ -1159,15 +1165,15 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
     private void removeItems(ItemStack stack) {
         int remaining = stack.getCount();
 
-        for (int i = 0; i < this.inventory.getContainerSize(); i++) {
-            ItemStack inv = this.inventory.getItem(i);
+        for (int i = 0; i < godInventory.getContainerSize(); i++) {
+            ItemStack inv = godInventory.getItem(i);
             if (ItemStack.isSameItemSameTags(inv, stack)) {
                 int taken = Math.min(inv.getCount(), remaining);
                 inv.shrink(taken);
                 remaining -= taken;
 
                 if (inv.isEmpty()) {
-                    this.inventory.setItem(i, ItemStack.EMPTY);
+                    godInventory.setItem(i, ItemStack.EMPTY);
                 }
 
                 if (remaining <= 0) return;

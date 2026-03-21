@@ -2498,3 +2498,261 @@ Aborted by user request.
 [2026-03-18 14:41:37][INFO] auto_packager: AutoPackaging stopped
 [2026-03-18 14:41:37][INFO] agent_manager: Agent cleanup complete
 [2026-03-18 14:41:37][INFO] agent_manager: ✅ Shutdown complete
+[2026-03-20 12:48:48][INFO] root: Logging initialised — level=INFO file=data/logs/divine_world.log
+[2026-03-20 12:48:48][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-20 12:48:48][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-20 12:48:48][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-20 12:48:48][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-20 12:48:48][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:48][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:48][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-20 12:48:48][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 12:48:48][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-20 12:48:48][INFO] packager: ✅ Frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-03-20 12:48:48][INFO] packager: ✅ Mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 12:48:48][INFO] packager: ✅ UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:48][INFO] auto_packager: Packaging worker started
+[2026-03-20 12:48:48][INFO] auto_packager: AutoPackaging initialised (output: /home/devlord/divine-world-core/npc_applications)
+[2026-03-20 12:48:48][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-20 12:48:48][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:48][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:48][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-20 12:48:48][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 12:48:48][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-20 12:48:48][INFO] agent_spawner: ✅ UltimMCAgentSpawner: UltimMC automation active
+[2026-03-20 12:48:48][INFO] auto_packager: ✅ UltimMC automation available
+[2026-03-20 12:48:48][INFO] agent_manager: AgentProcessManager initialised
+[2026-03-20 12:48:48][INFO] auto_connect: AutoConnect System initialised
+[2026-03-20 12:48:48][INFO] auto_connect:   Agents Folder : /home/devlord/divine-world-core/npc_applications
+[2026-03-20 12:48:48][INFO] auto_connect:   Server        : 127.0.0.1:25565
+[2026-03-20 12:48:48][INFO] auto_connect: ✅ Auto-connect endpoints registered (/api/autoconnect/*)
+[2026-03-20 12:48:48][INFO] auto_connect:    player_event handler must call app.state.auto_connect.mark_connected(agent_id) on 'connected' events
+[2026-03-20 12:48:56][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-20 12:48:56][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-20 12:48:56][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-20 12:48:56][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-20 12:48:56][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:56][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:56][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-20 12:48:56][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 12:48:56][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-20 12:48:56][INFO] packager: ✅ Frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-03-20 12:48:56][INFO] packager: ✅ Mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 12:48:56][INFO] packager: ✅ UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:56][INFO] auto_packager: Packaging worker started
+[2026-03-20 12:48:56][INFO] auto_packager: AutoPackaging initialised (output: /home/devlord/divine-world-core/npc_applications)
+[2026-03-20 12:48:56][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-20 12:48:56][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:56][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 12:48:56][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-20 12:48:56][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 12:48:56][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-20 12:48:56][INFO] agent_spawner: ✅ UltimMCAgentSpawner: UltimMC automation active
+[2026-03-20 12:48:56][INFO] auto_packager: ✅ UltimMC automation available
+[2026-03-20 12:48:56][INFO] agent_manager: AgentProcessManager initialised
+[2026-03-20 12:48:56][INFO] auto_connect: AutoConnect System initialised
+[2026-03-20 12:48:56][INFO] auto_connect:   Agents Folder : /home/devlord/divine-world-core/npc_applications
+[2026-03-20 12:48:56][INFO] auto_connect:   Server        : 127.0.0.1:25565
+[2026-03-20 12:48:56][INFO] auto_connect: ✅ Auto-connect endpoints registered (/api/autoconnect/*)
+[2026-03-20 12:48:56][INFO] auto_connect:    player_event handler must call app.state.auto_connect.mark_connected(agent_id) on 'connected' events
+[2026-03-20 12:48:56][INFO] agent_manager: ============================================================
+[2026-03-20 12:48:56][INFO] agent_manager:   🎮 Divine World Management Server  v3.0.0
+[2026-03-20 12:48:56][INFO] agent_manager: ============================================================
+[2026-03-20 12:50:28][INFO] agent_manager: 🛑 Shutting down…
+[2026-03-20 12:50:28][INFO] agent_spawner: AgentSpawner: cleaning up all agents…
+[2026-03-20 12:50:28][INFO] agent_spawner: AgentSpawner: cleanup complete
+[2026-03-20 12:50:28][INFO] auto_packager: Shutting down AutoPackaging…
+[2026-03-20 12:50:29][INFO] auto_packager: Packaging worker stopped
+[2026-03-20 12:50:29][INFO] auto_packager: AutoPackaging stopped
+[2026-03-20 12:50:29][INFO] agent_manager: Agent cleanup complete
+[2026-03-20 12:50:29][INFO] agent_manager: ✅ Shutdown complete
+[2026-03-20 13:00:08][INFO] root: Logging initialised — level=INFO file=data/logs/divine_world.log
+[2026-03-20 13:00:08][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-20 13:00:08][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-20 13:00:08][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-20 13:00:08][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-20 13:00:08][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:08][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:08][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-20 13:00:08][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 13:00:08][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-20 13:00:08][INFO] packager: ✅ Frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-03-20 13:00:08][INFO] packager: ✅ Mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 13:00:08][INFO] packager: ✅ UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:08][INFO] auto_packager: Packaging worker started
+[2026-03-20 13:00:08][INFO] auto_packager: AutoPackaging initialised (output: /home/devlord/divine-world-core/npc_applications)
+[2026-03-20 13:00:08][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-20 13:00:08][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:08][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:08][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-20 13:00:08][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 13:00:08][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-20 13:00:08][INFO] agent_spawner: ✅ UltimMCAgentSpawner: UltimMC automation active
+[2026-03-20 13:00:08][INFO] auto_packager: ✅ UltimMC automation available
+[2026-03-20 13:00:08][INFO] agent_manager: AgentProcessManager initialised
+[2026-03-20 13:00:08][INFO] auto_connect: AutoConnect System initialised
+[2026-03-20 13:00:08][INFO] auto_connect:   Agents Folder : /home/devlord/divine-world-core/npc_applications
+[2026-03-20 13:00:08][INFO] auto_connect:   Server        : 127.0.0.1:25565
+[2026-03-20 13:00:08][INFO] auto_connect: ✅ Auto-connect endpoints registered (/api/autoconnect/*)
+[2026-03-20 13:00:08][INFO] auto_connect:    player_event handler must call app.state.auto_connect.mark_connected(agent_id) on 'connected' events
+[2026-03-20 13:00:11][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-20 13:00:11][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-20 13:00:11][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-20 13:00:11][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-20 13:00:11][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:11][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:11][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-20 13:00:11][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 13:00:11][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-20 13:00:11][INFO] packager: ✅ Frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-03-20 13:00:11][INFO] packager: ✅ Mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 13:00:11][INFO] packager: ✅ UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:11][INFO] auto_packager: Packaging worker started
+[2026-03-20 13:00:11][INFO] auto_packager: AutoPackaging initialised (output: /home/devlord/divine-world-core/npc_applications)
+[2026-03-20 13:00:11][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-20 13:00:11][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:11][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-20 13:00:11][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-20 13:00:11][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-20 13:00:11][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-20 13:00:11][INFO] agent_spawner: ✅ UltimMCAgentSpawner: UltimMC automation active
+[2026-03-20 13:00:11][INFO] auto_packager: ✅ UltimMC automation available
+[2026-03-20 13:00:11][INFO] agent_manager: AgentProcessManager initialised
+[2026-03-20 13:00:11][INFO] auto_connect: AutoConnect System initialised
+[2026-03-20 13:00:11][INFO] auto_connect:   Agents Folder : /home/devlord/divine-world-core/npc_applications
+[2026-03-20 13:00:11][INFO] auto_connect:   Server        : 127.0.0.1:25565
+[2026-03-20 13:00:11][INFO] auto_connect: ✅ Auto-connect endpoints registered (/api/autoconnect/*)
+[2026-03-20 13:00:11][INFO] auto_connect:    player_event handler must call app.state.auto_connect.mark_connected(agent_id) on 'connected' events
+[2026-03-20 13:00:11][INFO] agent_manager: ============================================================
+[2026-03-20 13:00:11][INFO] agent_manager:   🎮 Divine World Management Server  v3.0.0
+[2026-03-20 13:00:11][INFO] agent_manager: ============================================================
+[2026-03-20 13:01:18][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-20 13:01:18][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-20 13:01:18][INFO] agent_manager: ✅ Registered in usernamecache.json: Alice
+[2026-03-20 13:01:18][INFO] agent_manager: [PortAlloc] 'Alice' -> TCP 11471 / WS 21471 (from agents.json)
+[2026-03-20 13:01:18][INFO] agent_manager: ✅ Agent alice_1 started (PID 18406)
+[2026-03-20 13:01:24][INFO] agent_manager: [alice_1] [2026-03-20 13:01:24,088] INFO - agent - [PortResolve] Final ports → TCP 11471 / WS 21471
+[2026-03-20 13:01:24][INFO] agent_manager: [alice_1] [2026-03-20 13:01:24,167] ERROR - cassandra.cluster - Compression is enabled, but no compression libraries are available. Disabling compression, consider installing one of the Python packages: lz4 and/or python-snappy.
+[2026-03-20 13:01:24][INFO] agent_manager: [alice_1] [2026-03-20 13:01:24,169] WARNING - cassandra.cluster - [control connection] Error connecting to 127.0.0.1:9042:
+[2026-03-20 13:01:24][INFO] agent_manager: [alice_1] Traceback (most recent call last):
+[2026-03-20 13:01:24][INFO] agent_manager: [alice_1] File "cassandra/cluster.py", line 3535, in cassandra.cluster.ControlConnection._try_connect_to_hosts
+[2026-03-20 13:01:24][INFO] agent_manager: [alice_1] File "cassandra/cluster.py", line 3577, in cassandra.cluster.ControlConnection._try_connect
+[2026-03-20 13:01:24][INFO] agent_manager: [alice_1] connection = self._cluster.connection_factory(endpoint, is_control_connection=True)
+[2026-03-20 13:01:24][INFO] agent_manager: [alice_1] File "cassandra/cluster.py", line 1649, in cassandra.cluster.Cluster.connection_factory
+[2026-03-20 13:01:24][INFO] agent_manager: [alice_1] return self.connection_class.factory(endpoint, self.connect_timeout, host_conn, *args, **kwargs)
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] File "cassandra/connection.py", line 858, in cassandra.connection.Connection.factory
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] File "/home/devlord/divine-world-core/dw_env/lib/python3.14/site-packages/cassandra/io/libevreactor.py", line 272, in __init__
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] self._connect_socket()
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] ~~~~~~~~~~~~~~~~~~~~^^
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] File "cassandra/connection.py", line 980, in cassandra.connection.Connection._connect_socket
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] raise socket.error(sockerr.errno, "Tried connecting to %s. Last error: %s" %
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] ConnectionRefusedError: [Errno 111] Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] [2026-03-20 13:01:24,226] WARNING - cassandra.cluster - [control connection] Error connecting to 127.0.0.1:9042:
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] Traceback (most recent call last):
+[2026-03-20 13:01:25][INFO] agent_manager: [alice_1] File "cassandra/cluster.py", line 3535, in cassandra.cluster.ControlConnection._try_connect_to_hosts
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] return (self._try_connect(endpoint), None)
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] File "cassandra/cluster.py", line 3577, in cassandra.cluster.ControlConnection._try_connect
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] connection = self._cluster.connection_factory(endpoint, is_control_connection=True)
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] File "cassandra/cluster.py", line 1649, in cassandra.cluster.Cluster.connection_factory
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] return self.connection_class.factory(endpoint, self.connect_timeout, host_conn, *args, **kwargs)
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] File "cassandra/connection.py", line 858, in cassandra.connection.Connection.factory
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] conn = cls(endpoint, *args, **kwargs)
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] File "/home/devlord/divine-world-core/dw_env/lib/python3.14/site-packages/cassandra/io/libevreactor.py", line 272, in __init__
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] self._connect_socket()
+[2026-03-20 13:01:26][INFO] agent_manager: [alice_1] ~~~~~~~~~~~~~~~~~~~~^^
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] File "cassandra/connection.py", line 980, in cassandra.connection.Connection._connect_socket
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] raise socket.error(sockerr.errno, "Tried connecting to %s. Last error: %s" %
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] ConnectionRefusedError: [Errno 111] Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] [2026-03-20 13:01:24,226] ERROR - cassandra.cluster - Control connection failed to connect, shutting down Cluster:
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] Traceback (most recent call last):
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] File "cassandra/cluster.py", line 1715, in cassandra.cluster.Cluster.connect
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] self.control_connection.connect()
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] File "cassandra/cluster.py", line 3511, in cassandra.cluster.ControlConnection.connect
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] self._set_new_connection(self._reconnect_internal())
+[2026-03-20 13:01:27][INFO] agent_manager: [alice_1] File "cassandra/cluster.py", line 3566, in cassandra.cluster.ControlConnection._reconnect_internal
+[2026-03-20 13:01:28][INFO] agent_manager: [alice_1] raise NoHostAvailable("Unable to connect to any servers", errors)
+[2026-03-20 13:01:28][INFO] agent_manager: [alice_1] cassandra.cluster.NoHostAvailable: ('Unable to connect to any servers', {'127.0.0.1:9042': ConnectionRefusedError(111, "Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused")})
+[2026-03-20 13:01:28][INFO] agent_manager: [alice_1] [2026-03-20 13:01:24,227] ERROR - memory - ScyllaDB initialisation failed: ('Unable to connect to any servers', {'127.0.0.1:9042': ConnectionRefusedError(111, "Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused")})
+[2026-03-20 13:01:28][INFO] agent_manager: [alice_1] [2026-03-20 13:01:24,227] INFO - memory - UnifiedMemoryStore initialised for 'alice_1' (In-Memory)
+[2026-03-20 13:01:28][INFO] agent_manager: [alice_1] [2026-03-20 13:01:28,749] INFO - brain.language - LanguageIntelligence initialized on cpu
+[2026-03-20 13:01:28][INFO] agent_manager: [alice_1] [2026-03-20 13:01:28,749] INFO - brain_core - BrainCore initialised.
+[2026-03-20 13:01:28][INFO] agent_manager: [alice_1] [2026-03-20 13:01:28,793] INFO - brain.language - LanguageIntelligence initialized on cpu
+[2026-03-20 13:01:29][INFO] agent_manager: [alice_1] [2026-03-20 13:01:28,793] INFO - brain.language - Language capabilities added to BrainCore
+[2026-03-20 13:01:29][INFO] agent_manager: [alice_1] [2026-03-20 13:01:28,794] INFO - agent - [alice_1] Language intelligence initialised
+[2026-03-20 13:01:40][INFO] agent_manager: [alice_1] [2026-03-20 13:01:40,915] WARNING - continual_learner - Avalanche not available - continual learning disabled
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:40,915] INFO - agent - [alice_1] Continual learning attached (strategy=replay)
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:40,921] INFO - reward_system - RewardSystem ready on cpu
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:40,922] INFO - brain_core - BrainCore: RewardSystem attached.
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:40,922] INFO - agent - [alice_1] RewardSystem initialised and wired to BrainCore
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,247] INFO - world_model - WorldModel initialized: 21.29M parameters
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,248] INFO - world_model - WorldModelReplayBuffer initialized: capacity=50000, seq_len=64
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,248] INFO - world_model - WorldModelTrainer initialized
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,248] INFO - brain_core - BrainCore: WorldModel attached (with VAE).
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,248] INFO - agent - [alice_1] WorldModel attached to BrainCore
+[2026-03-20 13:01:41][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,250] INFO - vision - FeatureExtractor: CNN initialised on cpu (random weights — will learn from experience).
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,468] INFO - vision - RobotCameraBackend: auto-detected camera at index 0
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,631] INFO - vision - RobotCameraBackend: opened source=0
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,631] INFO - vision - VisionAdapter: backends=['minecraft', 'robot_camera(None)', 'synthetic'], device=cpu, feature_dim=64, vocab_max=256
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,632] INFO - vision - [alice_1] agent.observe() patched for VisionAdapter.
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,632] INFO - vision - [alice_1] Minecraft vision frame hook registered.
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,632] INFO - vision - VisionAdapter: background capture started.
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,632] INFO - vision - [alice_1] VisionAdapter attached (device=cpu, vocab_max=256, fps=15.0).
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] [2026-03-20 13:01:41,632] INFO - agent - [alice_1] VisionAdapter attached
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM cards.pcm.rear
+[2026-03-20 13:01:42][INFO] agent_manager: [alice_1] ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM cards.pcm.center_lfe
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM cards.pcm.side
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] ALSA lib pcm_route.c:886:(find_matching_chmap) [error.pcm] Found no matching channel map
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] ALSA lib pcm_route.c:886:(find_matching_chmap) [error.pcm] Found no matching channel map
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] ALSA lib pcm_route.c:886:(find_matching_chmap) [error.pcm] Found no matching channel map
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] ALSA lib pcm_route.c:886:(find_matching_chmap) [error.pcm] Found no matching channel map
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] ALSA lib pcm_oss.c:404:(_snd_pcm_oss_open) [error.] Cannot open device /dev/dsp
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] ALSA lib pcm_oss.c:404:(_snd_pcm_oss_open) [error.] Cannot open device /dev/dsp
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] [W320 13:01:43.566618139 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] ALSA lib pcm_a52.c:1036:(_snd_pcm_a52_open) [error.] a52 is only for playback
+[2026-03-20 13:01:43][INFO] agent_manager: [alice_1] [W320 13:01:43.887444435 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] ALSA lib confmisc.c:160:(snd_config_get_card) [error.core] Invalid field card
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] ALSA lib pcm_usb_stream.c:481:(_snd_pcm_usb_stream_open) [error.] Invalid card 'card'
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] ALSA lib confmisc.c:160:(snd_config_get_card) [error.core] Invalid field card
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] ALSA lib pcm_usb_stream.c:481:(_snd_pcm_usb_stream_open) [error.] Invalid card 'card'
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,452] INFO - audio_processor - AudioCapture initialised: 16000Hz chunk=1024
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,453] INFO - audio_processor - SpeechRecognizer initialised
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,453] INFO - audio_processor - AudioProcessor initialised for alice_1
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,453] INFO - audio_processor - ✅ Microphone audio attached to alice_1
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,453] INFO - audio_processor - MinecraftSoundAdapter initialised for alice_1
+[2026-03-20 13:01:44][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,453] INFO - audio_processor - ✅ Minecraft sound adapter attached to alice_1
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,453] INFO - agent - [alice_1] Audio processing initialised
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,453] INFO - agent - NPCAgent init: alice_1 (mode=minecraft, autonomous=False, tcp=11471, ws=21471)
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,454] INFO - web_browser - WebBrowser (Playwright) initialised for alice_1
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,454] INFO - web_browser - ✅ Playwright web browser attached to alice_1
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,454] INFO - agent - [alice_1] Web browsing initialized
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,455] INFO - agent - [alice_1] Minecraft client initialised (TCP:11471 / WS:21471)
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [W320 13:01:43.952614928 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [W320 13:01:43.019285197 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [W320 13:01:43.086420325 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2026-03-20 13:01:45][INFO] agent_manager: [alice_1] [W320 13:01:43.154458991 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2026-03-20 13:01:46][INFO] agent_manager: [alice_1] [W320 13:01:43.242307818 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2026-03-20 13:01:46][INFO] agent_manager: [alice_1] [W320 13:01:43.287143044 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2026-03-20 13:01:46][INFO] agent_manager: [alice_1] [W320 13:01:43.354040222 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[2026-03-20 13:01:46][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,899] INFO - brain_capsule - ✅ Brain saved: /home/devlord/divine-world-core/npc_applications/data/brains/alice_1/brain.pcap (99,858,362 bytes)
+[2026-03-20 13:01:46][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,899] INFO - agent - [alice_1] Saved to /home/devlord/divine-world-core/npc_applications/data/brains/alice_1/brain.pcap
+[2026-03-20 13:01:46][INFO] agent_manager: [alice_1] [2026-03-20 13:01:43,900] WARNING - agent -
+[2026-03-20 13:01:46][INFO] agent_manager: [alice_1] ╔══════════════════════════════════════════════════════════════╗
+[2026-03-20 13:01:46][INFO] agent_manager: [alice_1] ║  ⚠️  UltimMC NOT FOUND — Minecraft client will not launch  ║
+[2026-03-20 13:01:46][INFO] agent_manager: [alice_1] ║                                                              ║
+[2026-03-20 13:01:47][INFO] brain_capsule: ✅ Brain loaded: /home/devlord/divine-world-core/npc_applications/data/brains/alice_1/brain.pcap
+[2026-03-20 13:01:47][INFO] auto_packager: Gender from brain capsule: female
+[2026-03-20 13:01:47][INFO] packager: 📦 Packaging alice_1 (type=npc, gender=female)
+[2026-03-20 13:01:47][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-20 13:01:47][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-20 13:03:13][INFO] packager: Gender resolved from brain capsule: female
+[2026-03-20 13:03:13][INFO] packager: ✓ Brain capsule copied (gender=female)
+[2026-03-20 13:03:13][INFO] frontend_builder: 🔨 Building frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app → /home/devlord/divine-world-core/npc_applications/alice_1/frontend
+[2026-03-20 13:03:13][INFO] frontend_builder: ⚙️  npm run build…
+[2026-03-20 13:03:24][INFO] frontend_builder: Waiting for build output to appear on disk…
+[2026-03-20 13:03:24][INFO] frontend_builder: ✅ Build output found: /home/devlord/divine-world-core/dw_agent/electron/react-app/dist — waiting 10s for asset flush…
+[2026-03-20 13:03:34][INFO] frontend_builder: ✅ Frontend built → /home/devlord/divine-world-core/npc_applications/alice_1/frontend
+[2026-03-20 13:03:34][INFO] packager: ✓ DivineWorld mod included
+[2026-03-20 13:03:34][INFO] packager: ✓ DWClientBot mod included
+[2026-03-20 13:03:34][INFO] packager: ✓ Launcher created
+[2026-03-20 13:03:34][INFO] packager: 🔨 Building executable for alice_1…
+[2026-03-20 13:03:34][INFO] packager: Running PyInstaller… (this may take 30–60 s)

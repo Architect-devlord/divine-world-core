@@ -171,7 +171,14 @@ public class TaggedEntitySystem {
         CompoundTag nbt = player.getPersistentData();
 
         // Re-use cached NBT if available (avoids JSON read on every re-join)
-        if (nbt.getBoolean(TAG_DW_GOD)) return AgentType.GOD;
+        if (nbt.getBoolean(TAG_DW_GOD)) {
+            // FIX B-03: ensure dw_gender="dual" is always present for gods
+            // (may be absent on pre-fix saves that didn't write it).
+            if (!"dual".equals(nbt.getString("dw_gender"))) {
+                nbt.putString("dw_gender", "dual");
+            }
+            return AgentType.GOD;
+        }
         if (nbt.getBoolean(TAG_DW_NPC)) {
             return "female".equals(nbt.getString("dw_gender"))
                     ? AgentType.NPC_FEMALE : AgentType.NPC_MALE;
@@ -184,6 +191,10 @@ public class TaggedEntitySystem {
             String godType = AgentConfigLoader.getGodTypeForName(username);
             if (godType == null) godType = "oracle"; // safe fallback
             nbt.putString("dw_god_type", godType);
+            // FIX B-03: set dw_gender="dual" for gods so BreedingEventHandler
+            // can include them in proximity scans, and Python breeding_system
+            // can resolve their reproductive role per-partner.
+            nbt.putString("dw_gender", "dual");
             return AgentType.GOD;
         }
 

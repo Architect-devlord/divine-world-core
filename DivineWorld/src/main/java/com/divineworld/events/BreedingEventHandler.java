@@ -97,56 +97,97 @@ public class BreedingEventHandler {
 
     // ── Level scan ───────────────────────────────────────────────────────────
 
+    /**
+     * FIX B-02: Gods (dw_gender="dual") are now included in proximity scans.
+     *
+     * A pair is compatible when genders are complementary:
+     *   male  × female  — standard NPC pair
+     *   dual  × male    — god acts as female (god is pregnant)
+     *   dual  × female  — god acts as male   (NPC is pregnant)
+     *   dual  × dual    — both gods; first player alphabetically is "female"
+     *
+     * Gods waive the adjacent-beds requirement; NPC×NPC still requires beds.
+     * Python breeding_system.initiate_breeding() resolves the exact role.
+     */
     private static void checkBreedingInLevel(ServerLevel level) {
-        List<ServerPlayer> aiPlayers = DWNPCManager.getAIPlayers(level);
+        // FIX: DWNPCManager.getAIPlayers() only returns NPC-tagged players (TAG_DW_NPC).
+        // Gods are tagged TAG_DW_GOD, not TAG_DW_NPC, so they were excluded.
+        // Union both lists so god×npc and god×god pairs are detected.
+        List<ServerPlayer> npcPlayers = DWNPCManager.getAIPlayers(level);
+        List<ServerPlayer> godPlayers = DWNPCManager.getGodPlayers(level);
+        List<ServerPlayer> aiPlayers  = new java.util.ArrayList<>(npcPlayers);
+        for (ServerPlayer gp : godPlayers) {
+            if (!aiPlayers.contains(gp)) aiPlayers.add(gp);
+        }
         if (aiPlayers.size() < 2) return;
 
         for (int i = 0; i < aiPlayers.size(); i++) {
-            ServerPlayer a = aiPlayers.get(i);
-            if (DWNPCManager.isGodPlayer(a)) continue;
-
-            String genderA = a.getPersistentData().getString("dw_gender");
-            if (!"male".equals(genderA) && !"female".equals(genderA)) continue;
+            ServerPlayer a    = aiPlayers.get(i);
+            String genderA    = a.getPersistentData().getString("dw_gender");
+            boolean isGodA    = "dual".equals(genderA);
+            // Skip players that have no gender tag yet (real players, untagged)
+            if (!isGodA && !"male".equals(genderA) && !"female".equals(genderA)) continue;
 
             for (int j = i + 1; j < aiPlayers.size(); j++) {
                 ServerPlayer b = aiPlayers.get(j);
-                if (DWNPCManager.isGodPlayer(b)) continue;
-
                 String genderB = b.getPersistentData().getString("dw_gender");
-                if (!"male".equals(genderB) && !"female".equals(genderB)) continue;
+                boolean isGodB = "dual".equals(genderB);
+                if (!isGodB && !"male".equals(genderB) && !"female".equals(genderB)) continue;
 
-                // Require one male and one female
-                if (genderA.equals(genderB)) continue;
+                // Gender compatibility check — rejects same non-dual genders
+                if (!areGendersCompatible(genderA, genderB)) continue;
 
-                ServerPlayer male   = "male".equals(genderA) ? a : b;
-                ServerPlayer female = "female".equals(genderA) ? a : b;
+                String idA = DWNPCManager.getAgentId(a);
+                String idB = DWNPCManager.getAgentId(b);
+                if (idA == null || idB == null) continue;
 
-                String idMale   = DWNPCManager.getAgentId(male);
-                String idFemale = DWNPCManager.getAgentId(female);
-                if (idMale == null || idFemale == null) continue;
-
-                // Java-side cooldown: stop flooding Python with the same pair
-                String pairKey = pairKey(male.getUUID(), female.getUUID());
+                // Java-side cooldown — prevents flooding Python before it processes
+                String pairKey = pairKey(a.getUUID(), b.getUUID());
                 if (PAIR_COOLDOWNS.getOrDefault(pairKey, 0) > 0) continue;
 
                 // Proximity check
-                double distSq = male.distanceToSqr(female);
+                double distSq = a.distanceToSqr(b);
                 if (distSq > PROXIMITY_RADIUS * PROXIMITY_RADIUS) continue;
 
-                // Adjacent beds check
-                if (!hasTwoBedsNearby(level, male.blockPosition(), female.blockPosition())) {
+                // Beds check — waived when either agent is a god (dual gender)
+                boolean needsBeds = !isGodA && !isGodB;
+                if (needsBeds && !hasTwoBedsNearby(level, a.blockPosition(), b.blockPosition())) {
                     continue;
                 }
 
-                // All spatial conditions met
-                PythonBackendClient.notifyBreeding(idMale, idFemale, "npc", "npc");
+                // All spatial conditions met — notify Python with agent types
+                String typeA = isGodA ? "god" : "npc";
+                String typeB = isGodB ? "god" : "npc";
+                PythonBackendClient.notifyBreeding(idA, idB, typeA, typeB);
                 PAIR_COOLDOWNS.put(pairKey, JAVA_COOLDOWN_TICKS);
 
                 DWMod.LOGGER.info(
-                    "Breeding conditions met: {} (male) x {} (female) dist={:.1f}m, beds present",
-                    idMale, idFemale, Math.sqrt(distSq));
+                    "[Breeding] Pair detected: {} ({}/{}) x {} ({}/{}) dist={:.1f}m",
+                    idA, genderA, typeA, idB, genderB, typeB, Math.sqrt(distSq));
             }
         }
+    }
+
+    /**
+     * True when two gender strings form a compatible breeding pair.
+     *
+     * Compatible combinations:
+     *   male   × female  ✅
+     *   female × male    ✅
+     *   dual   × male    ✅  (god acts as female)
+     *   dual   × female  ✅  (god acts as male)
+     *   male   × dual    ✅
+     *   female × dual    ✅
+     *   dual   × dual    ✅  (god × god)
+     *
+     * Incompatible:
+     *   male   × male    ❌
+     *   female × female  ❌
+     */
+    private static boolean areGendersCompatible(String a, String b) {
+        if ("dual".equals(a) || "dual".equals(b)) return true;
+        return ("male".equals(a) && "female".equals(b))
+            || ("female".equals(a) && "male".equals(b));
     }
 
     // ── Bed detection ─────────────────────────────────────────────────────────

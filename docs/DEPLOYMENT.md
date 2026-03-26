@@ -2,9 +2,11 @@
 
 This document covers deploying Divine World in production environments using Docker or manual setups.
 
-## Docker Deployment
+---
 
-The easiest way to deploy multiple agents is using Docker Compose.
+## 🐳 Docker Deployment
+
+The easiest way to deploy Divine World is using Docker Compose. This starts the management server, a ScyllaDB instance (optional), and handles agent lifecycle management.
 
 ### Prerequisites
 - Docker and Docker Compose installed.
@@ -13,55 +15,66 @@ The easiest way to deploy multiple agents is using Docker Compose.
 ```bash
 docker-compose up -d --build
 ```
+The server will be available at `http://localhost:11400`.
 
 ### Configuration
-The `docker-compose.yml` file allows you to define multiple agents and their environments:
-
+The `docker-compose.yml` file allows you to define agent environments and ports:
 ```yaml
 services:
-  agent-alice:
-    build: ./py_backend
+  py_backend:
+    build:
+      context: .
+      dockerfile: py_backend/Dockerfile
     environment:
-      AGENT_ID: alice
-      PORT: 8001
+      DW_BACKEND_PORT: 11400
+      DW_ULTIMMC_PATH: /app/UltimMC
+    volumes:
+      - ./data:/app/npc_applications/data
     ports:
-      - "8001:8001"
+      - "11400:11400"
 ```
 
 ---
 
-## Production Readiness
+## 🏗️ Manual Production Setup
 
-Before deploying, run the production check script to ensure all dependencies and configurations are correct:
-
-```bash
-chmod +x production_ready_check.sh
-./production_ready_check.sh
-```
-
-### Key Considerations
-- **Resource Limits**: Each agent requires significant RAM (2GB+). Monitor memory usage with `docker stats`.
-- **Persistence**: Ensure the `./data` directory is mounted as a volume to persist agent brains and logs.
-- **Network**: The backend needs to be accessible by both the frontend and the Minecraft clients.
-
----
-
-## Manual Production Setup
-
-If not using Docker, it is recommended to use a process manager like **PM2** or **systemd** to keep the backend running.
+For manual setups, it is recommended to use a process manager like **systemd** or **PM2** to keep the management server running.
 
 ### Example systemd Service
+Create `/etc/systemd/system/divine-world.service`:
 ```ini
 [Unit]
-Description=Divine World Backend
+Description=Divine World Management Server
 After=network.target
 
 [Service]
-User=devlord
-WorkingDirectory=/home/devlord/divine-world-core/py_backend
-ExecStart=/home/devlord/divine-world-core/py_backend/start_backend.sh
+User=youruser
+WorkingDirectory=/path/to/divine-world-core
+ExecStart=/path/to/divine-world-core/venv/bin/python py_backend/main.py --cli
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+### Resource Considerations
+Each agent requires significant RAM (2GB+ recommended). Monitor your system's memory usage when spawning multiple agents.
+
+---
+
+## 🛰️ Networking
+
+- **Port 11400**: Default Management Server port (REST/WebSockets).
+- **Port 11401+**: Individual agent backends (assigned dynamically).
+- **Port 25565**: Default Minecraft server port (if running locally).
+
+Ensure these ports are open in your firewall if you are accessing the server or agents from a remote machine.
+
+---
+
+## 🧠 Persistence
+
+Ensure the `data/` and `npc_applications/` directories are backed up. These contain:
+- **`brain.pcap`**: Agent weights, memories, and personality.
+- **`agents.json`**: The agent registry.
+- **`config.json`**: Agent-specific settings.

@@ -1,100 +1,142 @@
 # Getting Started with Divine World
 
-Welcome to Divine World, a proprietary world simulation and AI-driven Minecraft universe. This guide will help you get the system up and running.
-
-## Prerequisites
-
-### System Requirements
-- **OS**: Linux, macOS, or Windows (with WSL2)
-- **Python**: 3.9+ (3.13 recommended)
-- **RAM**: 8GB minimum (16GB recommended for multiple agents)
-- **Disk Space**: 10GB+ (includes Minecraft, agents, and AI models)
-- **Java**: Default JRE (for Minecraft)
-
-### Required Software
-1. **Ollama**: Install Ollama and download a lightweight model (e.g., `phi3:mini`, `mistral`, or `llama3`). `phi3:mini` is the default.
-2. **Minecraft Launcher (UltimMC)**: Download from [UltimMC Releases](https://github.com/UltimMC/Launcher/releases).
-3. **Forge**: Minecraft 1.20.1 with Forge version 47.4.10.
+Welcome to Divine World, a proprietary world simulation and AI-driven Minecraft universe. This guide will walk you through setting up the entire environment on both Windows and Linux.
 
 ---
 
-## Installation
+## 📋 Prerequisites
 
-### 1. Clone the Repository
+Regardless of your OS, you will need the following core dependencies:
+
+1.  **Python 3.12+**: Required for the management server and AI core.
+2.  **Java 17 (JDK)**: Required for Minecraft 1.20.1 and Forge 47.4.10.
+3.  **Node.js & npm**: Required for building the agent dashboards and frontend.
+4.  **Ollama**: Required for running the local LLM models (e.g., `phi3:mini`, `llama3`).
+5.  **UltimMC**: A specialized Minecraft launcher used by agents for automation.
+
+---
+
+## 🐧 Linux Environment Setup
+
+These instructions apply to most modern Linux distributions (Ubuntu, Debian, Arch, Fedora).
+
+### 1. Install System Dependencies
+
+**Ubuntu/Debian:**
 ```bash
-git clone <repository-url>
-cd divine-world-core
+sudo apt update
+sudo apt install python3.12 python3.12-venv python3-pip openjdk-17-jdk nodejs npm git
 ```
 
-### 2. Install Dependencies
+**Arch Linux:**
 ```bash
-pip install -r requirements.txt
+sudo pacman -S python python-pip openjdk17-src nodejs npm git
+```
+
+### 2. Install Ollama
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+# Pull the default model
+ollama pull phi3:mini
 ```
 
 ### 3. Setup UltimMC
-Agents use UltimMC to manage Minecraft instances automatically.
-- Place UltimMC in `~/UltimMC/` or `~/.ultimmc/`.
-- Launch UltimMC once to create a 1.20.1 instance with Forge.
-- Close UltimMC (the agents will manage it).
+- Download the latest Linux release from [UltimMC/Launcher](https://github.com/UltimMC/Launcher/releases).
+- Extract to `~/UltimMC` or `~/.ultimmc`.
+- Ensure `~/UltimMC/bin/UltimMC` is executable.
 
 ---
 
-## Building Agents
+## 🪟 Windows Environment Setup
 
-Before running, you need to build the agent executables and mods.
+### 1. Install via Winget (Recommended)
+Open PowerShell as Administrator and run:
+```powershell
+# Python 3.12
+winget install Python.Python.3.12
 
-```bash
-chmod +x build_agents.sh
-./build_agents.sh all
+# Java 17 (Temurin)
+winget install EclipseAdoptium.Temurin.17.JDK
+
+# Node.js
+winget install OpenJS.NodeJS
+
+# Git
+winget install Git.Git
 ```
 
-This creates executables in `build/agents/dist/` and compiles the necessary Forge mods.
+### 2. Install Ollama
+- Download and run the Windows installer from [ollama.com](https://ollama.com/download/windows).
+- Open PowerShell and pull the model:
+  ```powershell
+  ollama pull phi3:mini
+  ```
+
+### 3. Setup UltimMC
+- Download the Windows zip from [UltimMC/Launcher](https://github.com/UltimMC/Launcher/releases).
+- Extract to a folder like `C:\UltimMC`.
+- The agents will expect the executable at `C:\UltimMC\bin\UltimMC.exe`.
 
 ---
 
-## Quick Start
+## 🛠️ Project Initialization
 
-### 1. Start the Backend
-Ensure the Ollama daemon is running, then start the Divine World backend:
+Once the environment is ready, follow these steps to initialize Divine World:
 
+### 1. Clone and Install Python Deps
 ```bash
-cd py_backend
-./start_backend.sh
+git clone <repository-url>
+cd divine-world-core
+python -m venv venv
+
+# Linux
+source venv/bin/activate
+# Windows
+.\venv\Scripts\activate
+
+pip install -r requirements.txt
 ```
 
-The backend runs on `http://localhost:11400`.
+### 2. Configure Paths
+If UltimMC is not in a standard location, set the environment variable:
+- **Linux**: `export DW_ULTIMMC_PATH=~/path/to/UltimMC`
+- **Windows**: `$env:DW_ULTIMMC_PATH="C:\path\to\UltimMC"`
 
-### 2. Run an Agent
-You can run an agent with or without Minecraft integration.
-
-**With Minecraft:**
+### 3. Build Mods (Optional)
+The management server usually handles mod bundling, but you can build them manually:
 ```bash
-./build/agents/dist/DW_Agent_alice --agent-id alice --minecraft
+cd DivineWorld
+./gradlew shadowJar
+cd ../DWClientBot
+./gradlew shadowJar
 ```
-
-**Without Minecraft (Chat only):**
-```bash
-./build/agents/dist/DW_Agent_alice --agent-id alice
-```
-
-### 3. Access the Web UI
-Open your browser to `http://localhost:8001` (default port for the first agent) to monitor the agent's mental state and control its actions.
 
 ---
 
-## Common Commands
+## 🚀 Running Divine World
 
-- **Spawn Agents via API:**
-  ```bash
-  curl -X POST http://localhost:11400/api/genesis/spawn
-  ```
-- **List Active Agents:**
-  ```bash
-  curl http://localhost:11400/api/divineworld/list_agents
-  ```
-- **Stop All Agents:**
-  ```bash
-  pkill -f "DW_Agent_"
-  ```
+### 1. Start the Management Server
+```bash
+# In the project root
+python py_backend/main.py --gui
+```
+This will open the **Agent Control Centre** in your default browser at `http://localhost:11400/gui`.
 
-For more detailed information, see the [Architecture](./ARCHITECTURE.md), [API Reference](./API_REFERENCE.md), and [Agent Deployment](./agents/DEPLOYMENT.md).
+### 2. Spawn your first Agent
+1.  Ensure a Minecraft server is running at `127.0.0.1:25565` (or configured in the GUI).
+2.  In the GUI, go to the **Spawn & Control** panel.
+3.  Click **Spawn NPC** or **Genesis (Adam & Eve)**.
+4.  The server will automatically:
+    - Create the agent's "brain" file.
+    - Package a standalone executable for the agent.
+    - Launch a dedicated Minecraft instance via UltimMC.
+
+---
+
+## ❓ Troubleshooting
+
+- **Minecraft fails to launch**: Ensure Java 17 is the default version (`java -version`).
+- **Ollama connection error**: Ensure the Ollama service is running in the background.
+- **Port already in use**: Divine World uses port `11400` by default. You can change this using `python py_backend/main.py --port <new_port>`.
+
+For more details, see the **[API Reference](./API_REFERENCE.md)** or **[Architecture Guide](./ARCHITECTURE.md)**.

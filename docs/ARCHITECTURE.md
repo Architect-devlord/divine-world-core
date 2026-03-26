@@ -2,72 +2,53 @@
 
 This document describes the high-level architecture and component interactions of the Divine World simulation system.
 
-## System Overview
+---
 
-Divine World consists of several layers working together to create an AI-driven Minecraft universe.
+## 🛰️ System Overview
 
-1.  **Backend (Python/FastAPI)**: Manages agent lifecycles, AI reasoning, and provides a REST/WebSocket API.
-2.  **Agents (AI Core)**: Individual AI "brains" that process perception and decide on actions.
-3.  **Minecraft Bridge (Java/Forge)**: Mods (`DivineWorld` and `DWClientBot`) that act as the interface between the game and the AI backend.
-4.  **UltimMC Automation**: A system to automatically launch and manage Minecraft clients for each agent.
-5.  **Frontend (React)**: A web-based dashboard for monitoring and interacting with agents.
+Divine World is a multi-layered system designed to bridge AI reasoning with complex 3D virtual environments (Minecraft).
+
+1.  **Management Server (Python/FastAPI)**: The central controller (`py_backend/main.py`). It manages agent lifecycles, exposes REST/WebSocket APIs, and serves the Control Centre GUI.
+2.  **Autonomous Agents (AI Core)**: Individual AI processes that run a perception-thinking-action loop. They use local LLMs (via Ollama) and reinforcement learning policies for deliberation.
+3.  **Forge Mods (Java)**:
+    - **`DivineWorld`**: Server-side mod for agent registration, god-tier entity management, and event handling.
+    - **`DWClientBot`**: Client-side mod that provides the AI with "eyes" (perception data) and "limbs" (simulated input).
+4.  **UltimMC Automation**: Automates the creation and launching of dedicated Minecraft instances for each agent.
+5.  **Control Centre (React/GUI)**: A real-time web interface for monitoring agent states, editing personalities, and managing memories.
 
 ---
 
-## Component Interaction
+## 🔄 Component Interaction
 
-### Agent Spawning Flow
-1.  **Request**: A spawn request is sent to the Backend API.
-2.  **Setup**: The `EnhancedAgentSpawner` uses `UltimMCLauncher` to create a dedicated Minecraft instance.
-3.  **Launch**: The Minecraft client is launched with specific system properties (Agent ID, Backend URL).
-4.  **Connection**: The `DWClientBot` mod inside Minecraft connects to the Backend via WebSocket.
-5.  **Loop**: The agent starts its perception-action loop.
+### 1. Agent Lifecycle (The "Packaged" Flow)
+1.  **Spawn Request**: A request is made to the Management Server (via GUI or API).
+2.  **Initialization**: The server starts the `NPCAgent` process.
+3.  **Auto-Packaging**: Once the agent's brain file (`brain.pcap`) is first saved, `AgentPackager` creates a portable executable in `npc_applications/{agent_id}/`.
+4.  **Minecraft Setup**: The server uses `UltimMCLauncher` to clone and configure a Minecraft instance inside the agent's application folder.
+5.  **Launch**: The agent process uses its bundled UltimMC copy to launch Minecraft and auto-join the game server.
 
-### Perception-Action Loop
-- **Perception**: Every tick, the `DWClientBot` mod sends the agent's game state (position, health, vision) to the Backend.
-- **Decision**: The AI Core processes this data through its "brain" to decide on the next action.
-- **Action**: The action (move, attack, interact) is sent back to the mod, which executes it using simulated input.
-
----
-
-## Mental Matrix
-
-The **Mental Matrix** is a 3D simulation environment built into the frontend using Three.js. It allows agents to:
-- Simulate physics interactions before executing them in the game.
-- Visualize thought processes and mental models.
-- Test scenarios (e.g., "Will I survive this jump?") in a safe virtual space.
+### 2. The Perception-Action Loop
+- **Perception (Java → Python)**: The `DWClientBot` mod collects game data (health, position, entities, vision) and sends it as a WebSocket message (JSON or binary) to the AI process.
+- **Thinking (Python)**: The AI process deliberation engine (`brain_core.py`) evaluates the data against its personality, memories, and goals.
+- **Action (Python → Java)**: The chosen action is sent back to the mod, which simulates the necessary inputs (move, click, keypress).
 
 ---
 
-## Permission System
+## 🌀 Mental Matrix
 
-Divine World includes a granular permission system to control AI access to system resources:
-- **Camera Access**: Process visual input from webcams.
-- **Microphone Access**: Process audio input.
-- **File System Access**: Read/write local files.
-- **Network Access**: Make external network requests.
-
-These permissions are enforced at the runtime level and can be monitored via the Frontend Activity Monitor.
+The **Mental Matrix** is a 3D simulation environment built into the frontend using Three.js. It allows agents to visualize their thought processes, simulate physics interactions, and test scenarios (e.g., "Will I survive this jump?") before executing them in the game.
 
 ---
 
-## Agent Registry
+## 🤖 Agent Registry (`agents.json`)
 
-The **Agent Registry** (`agents.json`) is a cross-platform synchronization system that ensures the Python backend and Java mods share a consistent view of all active agents (NPCs and Gods).
+The **Agent Registry** is a synchronization system that ensures the Python backend and Java mods share a consistent view of all active agents.
 
-- **Backend Role**: Automatically registers every spawned agent with its name, gender, and type.
-- **Java Mod Role**: Loads the registry to validate commands, provide autocomplete suggestions, and display agent statistics in-game.
-- **Persistence**: Stored in the user's `Documents` or `Desktop` folder for easy access across different system components.
-
-For technical details, see the **[Agent Sync System](./agents/SYNC_SYSTEM.md)**.
+- **Backend**: Automatically registers every spawned agent with its name, gender, and type in the registry.
+- **Java Mod**: Loads the registry to validate commands, provide autocomplete suggestions, and display agent statistics in-game.
 
 ---
 
-## UltimMC Automation
+## ⚡ God Entities
 
-The automation system simplifies agent deployment by:
-- Automatically managing Minecraft accounts and instances.
-- Installing the required Forge version and mods.
-- Launching the game with the correct configuration for each agent ID.
-
-For more details on setting up the environment, see [Getting Started](./GETTING_STARTED.md).
+God entities (e.g., Wither, Warden, Ender Dragon) use a specialized `LLMOracleBrain`. They have access to global world state and "god-tier" abilities (transformation, entity summoning) that standard NPC agents do not.

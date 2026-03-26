@@ -14,9 +14,9 @@ Divine World is a comprehensive world simulation system featuring AI-driven agen
 - 🧠 **Autonomous Agents**: Self-driven NPCs with distinct personalities and memory persistence.
 - ⚡ **Mental Matrix**: 3D simulation environment for agent reasoning and physics testing.
 - 🎮 **Minecraft Integration**: Deep integration via custom Forge mods (`DivineWorld` and `DWClientBot`).
-- 🛠️ **UltimMC Automation**: Automated management of Minecraft instances and agent deployment.
+- 🛠️ **Automated Management**: Automated management of Minecraft instances and agent deployment via UltimMC.
 - 🌐 **Comprehensive API**: REST and WebSocket endpoints for full system control.
-- 📊 **Real-time Dashboard**: React-based frontend for monitoring agent state and telemetry.
+- 📊 **Real-time Dashboard**: Integrated GUI for monitoring agent state, editing personalities, and managing memories.
 
 ## 🚀 Quick Start
 
@@ -24,25 +24,21 @@ Divine World is a comprehensive world simulation system featuring AI-driven agen
     ```bash
     pip install -r requirements.txt
     ```
-2.  **Build Components**:
+2.  **Start the Management Server**:
     ```bash
-    chmod +x build_agents.sh
-    ./build_agents.sh all
+    # For CLI mode
+    python py_backend/main.py --cli
+
+    # For GUI mode (opens browser automatically)
+    python py_backend/main.py --gui
     ```
-3.  **Start Backend**:
-    ```bash
-    cd py_backend
-    ./start_backend.sh
-    ```
-4.  **Run an Agent**:
-    ```bash
-    ./build/agents/dist/DW_Agent_alice --agent-id alice --minecraft
-    ```
+3.  **Spawn Agents**:
+    Use the GUI at `http://localhost:11400/gui` to spawn your first NPC or God entity.
 
 For more detailed instructions, see the **[Getting Started](./docs/GETTING_STARTED.md)** guide.
 
-## Curl commands for testing all of the endpoints
-- **Health**
+## API Endpoints for testing
+- **Health & Status**
 ```bash
 # Basic health
 curl http://localhost:11400/health
@@ -50,162 +46,39 @@ curl http://localhost:11400/health
 # Detailed health
 curl http://localhost:11400/health/detailed
 
-# Root/docs
-curl http://localhost:11400/
-```
-
-- **Server Configuration**
-```bash
 # Get server status
 curl http://localhost:11400/api/server/status
-
-# Get configured server info
-curl -X POST http://localhost:11400/api/server/configure
-
-# List server agents
-curl http://localhost:11400/api/server/agents
 ```
 
 - **Agent Management**
 ```bash
-# List all agents
+# List all agents (running and available brains)
 curl http://localhost:11400/api/agents/list
 
-# Start agent manually
-curl -X POST http://localhost:11400/api/agents/start \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "alice",
-    "mode": "minecraft",
-    "agent_type": "npc",
-    "custom_name": "Alice"
-  }'
-
-# Stop agent
-curl -X POST http://localhost:11400/api/agents/alice/stop
-
-# Get agent status
-curl http://localhost:11400/api/agents/alice/status
-
-# Package agent
-curl -X POST http://localhost:11400/api/agents/alice/package
-
-# Cleanup agent (add ?delete_brain=true to also delete brain)
-curl -X POST http://localhost:11400/api/agents/alice/cleanup
-curl -X POST "http://localhost:11400/api/agents/alice/cleanup?delete_brain=true"
-
-# Clear memories
-curl -X POST http://localhost:11400/api/agents/clear_memories \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "clear_memories",
-    "agent_ids": ["alice", "bob"],
-    "exceptions": ["bob"]
-  }'
-```
-
-- **Minecraft Mod Endpoints**
-```bash
-# Player connect event
-curl -X POST http://localhost:11400/api/player_event \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "AI_alice",
-    "player_uuid": "550e8400-e29b-41d4-a716-446655440000",
-    "agent_type": "npc",
-    "event": "connected"
-  }'
-
-# Player disconnect event
-curl -X POST http://localhost:11400/api/player_event \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "AI_alice",
-    "player_uuid": "550e8400-e29b-41d4-a716-446655440000",
-    "agent_type": "npc",
-    "event": "disconnected"
-  }'
-
-# Spawn single NPC
+# Spawn an NPC
 curl -X POST http://localhost:11400/api/agents/spawn_single \
   -H "Content-Type: application/json" \
   -d '{
     "agent_name": "Alice",
-    "spawner": "PlayerName",
-    "world": "minecraft:overworld",
-    "spawn_position": {"x": 100, "y": 64, "z": 200},
-    "gender": "female"
+    "mode": "minecraft"
   }'
 
-# Genesis spawn (Adam & Eve)
-curl -X POST http://localhost:11400/api/genesis/spawn \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "genesis",
-    "spawner": "PlayerName",
-    "world": "minecraft:overworld",
-    "spawn_count": 2,
-    "spawn_positions": [
-      {"x": 100, "y": 64, "z": 200, "gender": "male"},
-      {"x": 102, "y": 64, "z": 200, "gender": "female"}
-    ]
-  }'
-
-# Breeding event
-curl -X POST http://localhost:11400/api/breeding/event \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "breeding",
-    "parent_a_id": "alice",
-    "parent_b_id": "ali",
-    "parent_a_type": "npc",
-    "parent_b_type": "npc",
-    "timestamp": 1234567890
-  }'
-
-# Divine reset
-curl -X POST http://localhost:11400/api/divine_reset \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "divine_reset",
-    "world": "minecraft:overworld",
-    "agent_count": 2,
-    "agent_ids": ["adam", "eve"]
-  }'
+# Stop an agent
+curl -X POST http://localhost:11400/api/agents/alice_1/stop
 ```
-- **God Endpoints**
+
+- **God Entities**
 ```bash
-# Spawn god (types: wither, warden, dragon, ender_dragon, oracle, creaking, elder_guardian)
+# Spawn a God (types: wither, warden, ender_dragon, oracle, etc.)
 curl -X POST http://localhost:11400/api/gods/spawn \
   -H "Content-Type: application/json" \
   -d '{
-    "event": "spawn_god",
-    "god_type": "wither",
-    "spawner": "PlayerName",
-    "world": "minecraft:overworld",
-    "spawn_position": {"x": 100, "y": 64, "z": 200}
-  }'
-
-# God use ability
-curl -X POST http://localhost:11400/api/gods/ability \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "god_ability",
-    "agent_id": "god1",
-    "ability": "summon_wither_skulls",
-    "parameters": []
-  }'
-
-# God transform
-curl -X POST http://localhost:11400/api/gods/transform \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "god_transform",
-    "agent_id": "Draconosis",
-    "target_mob": "villager"
+    "god_type": "oracle",
+    "custom_name": "TheOracle"
   }'
 ```
-Replace localhost:11400 with your actual host/port if different.
+
+Replace `localhost:11400` with your actual host/port if different.
 
 ## 📂 Documentation
 
@@ -226,8 +99,8 @@ Learn more about the agent synchronization and management:
 
 - **DivineWorld**: Server-side Forge mod for agent registration and God entities.
 - **DWClientBot**: Client-side Forge mod for AI perception and action control.
-- **dw_agent**: React-based dashboard for monitoring and training agents.
-- **py_backend**: FastAPI-powered backend managing the AI core and simulation API.
+- **py_backend**: FastAPI-powered management server and AI core.
+- **dw_agent**: React-based frontend (dashboard) for monitoring agents.
 
 ---
 

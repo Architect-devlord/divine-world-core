@@ -153,7 +153,7 @@ if (AgentConfigLoader.isValidGodType(godType)) {
 ### Example: Spawning Adam & Eve (Genesis)
 
 1. **Python Backend** receives genesis spawn request:
-   ```python
+   ```bash
    POST /api/genesis/spawn
    {
        "spawner": "PlayerName",

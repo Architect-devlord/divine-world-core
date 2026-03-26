@@ -2,52 +2,82 @@
 
 This guide is for developers looking to modify the Divine World system, build custom agents, or develop Forge mods.
 
-## Project Structure
+---
 
-- `DivineWorld/`: Server-side Forge mod logic.
-- `DWClientBot/`: Client-side Forge mod for agent control.
-- `py_backend/`: FastAPI backend and AI core.
-- `dw_agent/`: React frontend for the agent dashboard.
-- `data/`: Local storage for agent "brains", logs, and uploads.
+## 🏗️ Project Structure
+
+- `py_backend/`: FastAPI management server and AI core.
+  - `ai_core/`: Core agent logic (perception, reasoning, memory).
+  - `rl/`: Reinforcement learning policies and models.
+- `DivineWorld/`: Server-side Forge mod (agent registration, God entities).
+- `DWClientBot/`: Client-side Forge mod (agent perception and control).
+- `dw_agent/`: React frontend (dashboard) and Electron wrapper.
+- `npc_applications/`: Canonical output directory for packaged agents.
+- `data/`: Local storage for brains, logs, and temporary files.
 
 ---
 
-## Building from Source
+## 🛠️ Building from Source
 
-### Building Mods
-The mods use Gradle for builds.
+### 1. Building Forge Mods
+The mods use Gradle and the `shadowJar` plugin to bundle dependencies.
+
+**DivineWorld Mod:**
 ```bash
 cd DivineWorld
-./gradlew build
-
-cd ../DWClientBot
-./gradlew build
+./gradlew shadowJar
 ```
-The compiled JARs will be located in the `build/libs/` directory of each project.
 
-### Building Standalone Agents
-Agents can be packaged into standalone executables using PyInstaller.
+**DWClientBot Mod:**
 ```bash
-./build_agents.sh alice bob
+cd DWClientBot
+./gradlew shadowJar
 ```
-This script bundles the Python backend, the necessary mods, and the frontend assets into a single executable located in `build/agents/dist/`.
+Compiled JARs are located in `build/libs/`.
+
+### 2. Building Agent Executables
+Agent packaging is handled by `py_backend/packager.py`. This process creates a self-contained `.exe` (on Windows) or binary (on Linux) using PyInstaller.
+
+The management server automatically triggers this via `auto_packager.py` when an agent is first spawned. To manually trigger packaging for a running agent:
+- **GUI**: Click the **Package** button in the agent's Config tab.
+- **API**: `POST /api/agents/{agent_id}/package`.
+
+### 3. Frontend Development
+The dashboard is a React app located in `dw_agent/electron/react-app`.
+```bash
+cd dw_agent/electron/react-app
+npm install
+npm run dev
+```
 
 ---
 
-## Customizing Agents
+## 🧠 AI Agent Development
 
-### Personalities
-Agent personalities are defined in `py_backend/ai_core/agent.py`. You can add custom traits and behaviors by modifying the `CUSTOM_PERSONALITIES` dictionary.
+### Agent Logic (`ai_core/`)
+- **`agent.py`**: The main `NPCAgent` class.
+- **`brain_core.py`**: Handles deliberation and reasoning.
+- **`memory.py`**: Manages the episodic and semantic memory systems.
+- **`brain_capsule.py`**: Handles serialization of the agent's state (`.pcap` files).
 
-### Brain Logic
-The AI reasoning logic is located in the `ai_core` directory. The `NPCAgent` class manages the interaction between perception data and the AI model (e.g., Ollama).
+### Mod Perception & Actions
+To add new perception data:
+1.  Modify `PerceptionProvider` in the `DWClientBot` mod.
+2.  Update the data model in `py_backend/ai_core/vision.py` or `ai_core/agent.py`.
+3.  Implement the action handler in `DWClientBot` to react to new AI decisions.
 
 ---
 
-## Mod Development
-Divine World uses Minecraft Forge 1.20.1.
-- `DivineWorld` mod handles server-side registration of agents and God entities.
-- `DWClientBot` handles client-side perception (reading game state) and action (simulating inputs).
+## 🧪 Testing
 
-### Perception Data
-To add new perception features, modify the `PerceptionProvider` in the `DWClientBot` mod and update the corresponding handler in the Python backend's `NPCAgent.perceive()` method.
+### Manual Testing
+Start the management server in CLI mode for detailed logs:
+```bash
+python py_backend/main.py --cli
+```
+
+### API Testing
+Use the provided `curl` commands in the **[API Reference](./API_REFERENCE.md)** or root `README.md` to test specific agent behaviors.
+
+### Remote Agent Testing
+To test the architecture without the AI brain, you can create a "Remote Agent" that redirects control to the frontend, allowing a human user to act as the agent's brain.

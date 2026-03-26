@@ -102,10 +102,25 @@ If UltimMC is not in a standard location, set the environment variable:
 - **Linux**: `export DW_ULTIMMC_PATH=~/path/to/UltimMC`
 - **Windows**: `$env:DW_ULTIMMC_PATH="C:\path\to\UltimMC"`
 
-### 3. Build Mods (Optional)
+### 3. Configure the minecraft forge server
+This is where the agents will live and train after being produced, for setting up:
+- move the provided forge server zip to the parent folder of the divine-world-core folder or whatever you have named it or download a forge server zip and then unzip it beside the cloned repo and name the server folder DW_Server
+- then  start the server using 
+    ```bash
+    cd DW_Server
+    # For Linux
+    ./run.sh
+    # For Windows
+    run.bat
+
+    #the server will stop the first time automatically and produce an eula file 
+    # edit the eula and accept it by replacing false with true 
+    ``` 
+
+### 4. Build Mods (Optional)
 The management server usually handles mod bundling, but you can build them manually:
 ```bash
-cd DivineWorld
+cd ../DivineWorld
 ./gradlew build
 cd ../DWClientBot
 ./gradlew build
@@ -122,7 +137,16 @@ python py_backend/main.py --gui
 ```
 This will open the **Agent Control Centre** in your default browser at `http://localhost:11400/gui`.
 
-### 2. Spawn your first Agent
+### 2. Start the minecraft server
+```bash
+# In the minecraft server folder
+# For Linux
+./run.sh
+# For Windows
+run.bat
+```
+
+### 3. Spawn your first Agent
 1.  Ensure a Minecraft server is running at `127.0.0.1:25565` (or configured in the GUI).
 2.  In the GUI, go to the **Spawn & Control** panel.
 3.  Click **Spawn NPC** or **Genesis (Adam & Eve)**.

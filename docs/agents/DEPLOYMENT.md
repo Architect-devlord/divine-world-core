@@ -34,23 +34,23 @@
 
 ```bash
 # Navigate to backend
-cd /home/devlord/divine-world-core/py_backend
+cd py_backend
 
 # Create/verify utils/__init__.py exists
 touch utils/__init__.py
 
 # Test import
-python3 -c "from utils.agents_json_manager import get_manager; print('✅ OK')"
+python -c "from utils.agents_json_manager import get_manager; print('✅ OK')"
 ```
 
 ### Step 2: Rebuild Java Mod
 
 ```bash
 # Navigate to mod directory
-cd /home/devlord/divine-world-core/DivineWorld
+cd DivineWorld
 
 # Clean and build
-./gradlew clean build
+./gradlew shadowJar
 
 # If build succeeds, you'll see:
 # BUILD SUCCESSFUL
@@ -71,19 +71,18 @@ cp build/libs/DivineWorld-*.jar ~/minecraft/mods/
 
 ```bash
 # Run Python backend
-cd /home/devlord/divine-world-core/py_backend
-python3 main.py
+cd py_backend
+python main.py --cli
 
 # Check if agents.json is created
 ls ~/Documents/agents.json
-# Should show: /home/devlord/Documents/agents.json
 ```
 
 ### Test 2: Backend API - Genesis Spawn
 
 ```bash
 # In another terminal, spawn genesis agents
-curl -X POST http://localhost:8000/api/genesis/spawn \
+curl -X POST http://localhost:11400/api/genesis/spawn \
   -H "Content-Type: application/json" \
   -d '{
     "spawner": "TestPlayer",
@@ -102,7 +101,7 @@ cat ~/Documents/agents.json
 ### Test 3: Backend API - Single NPC Spawn
 
 ```bash
-curl -X POST http://localhost:8000/api/agents/spawn_single \
+curl -X POST http://localhost:11400/api/agents/spawn_single \
   -H "Content-Type: application/json" \
   -d '{
     "agent_name": "Alice",
@@ -120,7 +119,7 @@ cat ~/Documents/agents.json
 ### Test 4: Backend API - God Spawn
 
 ```bash
-curl -X POST http://localhost:8000/api/gods/spawn \
+curl -X POST http://localhost:11400/api/gods/spawn \
   -H "Content-Type: application/json" \
   -d '{
     "god_type": "wither",
@@ -170,7 +169,7 @@ In Minecraft:
 
 ```bash
 # View backend logs
-tail -f ~/divine-world-core/data/logs/agent_manager.log
+tail -f data/logs/agent_manager.log
 
 # Look for entries like:
 # ✅ Registered NPC: Adam (male) in agents.json
@@ -220,7 +219,7 @@ manager.load_config()  # Creates if not exists
 
 1. Check server folder is configured:
 ```bash
-curl -X POST http://localhost:8000/api/server/configure \
+curl -X POST http://localhost:11400/api/server/configure \
   -H "Content-Type: application/json" \
   -d '{"server_folder": "/path/to/minecraft/server"}'
 ```
@@ -246,8 +245,8 @@ AgentConfigLoader.reloadConfig();
 ### Issue: Compilation errors in Java
 
 ```bash
-cd /home/devlord/divine-world-core/DivineWorld
-./gradlew clean build --stacktrace
+cd DivineWorld
+./gradlew clean shadowJar --stacktrace
 
 # This will show detailed error messages
 ```

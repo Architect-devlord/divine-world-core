@@ -75,7 +75,7 @@ winget install Git.Git
 ### 3. Setup UltimMC
 - Download the Windows zip from [UltimMC/Launcher](https://github.com/UltimMC/Launcher/releases).
 - Extract to a folder like `C:\UltimMC`.
-- The agents will expect the executable at `C:\UltimMC\bin\UltimMC.exe`.
+- The agents will expect the executable at `C:\UltimMC\bin\UltimMC.exe` or inside the folder in which this repo is cloned.
 
 ---
 
@@ -106,9 +106,9 @@ If UltimMC is not in a standard location, set the environment variable:
 The management server usually handles mod bundling, but you can build them manually:
 ```bash
 cd DivineWorld
-./gradlew shadowJar
+./gradlew build
 cd ../DWClientBot
-./gradlew shadowJar
+./gradlew build
 ```
 
 ---

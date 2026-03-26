@@ -840,7 +840,19 @@ class NPCAgent:
             'outcome': outcome,
         }, tags=['learning', 'experience', 'rl'])
 
-        exp_event = {'type': 'experience', 'tags': ['rl'], 'payload': outcome}
+        # FIX: exp_event was missing 'obs' and 'action' keys.
+        # ContinualLearner.collect_experiences() reads event.get('obs') from each
+        # brain.continual_buffer entry. Without these keys every training sample
+        # fell back to agent.last_obs (the most recent perception snapshot) so all
+        # replay samples had the SAME obs vector regardless of which step they
+        # represented — the policy network learned nothing useful.
+        exp_event = {
+            'type':    'experience',
+            'tags':    ['rl'],
+            'payload': outcome,
+            'obs':     obs.tolist(),      # step-specific observation
+            'action':  action.tolist(),   # step-specific action
+        }
         self.brain._update_learning(exp_event, outcome, signal.total)
         self.brain._store_continual_experience(exp_event, signal.total, outcome)
 
@@ -1387,21 +1399,18 @@ class NPCAgent:
         return controls
 
     def act_god(self, action: np.ndarray) -> dict:
-        # act() handles dims 0-10 (movement + camera).
-        # Dims 11-12 (sprint, hotbar_slot) are part of the base 13-dim layout
-        # but act() clips to [:11], so we handle them here.
-        controls = self.act(action)
+        """
+        Convert an 18-dim god policy output to a controls dict.
 
-        # Sprint — dim 11
-        if len(action) >= 12 and float(action[11]) > 0.5:
-            controls['sprint'] = True
+        Dims 0-12  : handled by act() (movement, camera, sprint, hotbar).
+                     act() clips to [:13] so all base dims are already covered.
+        Dims 13-17 : god ability trigger + params (read here only).
 
-        # Hotbar slot — dim 12  (maps [-1,1] → slot 0-8, sentinel <= -0.5 = no change)
-        if len(action) >= 13:
-            raw_slot = float(action[12])
-            if raw_slot > -0.5:
-                controls['hotbar_slot'] = max(0, min(8,
-                    int(round((raw_slot + 1.0) / 2.0 * 8.0))))
+        FIX: old code re-read dims 11-12 (sprint/hotbar) after calling act(),
+        overwriting the same values with an identical calculation — redundant
+        since act() already handles the full 13-dim base layout.
+        """
+        controls = self.act(action)   # covers dims 0-12 (BASE_DIM = 13)
 
         # ── God ability dims (GodTransformerPolicy.TOTAL_DIM = 18) ──────────
         # dim 13: trigger_flag  (>= 0.5 = use an ability this step)

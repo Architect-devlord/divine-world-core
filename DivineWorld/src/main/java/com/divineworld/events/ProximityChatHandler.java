@@ -19,15 +19,20 @@ import net.minecraftforge.fml.common.Mod;
  *   • The message is delivered only to players/agents within
  *     {@value #PROXIMITY_RADIUS} blocks in the same dimension.
  *   • For every NPC/GOD agent recipient, the Python backend is notified
- *     via PythonBackendClient.notifyChatHeard() so the agent's
- *     cognitive loop can process what it "overheard".
+ *     via PythonBackendClient.notifyChatHeard().
+ *
+ * FIX — Oracle chat interception:
+ *   ProximityChatHandler used to call event.setCanceled(true) immediately,
+ *   which prevented OracleSystem.onPlayerChat() from ever seeing the event
+ *   (Forge skips cancelled-event listeners unless receiveCancelled=true).
+ *
+ *   Fix: OracleSystem registers a static hook via setChatHook(). This handler
+ *   invokes the hook FIRST, before cancelling. If the hook signals it consumed
+ *   the message (sender has an active oracle), the message is still cancelled
+ *   for vanilla broadcast but the oracle received it.
  *
  * Lives in the server mod (com.divineworld.events) because it uses
  * ServerChatEvent and ServerPlayer — pure server-side APIs.
- * No client-mod imports anywhere.
- *
- * Register in DWMod constructor:
- *   forgeBus.register(ProximityChatHandler.class);
  */
 @Mod.EventBusSubscriber(modid = DWMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class ProximityChatHandler {
@@ -36,22 +41,61 @@ public class ProximityChatHandler {
     public static final double PROXIMITY_RADIUS = 10.0;
 
     /**
+     * Optional hook called before the proximity broadcast runs.
+     * OracleSystem sets this so it can intercept messages directed at the Oracle
+     * even after the event is cancelled.
+     *
+     * The hook receives (sender, rawMessage). It returns true if it consumed the
+     * message (oracle handled it) — the proximity broadcast still runs normally
+     * but the oracle's LLM response replaces/augments the chat output.
+     */
+    @FunctionalInterface
+    public interface ChatHook {
+        boolean onChat(ServerPlayer sender, String rawMessage);
+    }
+
+    private static ChatHook chatHook = null;
+
+    /** Register a chat hook (called by OracleSystem on startup). */
+    public static void setChatHook(ChatHook hook) {
+        chatHook = hook;
+    }
+
+    /**
      * Intercept every outgoing server chat message.
      * Cancelling ServerChatEvent suppresses the vanilla broadcast;
      * we do our own targeted delivery and backend notification.
      */
     @SubscribeEvent
     public static void onServerChat(ServerChatEvent event) {
+        ServerPlayer sender  = event.getPlayer();
+        String       rawMsg  = event.getMessage().getString().trim();
+
+        // ── Step 1: Oracle hook runs BEFORE cancel so it always sees the message ──
+        boolean oracleConsumed = false;
+        if (chatHook != null) {
+            try {
+                oracleConsumed = chatHook.onChat(sender, rawMsg);
+            } catch (Exception e) {
+                DWMod.LOGGER.warn("[ProximityChat] Oracle chat hook error: {}", e.getMessage());
+            }
+        }
+
+        // ── Step 2: Cancel vanilla broadcast ──────────────────────────────────────
         event.setCanceled(true);
 
-        ServerPlayer sender  = event.getPlayer();
-        String       rawMsg  = event.getMessage().getString();
-        Component    display = buildMessage(sender, rawMsg);
+        // If oracle fully consumed this message (it was a tutorial/llm command),
+        // suppress the proximity echo too — oracle sends its own response messages.
+        if (oracleConsumed) {
+            DWMod.LOGGER.debug("[ProximityChat] Oracle consumed message from {}",
+                sender.getName().getString());
+            return;
+        }
 
-        // Always deliver to the sender so they see their own message
+        // ── Step 3: Proximity broadcast ───────────────────────────────────────────
+        Component display = buildMessage(sender, rawMsg);
         sender.sendSystemMessage(display);
 
-        // Deliver to every nearby player; notify backend for each agent recipient
         for (ServerPlayer recipient : sender.getServer().getPlayerList().getPlayers()) {
             if (recipient == sender) continue;
             if (!sameDimension(sender, recipient)) continue;
@@ -59,10 +103,8 @@ public class ProximityChatHandler {
 
             recipient.sendSystemMessage(display);
 
-            // HTTP-notify ONLY god agents (oracle brains etc.) that overheard this.
-            // NPC agents (DWClientBot instances) receive the same message via their
-            // own ClientChatReceivedEvent → WebSocket path, so notifying them here
-            // too would cause the cognitive loop to process the same chat twice.
+            // HTTP-notify god agents that overheard this.
+            // NPC agents receive it via ClientChatReceivedEvent → WebSocket.
             TaggedEntitySystem.AgentType type = TaggedEntitySystem.detectAgentType(recipient);
             if (type == TaggedEntitySystem.AgentType.GOD) {
                 PythonBackendClient.notifyChatHeard(

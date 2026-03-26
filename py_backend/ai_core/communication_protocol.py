@@ -796,9 +796,21 @@ def _grpo_policy_update(agent, deliberation_result, obs: "np.ndarray") -> None:
             action_mean, _ = agent.policy.forward(obs_t)
             log_std = getattr(agent.policy, 'log_std', None)
             if log_std is None:
-                log_std = getattr(agent.policy, 'log_std_base', torch.zeros_like(action_mean))
-            std  = torch.exp(log_std)
-            dist = torch.distributions.Normal(action_mean, std)
+                log_std = getattr(agent.policy, 'log_std_base',
+                                  torch.zeros_like(action_mean))
+            std = torch.exp(log_std)
+            # FIX: GodTransformerPolicy.log_std_base has shape (13,) but
+            # action_mean has shape (B, 18).  PyTorch cannot broadcast (13,)
+            # onto dim-1 of size 18, causing a RuntimeError on every god GRPO
+            # step.  Pad std to match action_mean's last dim if needed.
+            action_dim = action_mean.shape[-1]
+            if std.shape[-1] < action_dim:
+                pad = torch.zeros(action_dim - std.shape[-1],
+                                  device=std.device, dtype=std.dtype)
+                std = torch.cat([std, pad])
+            elif std.shape[-1] > action_dim:
+                std = std[..., :action_dim]
+            dist = torch.distributions.Normal(action_mean, std.clamp(min=1e-6))
             # Sample one action from current policy for this observation
             sampled_action = dist.sample()
             log_prob       = dist.log_prob(sampled_action).sum(dim=-1)  # (1,)
@@ -1111,17 +1123,7 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
                     _grpo_policy_update(agent, _delib, obs)
                     agent.brain._last_deliberation_result = None
 
-                # ── 9a. World model buffer + periodic WM training ─────────
-                # Feeds every perception frame into WorldModelReplayBuffer.
-                # Calls train_online_step() every 20 frames so the world model
-                # continuously learns from real Minecraft experience.
-                _reward_for_wm = float(outcome.get('task_reward', 0.0))
-                _done_for_wm   = bool(outcome.get('is_dead', False))
-                _feed_world_model(
-                    agent, agent_id, frame_bgr, obs,
-                    last_action, _reward_for_wm, _done_for_wm,
-                    train_every=20,
-                )
+
 
                 # ── 9b. GRPO policy update ────────────────────────────────
                 # If the brain just ran a deliberation this cycle, use the

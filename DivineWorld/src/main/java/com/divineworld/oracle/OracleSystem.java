@@ -22,6 +22,8 @@ import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 
+import com.divineworld.events.ProximityChatHandler;
+import com.divineworld.utils.AgentConfigLoader;
 import java.io.*;
 import java.lang.reflect.Type;
 import java.nio.file.*;
@@ -98,6 +100,7 @@ public class OracleSystem {
         } catch (IOException e) {
             DWMod.LOGGER.error("[Oracle] Failed to create memory folder", e);
         }
+        ProximityChatHandler.setChatHook(this::handleChatHook);
     }
 
     // -------------------------------------------------------------------------
@@ -244,94 +247,71 @@ public class OracleSystem {
         if (!(event.getEntity() instanceof ServerPlayer)) return;
         ServerPlayer player = (ServerPlayer) event.getEntity();
 
+        // FIX: only spawn oracle for real (human) players
+        AgentConfigLoader.AgentType agentType =
+            AgentConfigLoader.getAgentTypeForName(player.getName().getString());
+        if (agentType != null) {
+            DWMod.LOGGER.debug("[Oracle] Skipping oracle for agent: {}",
+                player.getName().getString());
+            return;
+        }
         if (!tutorialCompleted.contains(player.getUUID())) {
             DWMod.getInstance().scheduleTask(() -> spawnOracle(player), 5);
         }
     }
 
-    @SubscribeEvent
-    public void onPlayerChat(net.minecraftforge.event.ServerChatEvent event) {
-        ServerPlayer player = event.getPlayer();
-        if (player == null) return;
-
-        String message = event.getMessage().getString().trim();
-
-        if (!activeOracles.containsKey(player.getUUID())) return;
-
-        DWMod.LOGGER.info("[Oracle] Processing chat from {}: '{}'", player.getName().getString(), message);
-
-        event.setMessage(Component.literal(""));
+    /**
+     * FIX: Replaced @SubscribeEvent onPlayerChat (never fired after cancel)
+     * with a hook called by ProximityChatHandler before setCanceled(true).
+     * Returns true = oracle consumed message, suppress proximity echo.
+     */
+    private boolean handleChatHook(ServerPlayer player, String rawMsg) {
+        if (player == null || !activeOracles.containsKey(player.getUUID())) return false;
+        String message = rawMsg.trim();
+        DWMod.LOGGER.info("[Oracle] Chat from {}: '{}'", player.getName().getString(), message);
 
         if (message.equalsIgnoreCase("i know")) {
             DWMod.getInstance().scheduleTask(() -> {
-                player.sendSystemMessage(Component.literal("§aTutorial skipped. Right-click the Oracle to receive your books."));
+                player.sendSystemMessage(Component.literal(
+                    "§aTutorial skipped. Right-click the Oracle to receive your books."));
                 tutorialCompleted.add(player.getUUID());
             }, 1);
-            return;
+            return true;
         }
 
         if (message.equalsIgnoreCase("teach me")) {
             DWMod.getInstance().scheduleTask(() -> runTutorial(player), 1);
-            return;
+            return true;
         }
 
-        DWMod.LOGGER.info("[Oracle] Starting LLM query for player: {}", player.getName().getString());
-
+        DWMod.LOGGER.info("[Oracle] Querying LLM for {}", player.getName().getString());
         OracleMemory memory = memoryMap.computeIfAbsent(player.getUUID(), k -> new OracleMemory());
         memory.conversation.add("Player: " + message);
         memory.lastAccess = System.currentTimeMillis();
-
         player.sendSystemMessage(Component.literal("§d[Oracle] §7Consulting the divine wisdom..."));
 
         StringBuilder prompt = new StringBuilder(personaTemplate).append("\n\n");
         int startIdx = Math.max(0, memory.conversation.size() - 10);
-        for (int i = startIdx; i < memory.conversation.size(); i++) {
+        for (int i = startIdx; i < memory.conversation.size(); i++)
             prompt.append(memory.conversation.get(i)).append("\n");
-        }
         prompt.append("Oracle:");
 
-        DWMod.LOGGER.info("[Oracle] Prompt generated ({} chars), querying LLM...", prompt.length());
-
         brain.queryAsync(DWMod.getInstance().getServer(), prompt.toString(), answer -> {
-            DWMod.LOGGER.info("[Oracle] Received response: '{}'", answer);
-
-            if (answer == null || answer.isBlank()) {
+            if (answer == null || answer.isBlank())
                 answer = "§7[The Oracle remains silent, pondering the mysteries of existence...]";
-                DWMod.LOGGER.warn("[Oracle] Empty response received from LLM");
-            }
-
             answer = answer.trim();
-
-            if (answer.startsWith("```")) {
-                answer = answer.replaceAll("```json|```", "").trim();
-            }
-
-            if (answer.length() > 500) {
-                answer = answer.substring(0, 497) + "...";
-            }
-
-            DWMod.LOGGER.info("[Oracle] Sending cleaned response to player: '{}'", answer);
-
-            final String finalAnswer = answer;
-            player.sendSystemMessage(Component.literal("§d[Oracle] §f" + finalAnswer));
-
-            memory.conversation.add("Oracle: " + finalAnswer);
-
-            if (memory.conversation.size() > MAX_HISTORY_LINES) {
-                memory.conversation = new ArrayList<>(
-                        memory.conversation.subList(
-                                memory.conversation.size() - MAX_HISTORY_LINES,
-                                memory.conversation.size()
-                        )
-                );
-            }
-
+            if (answer.startsWith("```")) answer = answer.replaceAll("```json|```", "").trim();
+            if (answer.length() > 500) answer = answer.substring(0, 497) + "...";
+            final String fa = answer;
+            player.sendSystemMessage(Component.literal("§d[Oracle] §f" + fa));
+            memory.conversation.add("Oracle: " + fa);
+            if (memory.conversation.size() > MAX_HISTORY_LINES)
+                memory.conversation = new ArrayList<>(memory.conversation.subList(
+                    memory.conversation.size() - MAX_HISTORY_LINES, memory.conversation.size()));
             saveMemory(player.getUUID());
-
-            DWMod.LOGGER.info("[Oracle] Response delivered to player successfully");
         });
+        return true;
     }
-
     @SubscribeEvent
     public void onOracleInteract(PlayerInteractEvent.EntityInteract event) {
         if (!(event.getEntity() instanceof ServerPlayer)) return;

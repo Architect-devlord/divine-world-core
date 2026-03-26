@@ -61,3 +61,27 @@ pyaudio>=0.2.13
 SpeechRecognition>=3.11.0
 librosa>=0.10.0
 soundfile>=0.12.1
+lz4>=4.3.2
+python-snappy>=0.6.1
+"""
+# For scylla in linux do these before running the main.py
+# Check if it's installed
+scylla --version
+# If not installed then use
+yay -S scylla-bin
+
+#Run Scylla's built-in benchmark tool. It will test your disk performance and generate the necessary configuration file (/etc/scylla.d/io.conf).
+
+sudo /usr/lib/scylla/scylla_io_setup
+#Note: This might take a few minutes as it stresses your disk.
+
+# If installed via systemd:
+sudo systemctl start scylla-server
+sudo systemctl status scylla-server
+
+# Or via Docker (quickest way to get it running):
+docker run --name scylla -p 9042:9042 -d scylladb/scylla
+
+# Confirm it's listening once started:
+ss -tlnp | grep 9042
+"""

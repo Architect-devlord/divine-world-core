@@ -6,6 +6,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 
 /**
  * ActionExecutor — applies a decoded action frame to the local Minecraft player.
@@ -121,8 +123,13 @@ public class ActionExecutor {
 
         // ── Attack / Use (rate-limited) ───────────────────────────────────────
         if (attackUseCooldownTicks == 0) {
-            if (attack && mc.hitResult != null) {
-                mc.gameMode.attack(player, player);
+            if (attack && mc.hitResult != null
+                    && mc.hitResult.getType() == HitResult.Type.ENTITY) {
+                // FIX: was attack(player, player) — self-attack, never damages anything.
+                // Correct: attack the entity the crosshair is pointing at.
+                net.minecraft.world.entity.Entity target =
+                    ((EntityHitResult) mc.hitResult).getEntity();
+                mc.gameMode.attack(player, target);
                 attackUseCooldownTicks = ATTACK_USE_COOLDOWN;
             } else if (use) {
                 mc.gameMode.useItem(player, InteractionHand.MAIN_HAND);

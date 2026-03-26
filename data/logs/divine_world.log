@@ -2756,3 +2756,298 @@ Aborted by user request.
 [2026-03-20 13:03:34][INFO] packager: ✓ Launcher created
 [2026-03-20 13:03:34][INFO] packager: 🔨 Building executable for alice_1…
 [2026-03-20 13:03:34][INFO] packager: Running PyInstaller… (this may take 30–60 s)
+[2026-03-24 17:29:50][INFO] root: Logging initialised — level=INFO file=data/logs/divine_world.log
+[2026-03-24 17:29:51][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-24 17:29:51][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-24 17:29:51][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-24 17:29:51][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-24 17:29:51][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-24 17:29:51][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-24 17:29:51][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-24 17:29:51][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-24 17:29:51][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-24 17:29:51][INFO] packager: ✅ Frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-03-24 17:29:51][INFO] packager: ✅ Mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-24 17:29:51][INFO] packager: ✅ UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-24 17:29:51][INFO] auto_packager: Packaging worker started
+[2026-03-24 17:29:51][INFO] auto_packager: AutoPackaging initialised (output: /home/devlord/divine-world-core/npc_applications)
+[2026-03-24 17:29:51][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-24 17:29:51][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-24 17:29:51][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-24 17:29:51][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-24 17:29:51][INFO] minecraft_launcher: ✅ divineworld: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-all.jar
+[2026-03-24 17:29:51][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-24 17:29:51][INFO] agent_spawner: ✅ UltimMCAgentSpawner: UltimMC automation active
+[2026-03-24 17:29:51][INFO] auto_packager: ✅ UltimMC automation available
+[2026-03-24 17:29:51][INFO] agent_manager: AgentProcessManager initialised
+[2026-03-24 17:29:51][INFO] auto_connect: AutoConnect System initialised
+[2026-03-24 17:29:51][INFO] auto_connect:   Agents Folder : /home/devlord/divine-world-core/npc_applications
+[2026-03-24 17:29:51][INFO] auto_connect:   Server        : 127.0.0.1:25565
+[2026-03-24 17:29:51][INFO] auto_connect: ✅ Auto-connect endpoints registered (/api/autoconnect/*)
+[2026-03-24 17:29:51][INFO] auto_connect:    player_event handler must call app.state.auto_connect.mark_connected(agent_id) on 'connected' events
+[2026-03-25 17:22:27][INFO] root: Logging initialised — level=INFO file=data/logs/divine_world.log
+[2026-03-25 17:22:27][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-25 17:22:27][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-25 17:22:27][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-25 17:22:27][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:22:27][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:22:56][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:22:56][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-25 17:22:56][WARNING] minecraft_launcher: ⚠️  divineworld jar not found
+[2026-03-25 17:22:56][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-25 17:22:56][INFO] packager: ✅ Frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-03-25 17:22:56][INFO] packager: ✅ Mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-slim.jar
+[2026-03-25 17:22:56][INFO] packager: ✅ UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:22:56][INFO] auto_packager: Packaging worker started
+[2026-03-25 17:22:56][INFO] auto_packager: AutoPackaging initialised (output: /home/devlord/divine-world-core/npc_applications)
+[2026-03-25 17:22:56][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-25 17:22:56][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:22:56][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:22:56][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-25 17:22:56][WARNING] minecraft_launcher: ⚠️  divineworld jar not found
+[2026-03-25 17:22:56][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:22:56][INFO] agent_spawner: ✅ UltimMCAgentSpawner: UltimMC automation active
+[2026-03-25 17:22:56][INFO] auto_packager: ✅ UltimMC automation available
+[2026-03-25 17:22:56][INFO] agent_manager: AgentProcessManager initialised
+[2026-03-25 17:22:56][INFO] auto_connect: AutoConnect System initialised
+[2026-03-25 17:22:56][INFO] auto_connect:   Agents Folder : /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:22:56][INFO] auto_connect:   Server        : 127.0.0.1:25565
+[2026-03-25 17:22:56][INFO] auto_connect: ✅ Auto-connect endpoints registered (/api/autoconnect/*)
+[2026-03-25 17:22:56][INFO] auto_connect:    player_event handler must call app.state.auto_connect.mark_connected(agent_id) on 'connected' events
+[2026-03-25 17:24:01][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-25 17:24:01][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-25 17:24:01][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-25 17:24:01][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:24:01][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:24:05][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:24:05][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-25 17:24:05][WARNING] minecraft_launcher: ⚠️  divineworld jar not found
+[2026-03-25 17:24:05][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-25 17:24:05][INFO] packager: ✅ Frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-03-25 17:24:05][INFO] packager: ✅ Mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-slim.jar
+[2026-03-25 17:24:05][INFO] packager: ✅ UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:24:05][INFO] auto_packager: Packaging worker started
+[2026-03-25 17:24:05][INFO] auto_packager: AutoPackaging initialised (output: /home/devlord/divine-world-core/npc_applications)
+[2026-03-25 17:24:05][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-25 17:24:05][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:24:06][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:24:06][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-25 17:24:06][WARNING] minecraft_launcher: ⚠️  divineworld jar not found
+[2026-03-25 17:24:06][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:24:06][INFO] agent_spawner: ✅ UltimMCAgentSpawner: UltimMC automation active
+[2026-03-25 17:24:06][INFO] auto_packager: ✅ UltimMC automation available
+[2026-03-25 17:24:06][INFO] agent_manager: AgentProcessManager initialised
+[2026-03-25 17:24:06][INFO] auto_connect: AutoConnect System initialised
+[2026-03-25 17:24:06][INFO] auto_connect:   Agents Folder : /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:24:06][INFO] auto_connect:   Server        : 127.0.0.1:25565
+[2026-03-25 17:24:06][INFO] auto_connect: ✅ Auto-connect endpoints registered (/api/autoconnect/*)
+[2026-03-25 17:24:06][INFO] auto_connect:    player_event handler must call app.state.auto_connect.mark_connected(agent_id) on 'connected' events
+[2026-03-25 17:24:06][INFO] agent_manager: ============================================================
+[2026-03-25 17:24:06][INFO] agent_manager:   🎮 Divine World Management Server  v3.0.0
+[2026-03-25 17:24:06][INFO] agent_manager: ============================================================
+[2026-03-25 17:24:06][INFO] breeding: BreedingSystem initialised
+[2026-03-25 17:24:06][INFO] agent_manager: ✅ BreedingSystem wired (spawner cross-wired, tick task started)
+[2026-03-25 17:25:11][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-25 17:25:11][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-25 17:25:11][INFO] agent_manager: ✅ Registered in usernamecache.json: Adam
+[2026-03-25 17:25:11][INFO] agent_manager: [PortAlloc] 'Adam' -> TCP 11401 / WS 21401 (from agents.json)
+[2026-03-25 17:25:11][INFO] agent_manager: ✅ Agent adam_1 started (PID 15116)
+[2026-03-25 17:25:11][INFO] agent_manager: ✅ Registered in usernamecache.json: Eve
+[2026-03-25 17:25:11][INFO] agent_manager: [PortAlloc] 'Eve' -> TCP 11421 / WS 21421 (from agents.json)
+[2026-03-25 17:25:11][INFO] agent_manager: ✅ Agent eve_1 started (PID 15117)
+[2026-03-25 17:25:38][INFO] agent_manager: [adam_1] [2026-03-25 17:25:38,203] INFO - agent - [PortResolve] Final ports → TCP 11401 / WS 21401
+[2026-03-25 17:25:38][INFO] agent_manager: [adam_1] [2026-03-25 17:25:38,276] ERROR - cassandra.cluster - Compression is enabled, but no compression libraries are available. Disabling compression, consider installing one of the Python packages: lz4 and/or python-snappy.
+[2026-03-25 17:25:38][INFO] agent_manager: [eve_1] [2026-03-25 17:25:38,328] INFO - agent - [PortResolve] Final ports → TCP 11421 / WS 21421
+[2026-03-25 17:25:38][INFO] agent_manager: [adam_1] [2026-03-25 17:25:38,278] WARNING - cassandra.cluster - [control connection] Error connecting to 127.0.0.1:9042:
+[2026-03-25 17:25:38][INFO] agent_manager: [eve_1] [2026-03-25 17:25:38,332] ERROR - cassandra.cluster - Compression is enabled, but no compression libraries are available. Disabling compression, consider installing one of the Python packages: lz4 and/or python-snappy.
+[2026-03-25 17:25:38][INFO] agent_manager: [adam_1] Traceback (most recent call last):
+[2026-03-25 17:25:38][INFO] agent_manager: [eve_1] [2026-03-25 17:25:38,335] WARNING - cassandra.cluster - [control connection] Error connecting to 127.0.0.1:9042:
+[2026-03-25 17:25:38][INFO] agent_manager: [adam_1] File "cassandra/cluster.py", line 3535, in cassandra.cluster.ControlConnection._try_connect_to_hosts
+[2026-03-25 17:25:38][INFO] agent_manager: [eve_1] Traceback (most recent call last):
+[2026-03-25 17:25:38][INFO] agent_manager: [adam_1] File "cassandra/cluster.py", line 3577, in cassandra.cluster.ControlConnection._try_connect
+[2026-03-25 17:25:38][INFO] agent_manager: [eve_1] File "cassandra/cluster.py", line 3535, in cassandra.cluster.ControlConnection._try_connect_to_hosts
+[2026-03-25 17:25:38][INFO] agent_manager: [adam_1] connection = self._cluster.connection_factory(endpoint, is_control_connection=True)
+[2026-03-25 17:25:38][INFO] agent_manager: [eve_1] File "cassandra/cluster.py", line 3577, in cassandra.cluster.ControlConnection._try_connect
+[2026-03-25 17:25:38][INFO] agent_manager: [adam_1] File "cassandra/cluster.py", line 1649, in cassandra.cluster.Cluster.connection_factory
+[2026-03-25 17:25:38][INFO] agent_manager: [eve_1] connection = self._cluster.connection_factory(endpoint, is_control_connection=True)
+[2026-03-25 17:25:39][INFO] agent_manager: [adam_1] return self.connection_class.factory(endpoint, self.connect_timeout, host_conn, *args, **kwargs)
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] File "cassandra/cluster.py", line 1649, in cassandra.cluster.Cluster.connection_factory
+[2026-03-25 17:25:39][INFO] agent_manager: [adam_1] File "cassandra/connection.py", line 858, in cassandra.connection.Connection.factory
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] return self.connection_class.factory(endpoint, self.connect_timeout, host_conn, *args, **kwargs)
+[2026-03-25 17:25:39][INFO] agent_manager: [adam_1] File "/home/devlord/divine-world-core/dw_env/lib/python3.14/site-packages/cassandra/io/libevreactor.py", line 272, in __init__
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] File "cassandra/connection.py", line 858, in cassandra.connection.Connection.factory
+[2026-03-25 17:25:39][INFO] agent_manager: [adam_1] self._connect_socket()
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] File "/home/devlord/divine-world-core/dw_env/lib/python3.14/site-packages/cassandra/io/libevreactor.py", line 272, in __init__
+[2026-03-25 17:25:39][INFO] agent_manager: [adam_1] ~~~~~~~~~~~~~~~~~~~~^^
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] self._connect_socket()
+[2026-03-25 17:25:39][INFO] agent_manager: [adam_1] File "cassandra/connection.py", line 980, in cassandra.connection.Connection._connect_socket
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] ~~~~~~~~~~~~~~~~~~~~^^
+[2026-03-25 17:25:39][INFO] agent_manager: [adam_1] raise socket.error(sockerr.errno, "Tried connecting to %s. Last error: %s" %
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] File "cassandra/connection.py", line 980, in cassandra.connection.Connection._connect_socket
+[2026-03-25 17:25:39][INFO] agent_manager: [adam_1] ConnectionRefusedError: [Errno 111] Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] raise socket.error(sockerr.errno, "Tried connecting to %s. Last error: %s" %
+[2026-03-25 17:25:39][INFO] agent_manager: [adam_1] [2026-03-25 17:25:38,332] WARNING - cassandra.cluster - [control connection] Error connecting to 127.0.0.1:9042:
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] ConnectionRefusedError: [Errno 111] Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused
+[2026-03-25 17:25:39][INFO] agent_manager: [eve_1] [2026-03-25 17:25:38,339] WARNING - cassandra.cluster - [control connection] Error connecting to 127.0.0.1:9042:
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] Traceback (most recent call last):
+[2026-03-25 17:25:40][INFO] agent_manager: [eve_1] Traceback (most recent call last):
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] File "cassandra/cluster.py", line 3535, in cassandra.cluster.ControlConnection._try_connect_to_hosts
+[2026-03-25 17:25:40][INFO] agent_manager: [eve_1] File "cassandra/cluster.py", line 3535, in cassandra.cluster.ControlConnection._try_connect_to_hosts
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] return (self._try_connect(endpoint), None)
+[2026-03-25 17:25:40][INFO] agent_manager: [eve_1] return (self._try_connect(endpoint), None)
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] File "cassandra/cluster.py", line 3577, in cassandra.cluster.ControlConnection._try_connect
+[2026-03-25 17:25:40][INFO] agent_manager: [eve_1] File "cassandra/cluster.py", line 3577, in cassandra.cluster.ControlConnection._try_connect
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] connection = self._cluster.connection_factory(endpoint, is_control_connection=True)
+[2026-03-25 17:25:40][INFO] agent_manager: [eve_1] connection = self._cluster.connection_factory(endpoint, is_control_connection=True)
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] File "cassandra/cluster.py", line 1649, in cassandra.cluster.Cluster.connection_factory
+[2026-03-25 17:25:40][INFO] agent_manager: [eve_1] File "cassandra/cluster.py", line 1649, in cassandra.cluster.Cluster.connection_factory
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] return self.connection_class.factory(endpoint, self.connect_timeout, host_conn, *args, **kwargs)
+[2026-03-25 17:25:40][INFO] agent_manager: [eve_1] return self.connection_class.factory(endpoint, self.connect_timeout, host_conn, *args, **kwargs)
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] File "cassandra/connection.py", line 858, in cassandra.connection.Connection.factory
+[2026-03-25 17:25:40][INFO] agent_manager: [eve_1] File "cassandra/connection.py", line 858, in cassandra.connection.Connection.factory
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] conn = cls(endpoint, *args, **kwargs)
+[2026-03-25 17:25:40][INFO] agent_manager: [eve_1] conn = cls(endpoint, *args, **kwargs)
+[2026-03-25 17:25:40][INFO] agent_manager: [adam_1] File "/home/devlord/divine-world-core/dw_env/lib/python3.14/site-packages/cassandra/io/libevreactor.py", line 272, in __init__
+[2026-03-25 17:25:41][INFO] agent_manager: [eve_1] File "/home/devlord/divine-world-core/dw_env/lib/python3.14/site-packages/cassandra/io/libevreactor.py", line 272, in __init__
+[2026-03-25 17:25:41][INFO] agent_manager: [adam_1] self._connect_socket()
+[2026-03-25 17:25:41][INFO] agent_manager: [eve_1] self._connect_socket()
+[2026-03-25 17:25:41][INFO] agent_manager: [adam_1] ~~~~~~~~~~~~~~~~~~~~^^
+[2026-03-25 17:25:41][INFO] agent_manager: [eve_1] ~~~~~~~~~~~~~~~~~~~~^^
+[2026-03-25 17:25:41][INFO] agent_manager: [Auto-Package] waiting for brain (30s)…
+[2026-03-25 17:25:41][INFO] agent_manager: [Auto-Package] waiting for brain (30s)…
+[2026-03-25 17:25:41][INFO] agent_manager: [eve_1] File "cassandra/connection.py", line 980, in cassandra.connection.Connection._connect_socket
+[2026-03-25 17:25:41][INFO] agent_manager: [adam_1] File "cassandra/connection.py", line 980, in cassandra.connection.Connection._connect_socket
+[2026-03-25 17:25:41][INFO] agent_manager: [eve_1] raise socket.error(sockerr.errno, "Tried connecting to %s. Last error: %s" %
+[2026-03-25 17:25:42][INFO] agent_manager: [eve_1] ConnectionRefusedError: [Errno 111] Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused
+[2026-03-25 17:25:42][INFO] agent_manager: [adam_1] raise socket.error(sockerr.errno, "Tried connecting to %s. Last error: %s" %
+[2026-03-25 17:25:42][INFO] agent_manager: [eve_1] [2026-03-25 17:25:38,339] ERROR - cassandra.cluster - Control connection failed to connect, shutting down Cluster:
+[2026-03-25 17:25:42][INFO] agent_manager: [adam_1] ConnectionRefusedError: [Errno 111] Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused
+[2026-03-25 17:25:42][INFO] agent_manager: [eve_1] Traceback (most recent call last):
+[2026-03-25 17:25:42][INFO] agent_manager: [adam_1] [2026-03-25 17:25:38,334] ERROR - cassandra.cluster - Control connection failed to connect, shutting down Cluster:
+[2026-03-25 17:25:42][INFO] agent_manager: [eve_1] File "cassandra/cluster.py", line 1715, in cassandra.cluster.Cluster.connect
+[2026-03-25 17:25:42][INFO] agent_manager: [adam_1] Traceback (most recent call last):
+[2026-03-25 17:25:42][INFO] agent_manager: [eve_1] self.control_connection.connect()
+[2026-03-25 17:25:42][INFO] agent_manager: [adam_1] File "cassandra/cluster.py", line 1715, in cassandra.cluster.Cluster.connect
+[2026-03-25 17:25:42][INFO] agent_manager: [eve_1] File "cassandra/cluster.py", line 3511, in cassandra.cluster.ControlConnection.connect
+[2026-03-25 17:25:42][INFO] agent_manager: [adam_1] self.control_connection.connect()
+[2026-03-25 17:25:42][INFO] agent_manager: [eve_1] self._set_new_connection(self._reconnect_internal())
+[2026-03-25 17:25:42][INFO] agent_manager: [adam_1] File "cassandra/cluster.py", line 3511, in cassandra.cluster.ControlConnection.connect
+[2026-03-25 17:25:42][INFO] agent_manager: [eve_1] File "cassandra/cluster.py", line 3566, in cassandra.cluster.ControlConnection._reconnect_internal
+[2026-03-25 17:25:42][INFO] agent_manager: [adam_1] self._set_new_connection(self._reconnect_internal())
+[2026-03-25 17:25:42][INFO] agent_manager: [eve_1] raise NoHostAvailable("Unable to connect to any servers", errors)
+[2026-03-25 17:25:42][INFO] agent_manager: [adam_1] File "cassandra/cluster.py", line 3566, in cassandra.cluster.ControlConnection._reconnect_internal
+[2026-03-25 17:25:43][INFO] agent_manager: [eve_1] cassandra.cluster.NoHostAvailable: ('Unable to connect to any servers', {'127.0.0.1:9042': ConnectionRefusedError(111, "Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused")})
+[2026-03-25 17:25:43][INFO] agent_manager: [adam_1] raise NoHostAvailable("Unable to connect to any servers", errors)
+[2026-03-25 17:25:43][INFO] agent_manager: [eve_1] [2026-03-25 17:25:38,340] ERROR - memory - ScyllaDB initialisation failed: ('Unable to connect to any servers', {'127.0.0.1:9042': ConnectionRefusedError(111, "Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused")})
+[2026-03-25 17:25:43][INFO] agent_manager: [adam_1] cassandra.cluster.NoHostAvailable: ('Unable to connect to any servers', {'127.0.0.1:9042': ConnectionRefusedError(111, "Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused")})
+[2026-03-25 17:25:43][INFO] agent_manager: [eve_1] [2026-03-25 17:25:38,340] INFO - memory - UnifiedMemoryStore initialised for 'eve_1' (In-Memory)
+[2026-03-25 17:25:43][INFO] agent_manager: [adam_1] [2026-03-25 17:25:38,335] ERROR - memory - ScyllaDB initialisation failed: ('Unable to connect to any servers', {'127.0.0.1:9042': ConnectionRefusedError(111, "Tried connecting to [('127.0.0.1', 9042)]. Last error: Connection refused")})
+[2026-03-25 17:25:43][INFO] agent_manager: [adam_1] [2026-03-25 17:25:38,336] INFO - memory - UnifiedMemoryStore initialised for 'adam_1' (In-Memory)
+[2026-03-25 17:25:47][INFO] agent_manager: [adam_1] [2026-03-25 17:25:47,641] INFO - brain.language - LanguageIntelligence initialized on cpu
+[2026-03-25 17:25:47][INFO] agent_manager: [eve_1] [2026-03-25 17:25:47,659] INFO - brain.language - LanguageIntelligence initialized on cpu
+[2026-03-25 17:25:47][INFO] agent_manager: [adam_1] [2026-03-25 17:25:47,641] INFO - brain_core - BrainCore initialised.
+[2026-03-25 17:25:47][INFO] agent_manager: [eve_1] [2026-03-25 17:25:47,659] INFO - brain_core - BrainCore initialised.
+[2026-03-25 17:25:47][INFO] agent_manager: [adam_1] [2026-03-25 17:25:47,836] INFO - brain.language - LanguageIntelligence initialized on cpu
+[2026-03-25 17:25:47][INFO] agent_manager: [eve_1] [2026-03-25 17:25:47,756] INFO - brain.language - LanguageIntelligence initialized on cpu
+[2026-03-25 17:25:47][INFO] agent_manager: [adam_1] [2026-03-25 17:25:47,836] INFO - brain.language - Language capabilities added to BrainCore
+[2026-03-25 17:25:47][INFO] agent_manager: [eve_1] [2026-03-25 17:25:47,756] INFO - brain.language - Language capabilities added to BrainCore
+[2026-03-25 17:25:48][INFO] agent_manager: [adam_1] [2026-03-25 17:25:47,836] INFO - agent - [adam_1] Language intelligence initialised
+[2026-03-25 17:25:48][INFO] agent_manager: [eve_1] [2026-03-25 17:25:47,756] INFO - agent - [eve_1] Language intelligence initialised
+[2026-03-25 17:25:55][INFO] agent_manager: [eve_1] 
+[2026-03-25 17:25:55][INFO] agent_manager: [adam_1] 
+[2026-03-25 17:25:56][INFO] agent_manager: [eve_1] ======================================================================
+[2026-03-25 17:25:56][INFO] agent_manager: [adam_1] ======================================================================
+[2026-03-25 17:25:56][INFO] agent_manager: 🛑 Shutting down…
+[2026-03-25 17:25:56][INFO] agent_manager: Stopped agent adam_1
+[2026-03-25 17:25:56][INFO] agent_manager: Stopped agent eve_1
+[2026-03-25 17:25:56][INFO] agent_spawner: AgentSpawner: cleaning up all agents…
+[2026-03-25 17:25:56][INFO] agent_spawner: AgentSpawner: cleanup complete
+[2026-03-25 17:25:56][INFO] auto_packager: Shutting down AutoPackaging…
+[2026-03-25 17:25:56][INFO] auto_packager: Packaging worker stopped
+[2026-03-25 17:25:56][INFO] auto_packager: AutoPackaging stopped
+[2026-03-25 17:25:56][INFO] agent_manager: Agent cleanup complete
+[2026-03-25 17:25:56][INFO] agent_manager: ✅ Shutdown complete
+[2026-03-25 17:51:35][INFO] root: Logging initialised — level=INFO file=data/logs/divine_world.log
+[2026-03-25 17:51:35][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-25 17:51:35][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-25 17:51:35][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-25 17:51:35][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:51:36][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:08][INFO] root: Logging initialised — level=INFO file=data/logs/divine_world.log
+[2026-03-25 17:54:08][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-25 17:54:08][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-25 17:54:08][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-25 17:54:08][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:54:08][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:17][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:17][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-25 17:54:17][WARNING] minecraft_launcher: ⚠️  divineworld jar not found
+[2026-03-25 17:54:17][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-25 17:54:17][INFO] packager: ✅ Frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-03-25 17:54:17][INFO] packager: ✅ Mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-slim.jar
+[2026-03-25 17:54:17][INFO] packager: ✅ UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:17][INFO] auto_packager: Packaging worker started
+[2026-03-25 17:54:17][INFO] auto_packager: AutoPackaging initialised (output: /home/devlord/divine-world-core/npc_applications)
+[2026-03-25 17:54:17][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-25 17:54:17][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:17][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:17][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-25 17:54:17][WARNING] minecraft_launcher: ⚠️  divineworld jar not found
+[2026-03-25 17:54:17][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:54:17][INFO] agent_spawner: ✅ UltimMCAgentSpawner: UltimMC automation active
+[2026-03-25 17:54:17][INFO] auto_packager: ✅ UltimMC automation available
+[2026-03-25 17:54:17][INFO] agent_manager: AgentProcessManager initialised
+[2026-03-25 17:54:17][INFO] auto_connect: AutoConnect System initialised
+[2026-03-25 17:54:17][INFO] auto_connect:   Agents Folder : /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:54:17][INFO] auto_connect:   Server        : 127.0.0.1:25565
+[2026-03-25 17:54:17][INFO] auto_connect: ✅ Auto-connect endpoints registered (/api/autoconnect/*)
+[2026-03-25 17:54:17][INFO] auto_connect:    player_event handler must call app.state.auto_connect.mark_connected(agent_id) on 'connected' events
+[2026-03-25 17:54:35][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-25 17:54:35][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-25 17:54:35][INFO] agent_manager: Server folder: /home/devlord/DW_Server
+[2026-03-25 17:54:35][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:54:35][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:36][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:36][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-25 17:54:36][WARNING] minecraft_launcher: ⚠️  divineworld jar not found
+[2026-03-25 17:54:36][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-25 17:54:36][INFO] packager: ✅ Frontend: /home/devlord/divine-world-core/dw_agent/electron/react-app
+[2026-03-25 17:54:36][INFO] packager: ✅ Mod jar: /home/devlord/divine-world-core/DivineWorld/build/libs/divineworld-1.0.0-slim.jar
+[2026-03-25 17:54:36][INFO] packager: ✅ UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:36][INFO] auto_packager: Packaging worker started
+[2026-03-25 17:54:36][INFO] auto_packager: AutoPackaging initialised (output: /home/devlord/divine-world-core/npc_applications)
+[2026-03-25 17:54:36][INFO] agent_spawner: AgentSpawner initialised in MINECRAFT mode
+[2026-03-25 17:54:36][INFO] minecraft_launcher: Found UltimMC: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:36][INFO] minecraft_launcher: ✅ UltimMC source: /home/devlord/divine-world-core/UltimMC
+[2026-03-25 17:54:36][INFO] minecraft_launcher: ✅ dwclient: /home/devlord/divine-world-core/DWClientBot/build/libs/dwclient-1.0.0.jar
+[2026-03-25 17:54:36][WARNING] minecraft_launcher: ⚠️  divineworld jar not found
+[2026-03-25 17:54:36][INFO] minecraft_launcher: MultiAgentLauncher base: /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:54:36][INFO] agent_spawner: ✅ UltimMCAgentSpawner: UltimMC automation active
+[2026-03-25 17:54:36][INFO] auto_packager: ✅ UltimMC automation available
+[2026-03-25 17:54:36][INFO] agent_manager: AgentProcessManager initialised
+[2026-03-25 17:54:36][INFO] auto_connect: AutoConnect System initialised
+[2026-03-25 17:54:36][INFO] auto_connect:   Agents Folder : /home/devlord/divine-world-core/npc_applications
+[2026-03-25 17:54:36][INFO] auto_connect:   Server        : 127.0.0.1:25565
+[2026-03-25 17:54:36][INFO] auto_connect: ✅ Auto-connect endpoints registered (/api/autoconnect/*)
+[2026-03-25 17:54:36][INFO] auto_connect:    player_event handler must call app.state.auto_connect.mark_connected(agent_id) on 'connected' events
+[2026-03-25 17:54:36][INFO] agent_manager: ============================================================
+[2026-03-25 17:54:36][INFO] agent_manager:   🎮 Divine World Management Server  v3.0.0
+[2026-03-25 17:54:36][INFO] agent_manager: ============================================================
+[2026-03-25 17:54:36][INFO] breeding: BreedingSystem initialised
+[2026-03-25 17:54:36][INFO] agent_manager: ✅ BreedingSystem wired (spawner cross-wired, tick task started)
+[2026-03-25 17:58:45][INFO] mc_uuid: Found agents.json: /home/devlord/Documents/agents.json
+[2026-03-25 17:58:45][INFO] mc_uuid: AgentNameManager: /home/devlord/Documents/agents.json
+[2026-03-25 17:58:45][INFO] agent_manager: ✅ Registered in usernamecache.json: Adam
+[2026-03-25 17:58:45][INFO] agent_manager: [PortAlloc] 'Adam' -> TCP 11401 / WS 21401 (from agents.json)
+[2026-03-25 17:58:45][INFO] agent_manager: ✅ Agent adam_1 started (PID 45461)
+[2026-03-25 17:58:45][INFO] agent_manager: ✅ Registered in usernamecache.json: Eve
+[2026-03-25 17:58:45][INFO] agent_manager: [PortAlloc] 'Eve' -> TCP 11421 / WS 21421 (from agents.json)
+[2026-03-25 17:58:45][INFO] agent_manager: ✅ Agent eve_1 started (PID 45463)
+[2026-03-25 17:59:19][INFO] agent_manager: [Auto-Package] waiting for brain (30s)…
+[2026-03-25 17:59:19][INFO] agent_manager: [Auto-Package] waiting for brain (30s)…
+[2026-03-25 17:59:53][INFO] agent_manager: [Auto-Package] waiting for brain (60s)…
+[2026-03-25 17:59:53][INFO] agent_manager: [Auto-Package] waiting for brain (60s)…
+[2026-03-25 18:00:28][INFO] agent_manager: [Auto-Package] waiting for brain (90s)…
+[2026-03-25 18:00:29][INFO] agent_manager: [Auto-Package] waiting for brain (90s)…
+[2026-03-25 18:01:35][INFO] agent_manager: [Auto-Package] waiting for brain (120s)…
+[2026-03-25 18:01:43][INFO] agent_manager: [Auto-Package] waiting for brain (120s)…

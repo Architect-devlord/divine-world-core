@@ -1556,23 +1556,23 @@ async def run_standalone_agent(
         # alongside it (launched by main.py _auto_package_agent).  If it is
         # NOT present the agent is being run in isolation (e.g. dev mode)
         # without a Minecraft client — log clearly and suggest alternatives.
-        ultimmc_path = Path(sys.argv[0]).parent / "UltimMC" / "bin" / "UltimMC"
+        ultimmc_path = Path(sys.argv[0]).parent.parent.parent / "UltimMC" / "bin" / "UltimMC"
         if not ultimmc_path.exists():
             log.warning(
                 "\n"
                 "╔══════════════════════════════════════════════════════════════╗\n"
-                "║  ⚠️  UltimMC NOT FOUND — Minecraft client will not launch  ║\n"
+                "║  ⚠️  UltimMC NOT FOUND — Minecraft client will not launch    ║\n"
                 "║                                                              ║\n"
                 "║  Expected path: %s\n"
                 "║                                                              ║\n"
-                "║  This agent was started in minecraft mode but has no        ║\n"
-                "║  bundled UltimMC launcher.  Options:                        ║\n"
-                "║    • Let main.py launch the agent (auto-packages UltimMC)   ║\n"
-                "║    • Re-run with --mode autonomous (no Minecraft needed)    ║\n"
-                "║    • Re-run with --mode chat       (text-only interface)    ║\n"
+                "║  This agent was started in minecraft mode but has no         ║\n"
+                "║  bundled UltimMC launcher.  Options:                         ║\n"
+                "║    • Let main.py launch the agent (auto-packages UltimMC)    ║\n"
+                "║    • Re-run with --mode autonomous (no Minecraft needed)     ║\n"
+                "║    • Re-run with --mode chat       (text-only interface)     ║\n"
                 "║                                                              ║\n"
-                "║  The agent will still start and wait for a mod connection.  ║\n"
-                "║  If one arrives it will work; otherwise actions are no-ops. ║\n"
+                "║  The agent will still start and wait for a mod connection.   ║\n"
+                "║  If one arrives it will work; otherwise actions are no-ops.  ║\n"
                 "╚══════════════════════════════════════════════════════════════╝",
                 ultimmc_path,
             )

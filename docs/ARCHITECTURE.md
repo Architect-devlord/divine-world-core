@@ -9,7 +9,7 @@ This document describes the high-level architecture and component interactions o
 Divine World is a multi-layered system designed to bridge AI reasoning with complex 3D virtual environments (Minecraft).
 
 1.  **Management Server (Python/FastAPI)**: The central controller (`py_backend/main.py`). It manages agent lifecycles, exposes REST/WebSocket APIs, and serves the Control Centre GUI.
-2.  **Autonomous Agents (AI Core)**: Individual AI processes that run a perception-thinking-action loop. They use local LLMs (via Ollama) and reinforcement learning policies for deliberation.
+2.  **Autonomous Agents (AI Core)**: Individual AI processes that run a perception-thinking-action loop. They use reinforcement learning policies for deliberation.
 3.  **Forge Mods (Java)**:
     - **`DivineWorld`**: Server-side mod for agent registration, god-tier entity management, and event handling.
     - **`DWClientBot`**: Client-side mod that provides the AI with "eyes" (perception data) and "limbs" (simulated input).
@@ -21,7 +21,7 @@ Divine World is a multi-layered system designed to bridge AI reasoning with comp
 ## 🔄 Component Interaction
 
 ### 1. Agent Lifecycle (The "Packaged" Flow)
-1.  **Spawn Request**: A request is made to the Management Server (via GUI or API).
+1.  **Spawn Request**: A request is made to the Management Server (via GUI or API or Minecraft).
 2.  **Initialization**: The server starts the `NPCAgent` process.
 3.  **Auto-Packaging**: Once the agent's brain file (`brain.pcap`) is first saved, `AgentPackager` creates a portable executable in `npc_applications/{agent_id}/`.
 4.  **Minecraft Setup**: The server uses `UltimMCLauncher` to clone and configure a Minecraft instance inside the agent's application folder.
@@ -51,4 +51,4 @@ The **Agent Registry** is a synchronization system that ensures the Python backe
 
 ## ⚡ God Entities
 
-God entities (e.g., Wither, Warden, Ender Dragon) use a specialized `LLMOracleBrain`. They have access to global world state and "god-tier" abilities (transformation, entity summoning) that standard NPC agents do not.
+God entities (e.g., Wither, Warden, Ender Dragon) are similar agents but in game control the minecraft bosses and have some additional abilities. They have access to "god-tier" abilities (transformation, entity summoning) that standard NPC agents do not.

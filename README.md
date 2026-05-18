@@ -103,9 +103,9 @@ Learn more about the agent synchronization and management:
 - **dw_agent**: React-based frontend (dashboard) for monitoring agents.
 
 ## Future plans
-- Create robots for the agents in which the agents can reside locally and control its body
-- God agents will have specialized robot bodies which will have special gimicks for each of them
-- Normal agents will have a uniform robot body design
+- Create robots for the agents in which the agents can reside locally and control its body.
+- God agents will have specialized robot bodies which will have special gimicks for each of them.
+- Normal agents will have a uniform robot body design.
 ---
 
 ## 🔐 Licensing and Ownership

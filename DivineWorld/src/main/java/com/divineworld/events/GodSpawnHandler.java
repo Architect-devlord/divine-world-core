@@ -26,41 +26,18 @@ import java.util.UUID;
  * GodSpawnHandler — spawns a vanilla boss entity when a god agent joins,
  * and tears it down when they disconnect.
  *
- * The entity is the agent's visible "body"; the ServerPlayer puppet is
- * invisible (noPhysics = true) and co-located with it.
- * GodControlHandler syncs their positions every tick.
+ * Entity type mapping (UPDATED):
+ *   oracle   → EVOKER   (robed mage look; can summon Vexes/fangs as god powers)
+ *   creaking → WARDEN   (no autonomous side effects under setNoAi, replaces old EVOKER placeholder)
+ *   warden   → WARDEN
+ *   wither   → WITHER
+ *   dragon   → ENDER_DRAGON
+ *   elder_guardian → ELDER_GUARDIAN
  *
- * FIXES in this file
- * ──────────────────
- * Bug 1  — Double registerGodPlayer: removed from DWEventHandler; this file
- *           is the sole caller, after the body is fully in the world.
- *
- * Bug 3  — EnderDragon AI not disabled: EnderDragon doesn't extend Mob so
- *           instanceof Mob → setNoAi silently skipped it. Fixed by checking
- *           for EnderDragon first and using the DragonPhaseManager to lock
- *           the dragon in HOVERING phase, disabling all autonomous AI.
- *
- * Bug 4  — Gods incorrectly invulnerable: removed all setInvulnerable(true)
- *           calls from spawnGodBody and replaceGodBody. God bodies must be
- *           damageable; only the invisible puppet uses invulnerable = false.
- *
- * Bug 5  — Original god type lost on transform: spawnGodBody writes
- *           "dw_original_god_type" once at spawn. replaceGodBody only
- *           updates "dw_god_type". removeTransform reads from
- *           "dw_original_god_type" and always gets the right value back.
- *
- * Bug 7  — God puppet has default player stats (2 dmg): boostGodPuppetAttributes
- *           scales MAX_HEALTH, ATTACK_DAMAGE, and MOVEMENT_SPEED to match
- *           each god tier so melee attacks via ActionExecutor hit with force.
- *
- * Bug 8  — GodEntityManager never called addFreshEntity: fixed in
- *           GodEntityManager.java (client side). Noted here for reference.
- *
- * Bug 12 — Wither shield NBT key wrong: putInt("WitherBirthTime", -1000)
- *           used the wrong key. The actual field Wither reads for its
- *           invulnerability timer is "Invul" (see WitherBoss.readAdditionalSaveData).
- *           Fixed: we call wither.makeInvulnerable(0) which sets Invul=0
- *           directly via the public API, bypassing NBT key names entirely.
+ * Burrow behaviour (UPDATED):
+ *   The Warden god agent controls when to emerge — no auto-emerge timer.
+ *   While burrowed, the god puppet is invulnerable and invisible.
+ *   dw_burrowed NBT flag is cleared on logout for safety.
  */
 @Mod.EventBusSubscriber(modid = DWMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class GodSpawnHandler {
@@ -75,15 +52,11 @@ public class GodSpawnHandler {
     @SubscribeEvent
     public static void onPlayerJoin(PlayerEvent.PlayerLoggedInEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
-
         String username = player.getName().getString();
         String godType  = AgentConfigLoader.getGodTypeForName(username);
-        if (godType == null) return; // not a god agent
+        if (godType == null) return;
 
         DWMod.LOGGER.info("🌟 Scheduling god body spawn: {} → {} in 40 ticks", username, godType);
-
-        // 40-tick delay (2 s) lets the player fully load before we read their
-        // position and spawn the body next to them.
         DWMod.getInstance().scheduleTask(
                 () -> spawnGodBody(player, godType, username), 40);
     }
@@ -113,115 +86,84 @@ public class GodSpawnHandler {
             return;
         }
 
-        // Position at player's feet
         godEntity.moveTo(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5,
                 player.getYRot(), 0.0f);
 
-        // ── Disable vanilla AI ──────────────────────────────────────────────
-        // FIX Bug 3: EnderDragon does NOT extend Mob — the old instanceof check
-        // silently skipped it. Lock it to HOVERING phase instead.
+        // Disable vanilla AI
         if (godEntity instanceof EnderDragon dragon) {
             dragon.getPhaseManager().setPhase(EnderDragonPhase.HOVERING);
         } else if (godEntity instanceof net.minecraft.world.entity.Mob mob) {
             mob.setNoAi(true);
-            // FIX Bug 4: do NOT call mob.setInvulnerable(true) — god bodies must be damageable.
         }
 
-        // ── Wither shield fix (Bug 12) ──────────────────────────────────────
-        // WitherBoss spawns with an invulnerability timer (NBT key "Invul").
-        // The old code tried putInt("WitherBirthTime", -1000) which is the
-        // WRONG key — Wither never reads "WitherBirthTime". The correct field
-        // is "Invul" (see WitherBoss.readAdditionalSaveData line ~300).
-        //
-        // Fix: call makeInvulnerable(0) which sets invulTimer = 0 via the
-        // public API, making the Wither body immediately hittable.
+        // Wither: clear invulnerability timer so body is immediately hittable
         if (godEntity instanceof WitherBoss wither) {
-            wither.setInvulnerableTicks(0); // sets Invul=0, no shield on spawn
+            wither.setInvulnerableTicks(0);
         }
 
-        // ── Tag entity ─────────────────────────────────────────────────────
+        // Tag entity
         TaggedEntitySystem.tagEntity(godEntity, TaggedEntitySystem.TAG_DW_GOD);
         TaggedEntitySystem.setGodType(godEntity, godType);
         TaggedEntitySystem.setAIID(godEntity, agentId);
         TaggedEntitySystem.setDivinePower(godEntity, 100);
         TaggedEntitySystem.makeGenesisImmune(godEntity);
 
-        // ── Link body to puppet ────────────────────────────────────────────
         GOD_ENTITY_MAP.put(player.getUUID(), godEntity);
         level.addFreshEntity(godEntity);
 
-        // ── Register god player (sole call site — FIX Bug 1) ───────────────
+        // Register god player — sole call site
         DWNPCManager.registerGodPlayer(player, agentId, godType);
 
-        // ── Store original god type (FIX Bug 5) ────────────────────────────
-        // replaceGodBody overwrites "dw_god_type"; this key stays constant so
-        // GodDisguiseHandler.removeTransform can always restore the right body.
+        // Store ORIGINAL god type (never overwritten by transforms)
         player.getPersistentData().putString("dw_original_god_type", godType);
 
-        // ── Puppet visibility + physics ────────────────────────────────────
+        // Clear any stale burrow state from a previous session
+        if (player.getPersistentData().getBoolean("dw_burrowed")) {
+            player.getPersistentData().putBoolean("dw_burrowed", false);
+            DWMod.LOGGER.info("[GodSpawnHandler] Cleared stale dw_burrowed flag for {}", agentId);
+        }
+
+        // Puppet: invisible, no physics, not invulnerable (body takes hits)
         player.setInvisible(true);
-        player.getAbilities().mayfly    = true;
-        player.getAbilities().flying    = true;
-        player.getAbilities().invulnerable = false; // body takes the hits
-        player.noPhysics = true;                    // puppet passes through blocks
+        player.getAbilities().mayfly       = true;
+        player.getAbilities().flying       = true;
+        player.getAbilities().invulnerable = false;
+        player.noPhysics = true;
         player.onUpdateAbilities();
 
-        // ── Boost puppet attributes (FIX Bug 7) ───────────────────────────
         boostGodPuppetAttributes(player, godType);
 
         DWMod.LOGGER.info("✅ God body spawned: {} ({}) for agent {}",
                 godType, godEntity.getUUID(), agentId);
     }
 
-    // ── Attribute scaling ─────────────────────────────────────────────────────
-
-    /**
-     * Scale the invisible puppet's combat attributes to the god tier so that
-     * melee swings via ActionExecutor.executeAction() deal appropriate damage.
-     * Values mirror the createAttributes() blocks in each client-side AI entity.
-     */
     private static void boostGodPuppetAttributes(ServerPlayer player, String godType) {
         double health, attackDamage, speed;
-
         switch (godType) {
-            case "wither"         -> { health = 300; attackDamage = 20; speed = 0.35; }
-            case "ender_dragon",
-                 "dragon"         -> { health = 200; attackDamage = 15; speed = 0.30; }
-            case "warden"         -> { health = 500; attackDamage = 30; speed = 0.30; }
-            case "elder_guardian" -> { health = 250; attackDamage = 18; speed = 0.25; }
-            case "creaking"       -> { health = 200; attackDamage = 15; speed = 0.30; }
-            case "oracle"         -> { health = 150; attackDamage =  8; speed = 0.30; }
-            default               -> { health = 100; attackDamage = 10; speed = 0.30; }
+            case "wither"                    -> { health = 300; attackDamage = 20; speed = 0.35; }
+            case "ender_dragon", "dragon"    -> { health = 200; attackDamage = 15; speed = 0.30; }
+            case "warden"                    -> { health = 500; attackDamage = 30; speed = 0.30; }
+            case "elder_guardian"            -> { health = 250; attackDamage = 18; speed = 0.25; }
+            case "creaking"                  -> { health = 200; attackDamage = 15; speed = 0.30; }
+            case "oracle"                    -> { health = 150; attackDamage =  8; speed = 0.30; }
+            default                          -> { health = 100; attackDamage = 10; speed = 0.30; }
         }
-
         var maxHp = player.getAttribute(Attributes.MAX_HEALTH);
         var atk   = player.getAttribute(Attributes.ATTACK_DAMAGE);
         var spd   = player.getAttribute(Attributes.MOVEMENT_SPEED);
-
         if (maxHp != null) maxHp.setBaseValue(health);
         if (atk   != null) atk.setBaseValue(attackDamage);
         if (spd   != null) spd.setBaseValue(speed);
-
-        player.setHealth(player.getMaxHealth()); // heal to full after buff
+        player.setHealth(player.getMaxHealth());
     }
 
     // =========================================================================
-    // Body replacement (called by GodDisguiseHandler)
+    // Body replacement
     // =========================================================================
 
-    /**
-     * Swap out the current god body for a new entity of the given type.
-     * Called by GodDisguiseHandler.applyTransform and removeTransform.
-     *
-     * @param player  the god agent's invisible puppet
-     * @param mobType god-type key ("warden", "oracle") or any vanilla mob id
-     * @return true on success
-     */
     public static boolean replaceGodBody(ServerPlayer player, String mobType) {
         UUID playerUUID = player.getUUID();
-
-        // Discard old body
-        Entity oldBody = GOD_ENTITY_MAP.remove(playerUUID);
+        Entity oldBody  = GOD_ENTITY_MAP.remove(playerUUID);
         if (oldBody != null && !oldBody.isRemoved()) {
             oldBody.remove(Entity.RemovalReason.DISCARDED);
         }
@@ -245,26 +187,21 @@ public class GodSpawnHandler {
         newBody.moveTo(player.getX(), player.getY(), player.getZ(),
                 player.getYRot(), player.getXRot());
 
-        // Disable AI — same pattern as spawnGodBody
         if (newBody instanceof EnderDragon dragon) {
             dragon.getPhaseManager().setPhase(EnderDragonPhase.HOVERING);
         } else if (newBody instanceof net.minecraft.world.entity.Mob mob) {
             mob.setNoAi(true);
-            // FIX Bug 4: no setInvulnerable(true) here either
         }
-
-        // Wither shield fix also applies to replacement bodies (Bug 12)
         if (newBody instanceof WitherBoss wither) {
             wither.setInvulnerableTicks(0);
         }
 
-        // Tag
         TaggedEntitySystem.tagEntity(newBody, TaggedEntitySystem.TAG_DW_GOD);
         TaggedEntitySystem.setGodType(newBody, mobType.toLowerCase());
         TaggedEntitySystem.setAIID(newBody, agentId);
         TaggedEntitySystem.makeGenesisImmune(newBody);
 
-        // FIX Bug 5: only update current type, not the original.
+        // Only update CURRENT type — original stays in "dw_original_god_type"
         player.getPersistentData().putString("dw_god_type", mobType.toLowerCase());
         TaggedEntitySystem.setGodType(player, mobType.toLowerCase());
 
@@ -279,19 +216,25 @@ public class GodSpawnHandler {
     // Entity type resolution
     // =========================================================================
 
+    /**
+     * Map god type keys to vanilla entity types.
+     *
+     * oracle   → EVOKER  (robed mage; Vex/fang summons are Oracle's god powers)
+     * creaking → WARDEN  (safe placeholder: setNoAi stops all behaviour, no random summons)
+     */
     private static EntityType<?> getGodEntityType(String godType) {
         return switch (godType) {
             case "ender_dragon", "dragon" -> EntityType.ENDER_DRAGON;
             case "wither"                 -> EntityType.WITHER;
             case "warden"                 -> EntityType.WARDEN;
             case "elder_guardian"         -> EntityType.ELDER_GUARDIAN;
-            case "oracle"                 -> EntityType.WANDERING_TRADER;
-            case "creaking"               -> EntityType.EVOKER; // placeholder TODO: add the custom creaking model here
+            case "oracle"                 -> EntityType.EVOKER;   // CHANGED: Wandering Trader → Evoker
+            case "creaking"               -> EntityType.WARDEN;   // CHANGED: Evoker → Warden (no random Vex spawns)
             default                       -> null;
         };
     }
 
-    /** Resolve a short vanilla mob id ("zombie") via the Forge registry. */
+    /** Resolve a short vanilla mob id (e.g. "zombie") via the Forge registry. */
     static EntityType<?> resolveVanillaEntityType(String mobId) {
         String registryId = mobId.contains(":") ? mobId : "minecraft:" + mobId;
         try {
@@ -318,10 +261,23 @@ public class GodSpawnHandler {
     @SubscribeEvent
     public static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
+
+        // Clean up stale burrow state so it doesn't persist to next session
+        if (player.getPersistentData().getBoolean("dw_burrowed")) {
+            player.setInvisible(false);
+            player.noPhysics = false;
+            player.getAbilities().invulnerable = false;
+            player.onUpdateAbilities();
+            player.getPersistentData().putBoolean("dw_burrowed", false);
+            DWMod.LOGGER.info("[GodSpawnHandler] Cleared burrow state on logout: {}",
+                    player.getName().getString());
+        }
+
         Entity godEntity = GOD_ENTITY_MAP.remove(player.getUUID());
         if (godEntity != null && !godEntity.isRemoved()) {
             godEntity.remove(Entity.RemovalReason.DISCARDED);
-            DWMod.LOGGER.info("🌟 Removed god body for disconnected: {}", player.getName().getString());
+            DWMod.LOGGER.info("🌟 Removed god body for disconnected: {}",
+                    player.getName().getString());
         }
     }
 }

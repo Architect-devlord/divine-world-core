@@ -2,6 +2,8 @@ package com.divineworld;
 
 import com.divineworld.commands.CommandRegistrar;
 import com.divineworld.commands.DivineCommands;
+import com.divineworld.commands.GodCommand;
+import com.divineworld.commands.NPCCommand;
 import com.divineworld.commands.OracleCommandRegistrar;
 import com.divineworld.entity.ModEntities;
 import com.divineworld.events.BreedingEventHandler;
@@ -189,9 +191,18 @@ public class DWMod {
                 (oracleSystem != null ? "✅" : "❌"),
                 (oracleBrain != null ? "✅" : "❌"));
 
-        // Register Divine Commands
+        // Register Divine Commands (genesis, divine_reset, spawn_god, god_ability, god_transform, list_agents)
         DivineCommands.register(event.getDispatcher());
         LOGGER.info("[DivineWorld] ✅ Divine commands registered");
+
+        // FIX SGS-1: NPCCommand and GodCommand were missing — CommandRegistrar.register()
+        // was removed from setup() (FIX M-05) to prevent duplicates, but the replacement
+        // calls were never added here. Both are now registered directly.
+        NPCCommand.register(event.getDispatcher());
+        LOGGER.info("[DivineWorld] ✅ NPC commands registered (/dw npc spawn|list|remove|info)");
+
+        GodCommand.register(event.getDispatcher());
+        LOGGER.info("[DivineWorld] ✅ God commands registered (/godtoggle)");
 
         // Register Oracle Commands
         OracleCommandRegistrar.registerCommands(event.getDispatcher(), oracleSystem, oracleBrain);

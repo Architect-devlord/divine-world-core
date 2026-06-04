@@ -21,7 +21,6 @@ avalanche-lib>=0.6.0   # Ensure 3.13 compatibility
 fastapi>=0.115.0       # Better Pydantic 2.10 integration
 uvicorn>=0.31.0
 python-multipart>=0.0.6
-websockets>=11.0
 python-dotenv>=1.0.0
 pydantic>=2.10.0
 aiofiles>=24.1.0
@@ -42,8 +41,6 @@ playwright>=1.48.0
 
 # Optional: GUI
 PyQt5>=5.15.0  # For utils/gui.py
-# Optional: Audio
-sounddevice>=0.4.6  # For microphone input
 
 websockets>=11.0  # Used in unified_chat_system
 pyinstaller>=6.11.0    # Improved support for Python 3.13+ internals

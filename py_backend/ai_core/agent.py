@@ -249,6 +249,197 @@ async def allow_websites(agent_id: str, data: Dict[str, Any]):
 
 
 # =============================================================================
+# Agentic browser routes  (frontend-only browsing — the correct home for these)
+# =============================================================================
+# These endpoints are on the per-agent FastAPI app (agent.py), not on the
+# agent-manager (main.py), because the browser instance lives inside NPCAgent.
+# The React frontend calls these directly on the agent's backend port.
+# =============================================================================
+
+@app.post("/browser/navigate")
+async def browser_navigate(request: Request):
+    """
+    Navigate to a URL and return a page snapshot.
+    Body: {"url": "https://..."}
+    Returns: {status, url, title, text, links, screenshot_b64}
+    """
+    if not global_agent or not hasattr(global_agent, 'web_browser'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Browser not attached to agent")
+    data = await request.json()
+    url  = data.get("url", "")
+    try:
+        snapshot = await global_agent.web_browser.browse(url)
+    except Exception as _e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(_e))
+    if snapshot is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail=f"URL not allowed or navigation failed: {url}")
+    return {
+        "status":     "ok",
+        "url":        snapshot.url,
+        "title":      snapshot.title,
+        "text":       snapshot.visible_text[:2000] if hasattr(snapshot, "visible_text") else "",
+        "links":      snapshot.links[:20]          if hasattr(snapshot, "links")         else [],
+        "screenshot": snapshot.screenshot_b64      if hasattr(snapshot, "screenshot_b64") else None,
+    }
+
+
+@app.post("/browser/click")
+async def browser_click(request: Request):
+    """
+    Click an element on the current page.
+    Body: {"url": "https://...", "selector": "button.submit"}
+    """
+    if not global_agent or not hasattr(global_agent, 'web_browser'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Browser not attached")
+    data     = await request.json()
+    url      = data.get("url", "")
+    selector = data.get("selector", "")
+    try:
+        result = await global_agent.web_browser.click(url, selector)
+        return {
+            "status":     "ok" if getattr(result, "success", False) else "error",
+            "message":    getattr(result, "message", ""),
+            "screenshot": getattr(result, "screenshot_b64", None),
+        }
+    except Exception as _e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(_e))
+
+
+@app.post("/browser/type")
+async def browser_type_text(request: Request):
+    """
+    Type text into an element.
+    Body: {"url": "https://...", "selector": "input#q", "text": "...", "submit": false}
+    """
+    if not global_agent or not hasattr(global_agent, 'web_browser'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Browser not attached")
+    data     = await request.json()
+    url      = data.get("url", "")
+    selector = data.get("selector", "")
+    text     = data.get("text", "")
+    submit   = data.get("submit", False)
+    try:
+        result = await global_agent.web_browser.type_into(url, selector, text, submit=submit)
+        return {
+            "status":     "ok" if getattr(result, "success", False) else "error",
+            "message":    getattr(result, "message", ""),
+            "screenshot": getattr(result, "screenshot_b64", None),
+        }
+    except Exception as _e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(_e))
+
+
+@app.post("/browser/scroll")
+async def browser_scroll(request: Request):
+    """
+    Scroll the current page.
+    Body: {"dx": 0, "dy": 500}
+    """
+    if not global_agent or not hasattr(global_agent, 'web_browser'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Browser not attached")
+    data = await request.json()
+    dx   = float(data.get("dx", 0))
+    dy   = float(data.get("dy", 500))
+    try:
+        if hasattr(global_agent.web_browser, "_page") and global_agent.web_browser._page:
+            await global_agent.web_browser._page.mouse.wheel(dx, dy)
+        return {"status": "ok"}
+    except Exception as _e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(_e))
+
+
+@app.get("/browser/screenshot")
+async def browser_screenshot():
+    """Return a JPEG screenshot of the current browser page."""
+    if not global_agent or not hasattr(global_agent, 'web_browser'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Browser not attached")
+    try:
+        jpeg = await global_agent.web_browser.screenshot_jpeg()
+        import base64
+        return {"status": "ok", "screenshot": base64.b64encode(jpeg).decode() if jpeg else None}
+    except Exception as _e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(_e))
+
+
+@app.get("/browser/stats")
+async def browser_stats():
+    """Return browser usage statistics."""
+    if not global_agent or not hasattr(global_agent, 'web_browser'):
+        return {"status": "no_browser", "visits": 0}
+    stats = global_agent.web_browser.get_stats() if hasattr(global_agent.web_browser, "get_stats") else {}
+    return {"status": "ok", **stats}
+
+
+@app.get("/browser/history")
+async def browser_history():
+    """Return the cached page history."""
+    if not global_agent or not hasattr(global_agent, 'web_browser'):
+        return {"status": "no_browser", "pages": []}
+    cache = getattr(global_agent.web_browser, "page_cache", {})
+    pages = [
+        {"url": url, "title": getattr(snap, "title", ""),
+         "visited_at": getattr(snap, "timestamp", 0)}
+        for url, snap in cache.items()
+    ]
+    return {"status": "ok", "pages": pages}
+
+
+@app.post("/browser/allowed_sites")
+async def browser_set_allowed_sites(request: Request):
+    """
+    Update the browser's allowed website list.
+    Body: {"sites": [{"url": "https://wikipedia.org", "type": "domain", "enabled": true}]}
+    Also persists to agents.json if possible.
+    """
+    if not global_agent or not hasattr(global_agent, 'web_browser'):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Browser not attached")
+    data  = await request.json()
+    sites = data.get("sites", [])
+    global_agent.web_browser.update_allowed_websites(sites)
+    # Persist to agents.json so the setting survives restarts
+    try:
+        from py_backend.utils.mc_uuid import AgentNameManager
+        cfg_path = AgentNameManager._find_config_path()
+        if cfg_path and cfg_path.exists():
+            import json as _json
+            cfg_data = _json.loads(cfg_path.read_text(encoding="utf-8"))
+            cfg_data["allowed_websites"] = sites
+            cfg_path.write_text(_json.dumps(cfg_data, indent=2), encoding="utf-8")
+            log.info(f"[{global_agent.agent_id}] Persisted {len(sites)} allowed sites to agents.json")
+    except Exception as _pe:
+        log.debug(f"Could not persist allowed_sites to agents.json: {_pe}")
+    return {
+        "status": "ok",
+        "allowed_domains": len(getattr(global_agent.web_browser, "allowed_domains", [])),
+    }
+
+
+@app.get("/browser/allowed_sites")
+async def browser_get_allowed_sites():
+    """Return the current allowed website list."""
+    if not global_agent or not hasattr(global_agent, 'web_browser'):
+        return {"status": "no_browser", "sites": []}
+    try:
+        from py_backend.utils.mc_uuid import AgentNameManager
+        sites = AgentNameManager.get_allowed_websites()
+    except Exception:
+        sites = []
+    return {"status": "ok", "sites": sites}
+
+
+# =============================================================================
 # Controller (DWController) routes
 # =============================================================================
 

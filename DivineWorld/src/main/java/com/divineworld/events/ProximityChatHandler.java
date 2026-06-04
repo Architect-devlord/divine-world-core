@@ -68,10 +68,10 @@ public class ProximityChatHandler {
      */
     @SubscribeEvent
     public static void onServerChat(ServerChatEvent event) {
-        ServerPlayer sender  = event.getPlayer();
-        String       rawMsg  = event.getMessage().getString().trim();
+        ServerPlayer sender = event.getPlayer();
+        String       rawMsg = event.getMessage().getString().trim();
 
-        // ── Step 1: Oracle hook runs BEFORE cancel so it always sees the message ──
+        // ── Step 1: Oracle hook always runs first ──────────────────────────────
         boolean oracleConsumed = false;
         if (chatHook != null) {
             try {
@@ -81,18 +81,28 @@ public class ProximityChatHandler {
             }
         }
 
-        // ── Step 2: Cancel vanilla broadcast ──────────────────────────────────────
-        event.setCanceled(true);
+        // ── Step 2: Decide if proximity override is needed ─────────────────────
+        // Only override vanilla broadcast when the sender is an AI agent OR when
+        // at least one AI agent is within PROXIMITY_RADIUS of the sender.
+        // Real player ↔ real player chat with no agents nearby uses vanilla
+        // global broadcast completely unchanged.
+        boolean senderIsAgent = com.divineworld.entity.DWNPCManager.isAIPlayer(sender);
+        boolean agentNearby   = !senderIsAgent && hasAgentNearby(sender);
 
-        // If oracle fully consumed this message (it was a tutorial/llm command),
-        // suppress the proximity echo too — oracle sends its own response messages.
+        if (!senderIsAgent && !agentNearby) {
+            // Purely real-player message — let vanilla handle it; oracle still ran above.
+            if (oracleConsumed) event.setCanceled(true);
+            return;
+        }
+
+        // ── Step 3: Cancel vanilla broadcast, do proximity delivery ───────────
+        event.setCanceled(true);
         if (oracleConsumed) {
             DWMod.LOGGER.debug("[ProximityChat] Oracle consumed message from {}",
                 sender.getName().getString());
             return;
         }
 
-        // ── Step 3: Proximity broadcast ───────────────────────────────────────────
         Component display = buildMessage(sender, rawMsg);
         sender.sendSystemMessage(display);
 
@@ -103,10 +113,17 @@ public class ProximityChatHandler {
 
             recipient.sendSystemMessage(display);
 
-            // HTTP-notify god agents that overheard this.
-            // NPC agents receive it via ClientChatReceivedEvent → WebSocket.
-            TaggedEntitySystem.AgentType type = TaggedEntitySystem.detectAgentType(recipient);
-            if (type == TaggedEntitySystem.AgentType.GOD) {
+            // Notify ALL AI agent recipients (both NPC and GOD) via HTTP so the
+            // Python cognitive loop can react to the message immediately.
+            // NPC agents also receive it via ClientChatReceivedEvent on their
+            // own Minecraft client — the HTTP path gives an immediate channel
+            // without waiting for the next perception frame.
+            // GOD agents rely solely on HTTP (no standard chat listener on their client).
+            TaggedEntitySystem.AgentType recipientType =
+                    TaggedEntitySystem.detectAgentType(recipient);
+            if (recipientType == TaggedEntitySystem.AgentType.GOD
+                    || recipientType == TaggedEntitySystem.AgentType.NPC_MALE
+                    || recipientType == TaggedEntitySystem.AgentType.NPC_FEMALE) {
                 PythonBackendClient.notifyChatHeard(
                         recipient.getName().getString(),
                         sender.getName().getString(),
@@ -115,8 +132,22 @@ public class ProximityChatHandler {
             }
         }
 
-        DWMod.LOGGER.debug("[ProximityChat] {} said '{}' (radius={})",
+        DWMod.LOGGER.debug("[ProximityChat] {} → '{}' (r={})",
                 sender.getName().getString(), rawMsg, PROXIMITY_RADIUS);
+    }
+
+    /**
+     * True if any AI agent is within PROXIMITY_RADIUS of this player
+     * in the same dimension. Used to determine whether a real-player
+     * message needs proximity scoping.
+     */
+    private static boolean hasAgentNearby(ServerPlayer player) {
+        for (ServerPlayer other : player.getServer().getPlayerList().getPlayers()) {
+            if (!com.divineworld.entity.DWNPCManager.isAIPlayer(other)) continue;
+            if (!sameDimension(player, other)) continue;
+            if (distanceBetween(player, other) <= PROXIMITY_RADIUS) return true;
+        }
+        return false;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

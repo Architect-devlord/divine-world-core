@@ -713,6 +713,16 @@ async def lifespan(app: FastAPI):
         log.warning(f"BreedingSystem startup wiring failed: {_be}")
         app.state.breeding_system = None
 
+    # ── Auto-join all packaged agents on startup ───────────────────────────
+    _auto = getattr(app.state, "auto_connect", None)
+    if _auto:
+        _agents = _auto.scan_agents_folder()
+        log.info(f"[Startup] {len(_agents)} auto-connect agent(s) found")
+        if _agents:
+            asyncio.ensure_future(_auto.launch_all_agents(agent_manager.spawner))
+    else:
+        log.debug("[Startup] No auto_connect state — skipping auto-join")
+
     yield
     log.info("🛑 Shutting down…")
     agent_manager.cleanup_all()
@@ -2210,6 +2220,7 @@ async def god_transform(request: Request):
     data = await request.json()
     return {"status": "success", "agent_id": data.get("agent_id"),
             "target_mob": data.get("target_mob")}
+
 
 
 @app.get("/api/agents/list")

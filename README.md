@@ -100,7 +100,7 @@ Learn more about the agent synchronization and management:
 - **DivineWorld**: Server-side Forge mod for agent registration and God entities.
 - **DWClientBot**: Client-side Forge mod for AI perception and action control.
 - **py_backend**: FastAPI-powered management server and AI core.
-- **dw_agent**: React-based frontend (dashboard) for monitoring agents.
+- **dw_agent**: React-based frontend through which the user can interact with the agents like interacting with an LLM.
 
 ## Future plans
 - Create robots for the agents in which the agents can reside locally and control its body.

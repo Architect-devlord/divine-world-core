@@ -127,6 +127,14 @@ public class DWEventHandler {
         // NPC chat rate-limit cooldowns
         DWNPCManager.tickCooldowns();
 
+        // FIX SGS-2: tickMorphBodies() was never called — real-player (op-4) morph
+        // entities stayed frozen at their spawn position instead of following the player.
+        if (event.getServer() != null) {
+            for (net.minecraft.server.level.ServerLevel level : event.getServer().getAllLevels()) {
+                com.divineworld.events.GodDisguiseHandler.tickMorphBodies(level);
+            }
+        }
+
         // FIX Bug 13: tick god ability cooldowns every server tick.
         // Without this, ServerGodAbilityExecutor.setCooldown() stored a value
         // that was never decremented, permanently blocking abilities after first use.

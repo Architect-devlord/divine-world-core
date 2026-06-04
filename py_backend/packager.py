@@ -110,23 +110,104 @@ class AgentPackager:
         return None
 
     def _find_ultimmc(self) -> Optional[Path]:
-        cwd  = Path.cwd()
-        root = cwd.parent if cwd.name == "py_backend" else cwd
+        """
+        Locate UltimMC installation — cross-platform (Linux / Windows / macOS).
 
-        candidates = [
-            root / "UltimMC",
-            Path.home() / "UltimMC",
-            Path.home() / ".ultimmc",
-            Path.home() / ".local" / "share" / "ultimmc",
-            Path("/opt/ultimmc"),
-            Path("/Applications/UltimMC.app"),   # macOS
-        ]
+        Priority:
+          0. agents.json  minecraft_path  (highest)
+          1. DW_ULTIMMC_PATH env var
+          2. Project root   UltimMC/
+          3. Platform-specific user locations
+          4. PATH fallback
+          5. Interactive prompt (TTY only)
+        """
+        import platform as _plat
+        _system = _plat.system()   # "Linux" | "Windows" | "Darwin"
+        cwd     = Path.cwd()
+        root    = cwd.parent if cwd.name == "py_backend" else cwd
+        home    = Path.home()
+
+        # ── 0. agents.json minecraft_path ────────────────────────────────────
+        try:
+            from py_backend.utils.mc_uuid import AgentNameManager
+            mc_path = AgentNameManager.get_minecraft_path()
+            if mc_path and mc_path.exists():
+                log.info(f"✅ UltimMC from agents.json: {mc_path}")
+                return mc_path
+        except Exception:
+            pass
+
+        # ── 1. Env var ────────────────────────────────────────────────────────
+        env_path = os.environ.get("DW_ULTIMMC_PATH")
+        if env_path:
+            p = Path(os.path.expandvars(os.path.expanduser(env_path)))
+            if p.exists():
+                log.info(f"✅ UltimMC from DW_ULTIMMC_PATH: {p}")
+                return p
+            log.warning(f"DW_ULTIMMC_PATH set but not found: {p}")
+
+        # ── 2. Project-relative ───────────────────────────────────────────────
+        candidates = [root / "UltimMC"]
+
+        # ── 3. Platform-specific ─────────────────────────────────────────────
+        if _system == "Windows":
+            appdata      = Path(os.environ.get("APPDATA", str(home)))
+            localappdata = Path(os.environ.get("LOCALAPPDATA", str(home)))
+            candidates += [
+                home / "UltimMC",
+                home / "Desktop"   / "UltimMC",
+                home / "Downloads" / "UltimMC",
+                appdata      / "UltimMC",
+                localappdata / "UltimMC",
+                Path("C:/UltimMC"),
+                Path("C:/Program Files/UltimMC"),
+            ]
+        elif _system == "Darwin":
+            candidates += [
+                Path("/Applications/UltimMC.app/Contents/MacOS"),
+                home / "Applications/UltimMC.app/Contents/MacOS",
+                home / "UltimMC.app/Contents/MacOS",
+                home / "UltimMC",
+                Path("/Applications/UltimMC.app"),
+                home / "Applications/UltimMC.app",
+            ]
+        else:  # Linux
+            candidates += [
+                home / "UltimMC",
+                home / ".ultimmc",
+                home / ".local" / "share" / "ultimmc",
+                home / ".local" / "bin" / "UltimMC",
+                Path("/opt/ultimmc"),
+                Path("/opt/UltimMC"),
+                Path("/usr/local/bin/ultimmc"),
+            ]
+
+        def _has_executable(path: Path) -> bool:
+            """Check if path contains a valid UltimMC executable."""
+            if _system == "Windows":
+                hints = [path / "bin" / "UltimMC.exe", path / "UltimMC.exe"]
+            elif _system == "Darwin":
+                hints = [
+                    path / "bin" / "UltimMC",
+                    path / "UltimMC",
+                    # If path IS the MacOS dir inside the .app bundle:
+                    path / "UltimMC" if path.name == "MacOS" else path / "Contents" / "MacOS" / "UltimMC",
+                ]
+            else:
+                hints = [path / "bin" / "UltimMC", path / "UltimMC"]
+            return any(h.exists() for h in hints)
 
         for path in candidates:
-            if path.exists() and (path / "bin" / "UltimMC").exists():
+            if not path.exists():
+                continue
+            if path.is_file() and os.access(path, os.X_OK):
+                log.info(f"✅ UltimMC: {path.parent}")
+                return path.parent
+            if path.is_dir() and _has_executable(path):
                 log.info(f"✅ UltimMC: {path}")
                 return path
 
+        # ── 4. PATH fallback ──────────────────────────────────────────────────
         exe = shutil.which("ultimmc") or shutil.which("UltimMC")
         if exe:
             exe_path     = Path(exe)
@@ -134,16 +215,13 @@ class AgentPackager:
             log.info(f"✅ UltimMC found in PATH: {install_root}")
             return install_root
 
-        # ── Interactive prompt when not found automatically ────────────────────
-        # Guard: only prompt when running in an interactive terminal.
-        # Headless contexts (auto-packager background thread, Docker, PyInstaller
-        # build, CI) have no stdin — input() would block forever or raise EOFError.
+        # ── 5. Interactive prompt (TTY only) ──────────────────────────────────
         import sys as _sys
         if not _sys.stdin.isatty():
             log.warning(
                 "⚠️  UltimMC not found and stdin is not a TTY — "
-                "skipping interactive prompt.  Set DW_ULTIMMC_PATH env var "
-                "or pass the path via -Ddw.ultimmc.path to avoid this."
+                "skipping interactive prompt. Set DW_ULTIMMC_PATH or "
+                "add minecraft_path to agents.json."
             )
             return None
 
@@ -152,8 +230,10 @@ class AgentPackager:
         print("UltimMC Launcher Not Found")
         print("="*70)
         print("\nSearched locations:")
-        for cand in candidates:
+        for cand in candidates[:6]:
             print(f"  • {cand}")
+        if _system == "Windows":
+            print("  (and %APPDATA%/UltimMC, %LOCALAPPDATA%/UltimMC)")
         print()
 
         while True:
@@ -166,19 +246,15 @@ class AgentPackager:
                 log.warning("⚠️  UltimMC prompt got EOF — skipping")
                 return None
 
-            # Allow user to skip
             if not user_path:
-                log.warning("⚠️  UltimMC will not be packaged with agents")
-                print("Continuing without UltimMC...\n")
-                return None
+                env_p = os.getenv("DW_ULTIMMC_PATH")
+                if env_p:
+                    user_path = env_p
+                else:
+                    log.warning("⚠️  UltimMC will not be packaged with agents")
+                    print("Continuing without UltimMC...\n")
+                    return None
 
-            # Also accept the DW_ULTIMMC_PATH env var mid-session
-            import os as _os
-            env_path = _os.getenv("DW_ULTIMMC_PATH")
-            if env_path and not user_path:
-                user_path = env_path
-
-            # Validate the provided path
             ultimmc_candidate = Path(user_path).expanduser().resolve()
 
             if not ultimmc_candidate.exists():
@@ -186,12 +262,17 @@ class AgentPackager:
                 print("Please enter a valid path.\n")
                 continue
 
-            if not (ultimmc_candidate / "bin" / "UltimMC").exists():
-                print(f"❌ Not a valid UltimMC installation.")
-                print(f"   Expected {ultimmc_candidate / 'bin' / 'UltimMC'} to exist\n")
+            if not _has_executable(ultimmc_candidate):
+                print(f"❌ Not a valid UltimMC installation at: {ultimmc_candidate}")
+                if _system == "Windows":
+                    print(f"   Expected: bin\\UltimMC.exe  or  UltimMC.exe")
+                elif _system == "Darwin":
+                    print(f"   Expected: bin/UltimMC  or  Contents/MacOS/UltimMC")
+                else:
+                    print(f"   Expected: bin/UltimMC  or  UltimMC")
+                print()
                 continue
 
-            # Valid path found
             log.info(f"✅ UltimMC: {ultimmc_candidate}")
             print(f"✅ UltimMC found at: {ultimmc_candidate}\n")
             return ultimmc_candidate
@@ -310,7 +391,13 @@ class AgentPackager:
         ultimmc_dest = agent_dir / "UltimMC"
         shutil.copytree(self.ultimmc_path, ultimmc_dest, dirs_exist_ok=True)
 
-        accounts_file = ultimmc_dest / "bin" / "accounts.json"
+        # accounts.json may be in bin/ (Linux/Windows) or in the app root (macOS)
+        import platform as _plat2
+        _bin = ultimmc_dest / "bin"
+        if not _bin.exists() and _plat2.system() == "Darwin":
+            _bin = ultimmc_dest / "Contents" / "MacOS"
+        _bin.mkdir(parents=True, exist_ok=True)
+        accounts_file = _bin / "accounts.json"
         if accounts_file.exists():
             with open(accounts_file) as f:
                 data = json.load(f)

@@ -61,20 +61,93 @@ class ScyllaMemoryBackend:
         self.keyspace = keyspace
         contact_points = contact_points or ['127.0.0.1']
 
-        try:
+        def _connect():
             self.cluster = Cluster(
-                contact_points,
-                port=port,
+                contact_points, port=port,
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 protocol_version=4
             )
             self.session = self.cluster.connect()
             self._ensure_keyspace()
             self._ensure_tables()
+
+        try:
+            _connect()
             log.info(f"✅ ScyllaDB connected: {contact_points}")
-        except Exception as e:
-            log.error(f"ScyllaDB initialisation failed: {e}")
+        except Exception as first_err:
+            log.warning(f"ScyllaDB connection failed: {first_err}")
+            # Auto-start only when targeting localhost
+            if any(h in ("127.0.0.1", "localhost") for h in contact_points):
+                if self._try_start_local_scylla():
+                    import time as _time
+                    log.info("ScyllaDB auto-start requested — waiting 8s for init…")
+                    _time.sleep(8)
+                    try:
+                        _connect()
+                        log.info("✅ ScyllaDB connected after auto-start")
+                        return
+                    except Exception as second_err:
+                        log.error(f"ScyllaDB still unreachable after auto-start: {second_err}")
+            log.warning("Falling back to in-memory storage (ScyllaDB unavailable)")
             self.disabled = True
+
+    @staticmethod
+    def _try_start_local_scylla() -> bool:
+        """
+        Attempt to start a local ScyllaDB instance via Docker (cross-platform)
+        or systemctl (Linux). Returns True if a start command was issued.
+        """
+        import shutil, subprocess, platform
+        system = platform.system()
+
+        # ── Docker (works on Linux, Windows, macOS) ──────────────────
+        if shutil.which("docker"):
+            try:
+                # Check if container already exists
+                result = subprocess.run(
+                    ["docker", "ps", "-a", "--filter", "name=dw-scylla",
+                     "--format", "{{.Status}}"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                status = result.stdout.strip()
+                if "Up" in status:
+                    log.info("[ScyllaDB] Docker container dw-scylla already running")
+                    return True
+                if "Exited" in status:
+                    subprocess.Popen(["docker", "start", "dw-scylla"])
+                    log.info("[ScyllaDB] Restarted existing dw-scylla container")
+                    return True
+                # Container doesn't exist — create it
+                subprocess.Popen([
+                    "docker", "run", "-d",
+                    "--name", "dw-scylla",
+                    "-p", "9042:9042",
+                    "--restart", "unless-stopped",
+                    "scylladb/scylla:5.4",
+                    "--smp", "1", "--memory", "512M",
+                    "--overprovisioned", "1",
+                ])
+                log.info("[ScyllaDB] Started dw-scylla via Docker")
+                return True
+            except Exception as e:
+                log.warning(f"[ScyllaDB] Docker start failed: {e}")
+
+        # ── systemd (Linux only) ──────────────────────────────────────
+        if system == "Linux" and shutil.which("systemctl"):
+            for svc in ("scylla-server", "scylladb", "scylla"):
+                try:
+                    subprocess.Popen(["sudo", "systemctl", "start", svc])
+                    log.info(f"[ScyllaDB] Started via systemctl ({svc})")
+                    return True
+                except Exception:
+                    continue
+
+        log.warning(
+            "[ScyllaDB] Cannot auto-start — Docker not available and no systemd service found."
+            "  Install Docker and run:"
+            "    docker run -d --name dw-scylla -p 9042:9042 scylladb/scylla:5.4"
+        )
+        return False
 
     # ------------------------------------------------------------------
     # Schema helpers

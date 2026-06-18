@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DW Human Controller</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #080b12; overflow: hidden; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+    input[type=range] { accent-color: #06b6d4; }
+    select option { background: #0d1117; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .blink { animation: blink 1.4s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+  <div id="root" style="height:100vh"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    /* ── constants ────────────────────────────────────────────────────────── */
+    const WS_URL  = 'ws://localhost:8888/ws/human';
+    const API_URL = 'http://localhost:8888/api';
+
+    const GOD_ABILITIES = {
+      wither:         [['wither_skull','Wither Skull'],['blue_skull','Blue Skull'],
+                       ['dash','Dash'],['summon_wither_skeletons','Summon Skeletons'],
+                       ['explosion','Explosion'],['fly','Toggle Fly']],
+      ender_dragon:   [['dragon_breath','Dragon Breath'],['fireball','Fireball'],
+                       ['perch','Perch/Land'],['fly','Toggle Fly']],
+      warden:         [['sonic_boom','Sonic Boom'],['darkness','Darkness'],
+                       ['sniff','Sniff'],['burrow','Burrow'],['emerge','Emerge']],
+      elder_guardian: [['mining_fatigue','Mining Fatigue'],['laser_beam','Laser Beam'],
+                       ['thorn_attack','Thorn Attack'],['guardian_spikes','Guardian Spikes']],
+      oracle:         [['wisdom_aura','Wisdom Aura'],['foresight','Foresight'],
+                       ['teleport','Teleport'],['healing_wave','Healing Wave'],
+                       ['knowledge_beam','Knowledge Beam'],['fly','Toggle Fly']],
+      creaking:       [['toggle_underground','Underground'],['toggle_ceiling','Ceiling'],
+                       ['deploy_tentacles','Tentacles'],['life_steal','Life Steal'],
+                       ['tentacle_whip','Whip']],
+    };
+    const GOD_CLR = { wither:'#a855f7', ender_dragon:'#818cf8', warden:'#34d399',
+                      elder_guardian:'#22d3ee', oracle:'#fbbf24', creaking:'#f87171' };
+    const GOD_ICN = { wither:'💀', ender_dragon:'🐉', warden:'🌑',
+                      elder_guardian:'👁', oracle:'🔮', creaking:'🌿' };
+
+    /* ── tiny helpers ─────────────────────────────────────────────────────── */
+    function Dot({ on, label }) {
+      return (
+        <span style={{ display:'flex', alignItems:'center', gap:4 }}>
+          <span style={{
+            display:'inline-block', width:8, height:8, borderRadius:'50%',
+            background: on ? '#22c55e' : '#1e293b',
+            boxShadow: on ? '0 0 6px #22c55e' : 'none',
+          }} className={on ? 'blink' : ''} />
+          <span style={{ fontSize:9, color: on ? '#4ade80' : '#334155',
+                         textTransform:'uppercase', letterSpacing:2 }}>{label}</span>
+        </span>
+      );
+    }
+
+    function KeyPill({ code, label, sub, wide, keysRef, mouseRef }) {
+      const active = code === 'LMB' ? mouseRef.current.left
+                   : code === 'RMB' ? mouseRef.current.right
+                   : !!keysRef.current[code];
+      return (
+        <span style={{
+          display:'inline-flex', flexDirection:'column', alignItems:'center',
+          justifyContent:'center', borderRadius:4, border:'1px solid',
+          padding:'2px 5px', minWidth: wide ? 52 : 28,
+          fontSize:9, fontFamily:'monospace', userSelect:'none',
+          background: active ? '#06b6d420' : '#0d1117',
+          borderColor: active ? '#06b6d4' : '#1e293b',
+          color: active ? '#67e8f9' : '#475569',
+          transition:'background .07s, color .07s, border-color .07s',
+        }}>
+          <span style={{ fontWeight:'bold' }}>{label}</span>
+          {sub && <span style={{ color:'#334155', fontSize:8 }}>{sub}</span>}
+        </span>
+      );
+    }
+
+    function KeyVis({ keysRef, mouseRef, tick }) {
+      return (
+        <div style={{ display:'flex', flexWrap:'wrap', gap:3, fontSize:9 }}>
+          {[
+            ['KeyW','W','Fwd'], ['KeyA','A','L'], ['KeyS','S','Back'], ['KeyD','D','R'],
+          ].map(([c,l,s]) => <KeyPill key={c} code={c} label={l} sub={s} keysRef={keysRef} mouseRef={mouseRef}/>)}
+          <span style={{width:1,background:'#1e293b'}} />
+          <KeyPill code="Space"       label="SPC"  sub="Jump"   wide keysRef={keysRef} mouseRef={mouseRef}/>
+          <KeyPill code="ShiftLeft"   label="⇧"    sub="Sneak"  keysRef={keysRef} mouseRef={mouseRef}/>
+          <KeyPill code="ControlLeft" label="Ctrl" sub="Sprint"  keysRef={keysRef} mouseRef={mouseRef}/>
+          <KeyPill code="KeyQ"        label="Q"    sub="Drop"    keysRef={keysRef} mouseRef={mouseRef}/>
+          <KeyPill code="KeyE"        label="E"    sub="Inv"     keysRef={keysRef} mouseRef={mouseRef}/>
+          <KeyPill code="KeyF"        label="F"    sub="Swap"    keysRef={keysRef} mouseRef={mouseRef}/>
+          <span style={{width:1,background:'#1e293b'}} />
+          <KeyPill code="LMB" label="LMB" sub="Atk"  keysRef={keysRef} mouseRef={mouseRef}/>
+          <KeyPill code="RMB" label="RMB" sub="Use"  keysRef={keysRef} mouseRef={mouseRef}/>
+        </div>
+      );
+    }
+
+    /* ── main component ───────────────────────────────────────────────────── */
+    function HumanController() {
+      /* connection */
+      const [wsOk,  setWsOk]  = useState(false);
+      const [mcOk,  setMcOk]  = useState(false);
+      const [tcpOk, setTcpOk] = useState(false);
+
+      /* agents */
+      const [agents,    setAgents]    = useState([]);
+      const [selAgent,  setSelAgent]  = useState(null);
+      const [agentType, setAgentType] = useState('npc');
+      const [godType,   setGodType]   = useState(null);
+
+      /* ui */
+      const [tab,       setTab]       = useState('mc');
+      const [chat,      setChat]      = useState([]);
+      const [chatIn,    setChatIn]    = useState('');
+      const [sysLog,    setSysLog]    = useState([]);
+      const [hotbar,    setHotbar]    = useState(0);
+      const [locked,    setLocked]    = useState(false);
+      const [sensi,     setSensi]     = useState(2.0);
+      const [audioLvl,  setAudioLvl]  = useState(0);
+      const [bUrl,      setBUrl]      = useState('https://minecraft.wiki');
+      const [iUrl,      setIUrl]      = useState('');
+      const [kvTick,    setKvTick]    = useState(0);
+
+      /* refs (no re-render) */
+      const wsRef     = useRef(null);
+      const canvasRef = useRef(null);
+      const keysRef   = useRef({});
+      const mouseRef  = useRef({ dx:0, dy:0, left:false, right:false });
+      const hotRef    = useRef(0);
+      const senRef    = useRef(2.0);
+      const actxRef   = useRef(null);
+      const gainRef   = useRef(null);
+      const chatBot   = useRef(null);
+      const logBot    = useRef(null);
+
+      useEffect(() => { hotRef.current = hotbar; }, [hotbar]);
+      useEffect(() => { senRef.current = sensi;  }, [sensi]);
+      useEffect(() => { chatBot.current?.scrollIntoView({ behavior:'smooth' }); }, [chat]);
+      useEffect(() => { logBot.current?.scrollIntoView({ behavior:'smooth' });  }, [sysLog]);
+
+      /* logging */
+      const log = useCallback((msg, lvl='info') => {
+        const ts = new Date().toLocaleTimeString('en',{hour12:false});
+        setSysLog(p => [...p.slice(-299), {ts, msg, lvl}]);
+      }, []);
+
+      /* audio */
+      const ensureAudio = useCallback(() => {
+        if (actxRef.current) {
+          if (actxRef.current.state === 'suspended') actxRef.current.resume();
+          return actxRef.current;
+        }
+        const ctx  = new (window.AudioContext || window.webkitAudioContext)({ sampleRate:22050 });
+        const gain = ctx.createGain();
+        gain.gain.value = 0.9;
+        gain.connect(ctx.destination);
+        actxRef.current = ctx;
+        gainRef.current = gain;
+        return ctx;
+      }, []);
+
+      const playAudio = useCallback((b64) => {
+        try {
+          const ctx = ensureAudio();
+          const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+          const n   = raw.length >> 1;
+          if (n < 1) return;
+          const buf = ctx.createBuffer(1, n, 22050);
+          const ch  = buf.getChannelData(0);
+          const dv  = new DataView(raw.buffer);
+          let mx    = 0;
+          for (let i = 0; i < n; i++) {
+            const s = dv.getInt16(i<<1, true) / 32768;
+            ch[i] = s;
+            if (Math.abs(s) > mx) mx = Math.abs(s);
+          }
+          setAudioLvl(mx);
+          const src = ctx.createBufferSource();
+          src.buffer = buf;
+          src.connect(gainRef.current);
+          src.start();
+        } catch(_) {}
+      }, [ensureAudio]);
+
+      /* video */
+      const showFrame = useCallback((b64) => {
+        const cvs = canvasRef.current;
+        if (!cvs) return;
+        const ctx = cvs.getContext('2d');
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0, cvs.width, cvs.height);
+          ctx.fillStyle = 'rgba(0,0,0,0.04)';
+          for (let y = 0; y < cvs.height; y += 2) ctx.fillRect(0, y, cvs.width, 1);
+          URL.revokeObjectURL(img.src);
+        };
+        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        img.src = URL.createObjectURL(new Blob([bytes], { type:'image/jpeg' }));
+      }, []);
+
+      /* server messages */
+      const onMsg = useCallback((msg) => {
+        switch (msg.type) {
+          case 'hello':
+            setMcOk(!!msg.mc_connected); setTcpOk(!!msg.tcp_connected);
+            setAgentType(msg.agent_type || 'npc'); setGodType(msg.god_type || null);
+            break;
+          case 'mc_status':
+            setMcOk(!!msg.connected);
+            log(`Minecraft ${msg.connected ? 'connected ✅' : 'disconnected ❌'}`, msg.connected ? 'info' : 'warn');
+            break;
+          case 'tcp_status':
+            setTcpOk(!!msg.connected);
+            log(`TCP ${msg.connected ? 'connected ✅' : `offline — ${msg.msg || ''}`}`, msg.connected ? 'info' : 'warn');
+            break;
+          case 'agent_ws_status':
+            log(`Agent WS ready on port ${msg.port} — launch Minecraft now`);
+            break;
+          case 'vision':
+            showFrame(msg.data);
+            break;
+          case 'audio':
+            playAudio(msg.data);
+            break;
+          case 'chat_observation': case 'chat':
+            setChat(p => [...p.slice(-499), {
+              speaker: msg.speaker || '?',
+              body: msg.body || msg.text || '',
+              ts: new Date().toLocaleTimeString('en',{hour12:false}),
+            }]);
+            break;
+          case 'error':
+            log(msg.msg || msg.message || '?', 'error');
+            break;
+          default:
+            if (msg.type && msg.type !== 'pong') log(`[${msg.type}] ${JSON.stringify(msg).slice(0,100)}`);
+        }
+      }, [log, showFrame, playAudio]);
+
+      /* websocket */
+      useEffect(() => {
+        let ws, tid;
+        function conn() {
+          ws = new WebSocket(WS_URL);
+          ws.onopen    = () => { setWsOk(true);  log('Connected to controller server ✅'); };
+          ws.onclose   = () => { setWsOk(false); log('Server disconnected — retrying…', 'warn'); tid = setTimeout(conn, 3000); };
+          ws.onerror   = () => log('Cannot reach server. Run human_controller_server.py first.', 'error');
+          ws.onmessage = e  => { try { onMsg(JSON.parse(e.data)); } catch(_) {} };
+          wsRef.current = ws;
+        }
+        conn();
+        return () => { clearTimeout(tid); ws?.close(); };
+      }, [log, onMsg]);
+
+      /* fetch agents */
+      useEffect(() => {
+        fetch(`${API_URL}/agents`)
+          .then(r => r.json())
+          .then(d => { setAgents(d); log(`Loaded ${d.length} agent(s) from agents.json`); })
+          .catch(() => log('Cannot reach server — is human_controller_server.py running?', 'error'));
+      }, [log]);
+
+      /* keyboard */
+      useEffect(() => {
+        const dn = e => {
+          if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+          keysRef.current[e.code] = true;
+          if (e.code.startsWith('Digit')) {
+            const n = +e.code[5] - 1;
+            if (n >= 0 && n <= 8) { setHotbar(n); hotRef.current = n; }
+          }
+          if (locked) e.preventDefault();
+        };
+        const up = e => { keysRef.current[e.code] = false; };
+        window.addEventListener('keydown', dn);
+        window.addEventListener('keyup',   up);
+        return () => { window.removeEventListener('keydown', dn); window.removeEventListener('keyup', up); };
+      }, [locked]);
+
+      /* 10 Hz tick for key visualizer */
+      useEffect(() => {
+        const id = setInterval(() => setKvTick(t => t+1), 100);
+        return () => clearInterval(id);
+      }, []);
+
+      /* pointer lock */
+      useEffect(() => {
+        const chg = () => setLocked(document.pointerLockElement === canvasRef.current);
+        const mv  = e => {
+          if (document.pointerLockElement !== canvasRef.current) return;
+          mouseRef.current.dx += e.movementX;
+          mouseRef.current.dy += e.movementY;
+        };
+        const md = e => {
+          if (document.pointerLockElement !== canvasRef.current) return;
+          if (e.button === 0) mouseRef.current.left  = true;
+          if (e.button === 2) mouseRef.current.right = true;
+          e.preventDefault();
+        };
+        const mu = e => {
+          if (e.button === 0) mouseRef.current.left  = false;
+          if (e.button === 2) mouseRef.current.right = false;
+        };
+        document.addEventListener('pointerlockchange', chg);
+        document.addEventListener('mousemove',         mv);
+        document.addEventListener('mousedown',         md);
+        document.addEventListener('mouseup',           mu);
+        return () => {
+          document.removeEventListener('pointerlockchange', chg);
+          document.removeEventListener('mousemove',         mv);
+          document.removeEventListener('mousedown',         md);
+          document.removeEventListener('mouseup',           mu);
+        };
+      }, []);
+
+      const lockMouse   = useCallback(() => { canvasRef.current?.requestPointerLock(); ensureAudio(); }, [ensureAudio]);
+      const unlockMouse = useCallback(() => document.exitPointerLock(), []);
+
+      /* 20 Hz action loop */
+      useEffect(() => {
+        const id = setInterval(() => {
+          const ws = wsRef.current;
+          if (!ws || ws.readyState !== 1) return;
+          const k = keysRef.current, m = mouseRef.current;
+          ws.send(JSON.stringify({
+            type: 'action',
+            moveForward: (k.KeyW?1:0) - (k.KeyS?1:0),
+            moveStrafe:  (k.KeyD?1:0) - (k.KeyA?1:0),
+            yawDelta:   m.dx * senRef.current * 0.12,
+            pitchDelta: m.dy * senRef.current * 0.12,
+            flags: {
+              jump:      !!k.Space,
+              sneak:     !!(k.ShiftLeft || k.ShiftRight),
+              attack:    !!m.left,
+              use:       !!m.right,
+              drop:      !!k.KeyQ,
+              open_inv:  !!k.KeyE,
+              swap_hand: !!k.KeyF,
+              sprint:    !!(k.ControlLeft || k.ControlRight),
+            },
+            hotbarSlot: hotRef.current,
+          }));
+          mouseRef.current.dx = 0;
+          mouseRef.current.dy = 0;
+        }, 50);
+        return () => clearInterval(id);
+      }, []);
+
+      /* handlers */
+      const connectAgent = useCallback(async name => {
+        const a = agents.find(x => x.name === name);
+        if (!a) return;
+        try {
+          const r = await fetch(`${API_URL}/connect`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ name }),
+          });
+          const d = await r.json();
+          setSelAgent(d);
+          setAgentType(d.type || 'npc');
+          setGodType(d.god_type || null);
+          log(`Agent: ${d.agent} | type: ${d.type}${d.god_type?'/'+d.god_type:''} | tcp:${d.tcp_port} ws:${d.ws_port}`);
+          log('Waiting for Minecraft to connect…');
+        } catch(e) { log(`Connect failed: ${e.message}`, 'error'); }
+      }, [agents, log]);
+
+      const sendAbility = useCallback((name, p1=0, p2=0, p3=0) => {
+        wsRef.current?.send(JSON.stringify({ type:'ability', name, param1:p1, param2:p2, param3:p3 }));
+        log(`→ Ability: ${name}`);
+      }, [log]);
+
+      const sendScreen = useCallback(cmd => {
+        wsRef.current?.send(JSON.stringify({ type:'screen', command:cmd }));
+      }, []);
+
+      const tcpRetry = useCallback(() => {
+        fetch(`${API_URL}/tcp-retry`, { method:'POST' });
+        log('Retrying TCP…');
+      }, [log]);
+
+      const sendChat = useCallback(() => {
+        if (!chatIn.trim()) return;
+        setChat(p => [...p, {
+          speaker: selAgent?.agent || 'YOU',
+          body: chatIn,
+          ts: new Date().toLocaleTimeString('en',{hour12:false}),
+          self: true,
+        }]);
+        log(`Chat sent (local): ${chatIn}`);
+        setChatIn('');
+      }, [chatIn, selAgent, log]);
+
+      /* ── derived ─────────────────────────────────────────────────────── */
+      const gc      = godType ? (GOD_CLR[godType] || '#8b5cf6') : '#06b6d4';
+      const gi      = godType ? (GOD_ICN[godType] || '✨') : '';
+      const abils   = godType ? (GOD_ABILITIES[godType] || []) : [];
+
+      /* ── styles ──────────────────────────────────────────────────────── */
+      const S = {
+        root:    { display:'flex', flexDirection:'column', height:'100vh', background:'#080b12',
+                   color:'#e2e8f0', fontFamily:"'Segoe UI Mono','Cascadia Code',monospace", fontSize:12 },
+        header:  { display:'flex', alignItems:'center', gap:10, padding:'6px 14px',
+                   background:'#0d1117', borderBottom:'1px solid #1e293b', flexShrink:0 },
+        tabBar:  { display:'flex', gap:4, padding:'4px 12px',
+                   background:'#0a0e1a', borderBottom:'1px solid #1e293b', flexShrink:0 },
+        body:    { display:'flex', flex:1, overflow:'hidden' },
+        panel:   { display:'flex', flexDirection:'column', overflow:'hidden' },
+        hdr:     { color:'#06b6d4', fontWeight:900, fontSize:11, letterSpacing:3, textTransform:'uppercase' },
+        sep:     { width:1, background:'#1e293b', alignSelf:'stretch', margin:'0 4px' },
+        select:  { background:'#0d1117', border:'1px solid #334155', borderRadius:4, padding:'3px 7px',
+                   color:'#e2e8f0', fontSize:11, cursor:'pointer', outline:'none' },
+        tabBtn:  (active) => ({
+          padding:'3px 12px', borderRadius:4, fontSize:10, fontWeight:'bold',
+          textTransform:'uppercase', letterSpacing:2, cursor:'pointer', border:'1px solid',
+          background: active ? '#06b6d415' : 'transparent',
+          color:      active ? '#06b6d4'   : '#475569',
+          borderColor: active ? '#06b6d440' : 'transparent',
+        }),
+        secHdr: { fontSize:9, color:'#475569', textTransform:'uppercase', letterSpacing:2,
+                  padding:'5px 10px 3px', borderBottom:'1px solid #1e293b' },
+        btnSm:  (c='#334155') => ({
+          padding:'3px 9px', borderRadius:4, border:`1px solid ${c}`,
+          color: c === '#334155' ? '#94a3b8' : c, background:'transparent',
+          fontSize:9, cursor:'pointer', fontWeight:'bold', textTransform:'uppercase', letterSpacing:1,
+        }),
+        chatMsg: (self) => ({
+          padding:'2px 0', fontSize:11, lineHeight:1.5,
+          color: self ? '#67e8f9' : '#cbd5e1',
+        }),
+        logLine: (lvl) => ({
+          padding:'1px 0', fontSize:10, lineHeight:1.5,
+          color: lvl === 'error' ? '#fca5a5' : lvl === 'warn' ? '#fde68a' : '#64748b',
+        }),
+        input:   { flex:1, background:'#1e293b', border:'1px solid #334155', borderRadius:4,
+                   padding:'4px 8px', color:'#e2e8f0', fontSize:11, outline:'none' },
+        sendBtn: { padding:'4px 12px', borderRadius:4, background:'#06b6d4',
+                   color:'#000', fontSize:10, fontWeight:'bold', cursor:'pointer', border:'none' },
+      };
+
+      /* ── render ──────────────────────────────────────────────────────── */
+      return (
+        <div style={S.root}>
+
+          {/* ── HEADER ─────────────────────────────────────────────────── */}
+          <header style={S.header}>
+            <span style={S.hdr}>DW Controller</span>
+            <div style={S.sep} />
+
+            <select style={S.select}
+              value={selAgent?.agent || ''}
+              onChange={e => connectAgent(e.target.value)}>
+              <option value="">— Select Agent —</option>
+              {agents.map(a => (
+                <option key={a.name} value={a.name}>
+                  {a.type === 'god' ? (GOD_ICN[a.god_type] || '✨') : '👤'}{' '}
+                  {a.name}  ({a.type}{a.god_type ? '/'+a.god_type : ''})  :{a.tcp_port}
+                </option>
+              ))}
+            </select>
+
+            {godType && (
+              <span style={{ padding:'2px 9px', borderRadius:9999, fontSize:10, fontWeight:'bold',
+                background: gc+'18', border:`1px solid ${gc}50`, color: gc }}>
+                {gi} {godType}
+              </span>
+            )}
+
+            <div style={{ flex:1 }} />
+
+            <Dot on={wsOk}  label="SERVER" />
+            <div style={S.sep} />
+            <Dot on={tcpOk} label="TCP" />
+            <div style={S.sep} />
+            <Dot on={mcOk}  label="MC" />
+
+            {!tcpOk && selAgent && (
+              <button style={S.btnSm('#f59e0b')} onClick={tcpRetry}>Retry TCP</button>
+            )}
+            <button style={S.btnSm()} title="Reload agents"
+              onClick={() => fetch(`${API_URL}/agents`).then(r=>r.json()).then(setAgents)}>
+              ↻
+            </button>
+          </header>
+
+          {/* ── TABS ───────────────────────────────────────────────────── */}
+          <div style={S.tabBar}>
+            {[['mc','🎮 Minecraft'],['browser','🌐 Browser'],['log','📋 Log']].map(([id,lbl]) => (
+              <button key={id} style={S.tabBtn(tab===id)} onClick={() => setTab(id)}>{lbl}</button>
+            ))}
+          </div>
+
+          {/* ════════════════════════════════════ MINECRAFT TAB */}
+          {tab === 'mc' && (
+            <div style={{ ...S.body }}>
+
+              {/* ── left: video ────────────────────────────────────────── */}
+              <div style={{ ...S.panel, width:'58%', borderRight:'1px solid #1e293b' }}>
+
+                {/* canvas */}
+                <div style={{ position:'relative', flex:1, background:'#000', cursor:'crosshair', overflow:'hidden' }}
+                  onClick={lockMouse} onContextMenu={e => e.preventDefault()}>
+                  <canvas ref={canvasRef} width={640} height={360}
+                    style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+
+                  <div style={{ position:'absolute', top:8, left:10, fontSize:10,
+                    color:'#06b6d450', pointerEvents:'none', fontFamily:'monospace' }}>
+                    {selAgent ? `FEED · ${selAgent.agent}` : 'NO AGENT'}
+                  </div>
+
+                  {locked
+                    ? <div style={{ position:'absolute', top:8, right:10, fontSize:10,
+                        color:'#22c55e', pointerEvents:'none' }} className="blink">● MOUSE LOCKED</div>
+                    : <div style={{ position:'absolute', inset:0, display:'flex',
+                        alignItems:'center', justifyContent:'center', pointerEvents:'none' }}>
+                        <div style={{ padding:'8px 18px', borderRadius:8, fontSize:13, fontWeight:'bold',
+                          background:'rgba(0,0,0,.65)', border:'1px solid #06b6d440', color:'#06b6d4' }}>
+                          Click to aim camera &amp; enable audio
+                        </div>
+                      </div>
+                  }
+
+                  {!mcOk && (
+                    <div style={{ position:'absolute', bottom:14, left:10, fontSize:10,
+                      color:'#ef4444', pointerEvents:'none' }}>
+                      ⚠ Minecraft not connected
+                    </div>
+                  )}
+
+                  {/* audio level bar */}
+                  <div style={{ position:'absolute', bottom:0, left:0, right:0, height:3, background:'#0a0a0a' }}>
+                    <div style={{ height:'100%', background:'#06b6d4', transition:'width .07s',
+                      width: Math.min(100, audioLvl*250)+'%' }} />
+                  </div>
+                </div>
+
+                {/* controls strip */}
+                <div style={{ flexShrink:0, padding:'8px 10px', background:'#0d1117',
+                  borderTop:'1px solid #1e293b' }}>
+                  <KeyVis keysRef={keysRef} mouseRef={mouseRef} tick={kvTick} />
+                  <div style={{ display:'flex', gap:5, marginTop:7, flexWrap:'wrap', alignItems:'center' }}>
+                    <button style={S.btnSm()} onClick={() => sendScreen('inv')}>Open Inv [E]</button>
+                    <button style={S.btnSm()} onClick={() => sendScreen('close')}>Close Screen</button>
+                    {locked && (
+                      <button style={S.btnSm('#ef4444')} onClick={unlockMouse}>Release Mouse [ESC]</button>
+                    )}
+                    <span style={{ color:'#1e293b', fontSize:9, marginLeft:4 }}>1–9 = Hotbar</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── right panel ────────────────────────────────────────── */}
+              <div style={{ ...S.panel, flex:1 }}>
+
+                {/* hotbar + sensitivity */}
+                <div style={{ flexShrink:0, padding:'7px 10px', borderBottom:'1px solid #1e293b' }}>
+                  <div style={{ fontSize:9, color:'#334155', textTransform:'uppercase',
+                    letterSpacing:2, marginBottom:5 }}>Hotbar</div>
+                  <div style={{ display:'flex', gap:4 }}>
+                    {Array.from({length:9},(_,i) => (
+                      <button key={i}
+                        style={{ width:28, height:28, borderRadius:4, border:'1px solid',
+                          fontSize:10, fontWeight:'bold', cursor:'pointer',
+                          background: hotbar===i ? '#06b6d420' : '#0d1117',
+                          borderColor: hotbar===i ? '#06b6d4' : '#1e293b',
+                          color: hotbar===i ? '#06b6d4' : '#475569' }}
+                        onClick={() => { setHotbar(i); hotRef.current=i; }}>
+                        {i+1}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:7 }}>
+                    <span style={{ fontSize:9, color:'#334155', whiteSpace:'nowrap' }}>
+                      Sens {sensi.toFixed(1)}
+                    </span>
+                    <input type="range" min="0.1" max="10" step="0.1" value={sensi}
+                      onChange={e => setSensi(+e.target.value)}
+                      style={{ flex:1, height:3 }} />
+                  </div>
+                </div>
+
+                {/* god abilities */}
+                {abils.length > 0 && (
+                  <div style={{ flexShrink:0, padding:'7px 10px', borderBottom:'1px solid #1e293b',
+                    background: gc+'08' }}>
+                    <div style={{ fontSize:9, fontWeight:'bold', textTransform:'uppercase',
+                      letterSpacing:2, color:gc, marginBottom:6 }}>
+                      {gi} {godType}
+                    </div>
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:4 }}>
+                      {abils.map(([name, label]) => (
+                        <button key={name}
+                          style={{ padding:'4px 4px', borderRadius:4, border:`1px solid ${gc}50`,
+                            background: gc+'15', color:gc, fontSize:9, fontWeight:'bold',
+                            cursor:'pointer', textTransform:'uppercase', letterSpacing:0.5 }}
+                          onClick={() => sendAbility(name)}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display:'flex', gap:5, marginTop:6 }}>
+                      <button style={{ ...S.btnSm('#8b5cf6'), flex:1 }} onClick={() => sendAbility('transform')}>
+                        Transform
+                      </button>
+                      <button style={{ ...S.btnSm(), flex:1 }} onClick={() => sendAbility('revert')}>
+                        Revert
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* chat */}
+                <div style={S.secHdr}>Proximity Chat</div>
+                <div style={{ flex:1, overflowY:'auto', padding:'6px 10px' }}>
+                  {chat.length === 0
+                    ? <div style={{ color:'#1e293b', fontSize:11, marginTop:16, textAlign:'center' }}>
+                        Chat will appear here once Minecraft connects.
+                      </div>
+                    : chat.map((m, i) => (
+                      <div key={i} style={S.chatMsg(m.self)}>
+                        <span style={{ color:'#334155' }}>{m.ts} </span>
+                        <span style={{ fontWeight:'bold', color: m.self ? '#06b6d4' : '#fbbf24' }}>
+                          &lt;{m.speaker}&gt;
+                        </span>{' '}
+                        {m.body}
+                      </div>
+                    ))
+                  }
+                  <div ref={chatBot} />
+                </div>
+                <div style={{ flexShrink:0, display:'flex', gap:6, padding:'7px 10px',
+                  borderTop:'1px solid #1e293b' }}>
+                  <input style={S.input}
+                    placeholder={`Say as ${selAgent?.agent || '…'}`}
+                    value={chatIn}
+                    onChange={e => setChatIn(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && sendChat()} />
+                  <button style={S.sendBtn} onClick={sendChat}>Send</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ════════════════════════════════════ BROWSER TAB */}
+          {tab === 'browser' && (
+            <div style={{ ...S.panel, flex:1 }}>
+              <div style={{ flexShrink:0, display:'flex', gap:6, padding:'6px 10px',
+                background:'#0d1117', borderBottom:'1px solid #1e293b', alignItems:'center' }}>
+                <span style={{ fontSize:9, color:'#334155' }}>URL</span>
+                <input style={{ ...S.input }}
+                  value={bUrl} onChange={e => setBUrl(e.target.value)}
+                  onKeyDown={e => e.key==='Enter' && setIUrl(bUrl)} />
+                <button style={S.sendBtn} onClick={() => setIUrl(bUrl)}>Go</button>
+                {['https://minecraft.wiki','https://bugs.mojang.com'].map(u=>(
+                  <button key={u} style={S.btnSm()}
+                    onClick={() => { setBUrl(u); setIUrl(u); }}>
+                    {u.includes('wiki') ? 'MC Wiki' : 'MC Bugs'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ flex:1, position:'relative', background:'#060810' }}>
+                {iUrl
+                  ? <iframe src={iUrl} style={{ width:'100%', height:'100%', border:0 }} title="Browser"
+                      sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox" />
+                  : <div style={{ display:'flex', flexDirection:'column', alignItems:'center',
+                      justifyContent:'center', height:'100%', gap:10, color:'#1e293b' }}>
+                      <div style={{ fontSize:40 }}>🌐</div>
+                      <div style={{ fontSize:13 }}>Enter a URL and press Go</div>
+                      <div style={{ fontSize:10, color:'#0f172a' }}>
+                        Note: some sites block iframes. minecraft.wiki works well.
+                      </div>
+                    </div>
+                }
+              </div>
+            </div>
+          )}
+
+          {/* ════════════════════════════════════ LOG TAB */}
+          {tab === 'log' && (
+            <div style={{ flex:1, overflowY:'auto', padding:'8px 12px' }}>
+              {sysLog.length === 0
+                ? <span style={{ color:'#1e293b', fontStyle:'italic' }}>Log is empty.</span>
+                : sysLog.map((m,i) => (
+                  <div key={i} style={S.logLine(m.lvl)}>
+                    <span style={{ color:'#1e293b' }}>{m.ts} </span>
+                    <span style={{ color: m.lvl==='error'?'#ef4444':m.lvl==='warn'?'#f59e0b':'#06b6d4' }}>
+                      [{m.lvl.toUpperCase()}]
+                    </span>{' '}
+                    {m.msg}
+                  </div>
+                ))
+              }
+              <div ref={logBot} />
+            </div>
+          )}
+
+          {/* ── STATUS BAR ─────────────────────────────────────────────── */}
+          <div style={{ flexShrink:0, display:'flex', alignItems:'center', gap:12, padding:'3px 14px',
+            background:'#0a0e1a', borderTop:'1px solid #0d1117', fontSize:9, color:'#1e293b' }}>
+            <span>DW Human Controller</span>
+            {selAgent && <>
+              <span>·</span>
+              <span style={{ color:'#334155' }}>{selAgent.agent} tcp:{selAgent.tcp_port} ws:{selAgent.ws_port}</span>
+            </>}
+            <div style={{ flex:1 }} />
+            <span>WASD=Move · SPC=Jump · ⇧=Sneak · Ctrl=Sprint · Q=Drop · E=Inv · F=Swap · 1–9=Hotbar · LMB=Attack · RMB=Use</span>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      React.createElement(HumanController)
+    );
+  </script>
+</body>
+</html>

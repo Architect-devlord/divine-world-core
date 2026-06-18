@@ -10,6 +10,10 @@ import numpy as np
 from gymnasium import spaces
 from typing import Dict, Any, Optional
 
+# FIX Step 2h/11: observation space must match Phase 6 obs_builder, not the
+# old 50-dim placeholder, or the policy trained here will mismatch inference.
+from ai_core.obs_builder import OBS_DIM
+
 class DivineWorldEnv(gym.Env):
     """
     Gymnasium wrapper around NPCAgent.
@@ -24,10 +28,13 @@ class DivineWorldEnv(gym.Env):
         self.agent = agent
         self.render_mode = render_mode
 
-        # Observation space
+        # Observation space — FIX Step 2h/11: was hardcoded (50,) with a generous
+        # [-10,10] range left over from the old ad-hoc format. obs_builder.py's
+        # 128-dim vector is normalised to [0,1] (a few signed terms reach [-1,1]),
+        # so the bounds are tightened to match what's actually produced.
         self.observation_space = spaces.Box(
-            low=-10.0, high=10.0,
-            shape=(50,),
+            low=-1.0, high=1.0,
+            shape=(OBS_DIM,),
             dtype=np.float32
         )
 

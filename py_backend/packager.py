@@ -79,14 +79,17 @@ class AgentPackager:
     # ------------------------------------------------------------------
 
     def _find_frontend_dir(self) -> Optional[Path]:
-        cwd  = Path.cwd()
-        root = cwd.parent if cwd.name == "py_backend" else cwd
+        # Use Config.BASE_DIR (project root) so path is stable regardless of cwd
+        root = Config.BASE_DIR
+        # Config.FRONTEND_DIR is the canonical location
+        if Config.FRONTEND_DIR.exists() and (Config.FRONTEND_DIR / "package.json").exists():
+            log.info(f"✅ Frontend (Config): {Config.FRONTEND_DIR}")
+            return Config.FRONTEND_DIR
         for path in [
-            root / "react-app",
-            root / "dw_agent" / "react-app",
             root / "dw_agent" / "electron" / "react-app",
+            root / "dw_agent" / "react-app",
+            root / "react-app",
             root / "frontend",
-            cwd  / "react-app",
         ]:
             if path.exists() and (path / "package.json").exists():
                 log.info(f"✅ Frontend: {path}")
@@ -95,8 +98,11 @@ class AgentPackager:
         return None
 
     def _find_mod_jar(self) -> Optional[Path]:
-        cwd  = Path.cwd()
-        root = cwd.parent if cwd.name == "py_backend" else cwd
+        # Config.MOD_JAR is derived from __file__ so it's always correct
+        if Config.MOD_JAR and Config.MOD_JAR.exists():
+            log.info(f"✅ Mod jar (Config): {Config.MOD_JAR}")
+            return Config.MOD_JAR
+        root = Config.BASE_DIR
         for base in [
             root / "DivineWorld" / "build" / "libs",
             root / "DivineWorld" / "build" / "reobfJar" / "libs",
@@ -830,20 +836,18 @@ if __name__ == "__main__":
         for warn in preflight_warnings:
             log.warning(f"⚠️  Pre-flight: {warn}")
 
-        cwd  = Path.cwd()
-        root = cwd.parent if cwd.name == "py_backend" else cwd
-        ai_core_path    = root / "ai_core"
-        py_backend_path = root / "py_backend"
-        if not ai_core_path.exists():
-            alt = py_backend_path / "ai_core"
-            if alt.exists():
-                ai_core_path = alt
+        # Use Config-derived paths — stable regardless of working directory
+        root            = Config.BASE_DIR
+        py_backend_path = Config.PY_BACKEND_DIR
+        ai_core_path    = Config.AI_CORE_DIR       # PY_BACKEND_DIR / "ai_core"
+
         if not ai_core_path.exists():
             raise FileNotFoundError(f"ai_core not found: {ai_core_path}")
         if not py_backend_path.exists():
             raise FileNotFoundError(f"py_backend not found: {py_backend_path}")
 
-        rl_path    = root / "rl"
+        # USER FIX: rl is inside py_backend, not at the project root
+        rl_path    = py_backend_path / "rl"
         utils_path = py_backend_path / "utils"
 
         # ── Directories for PyInstaller intermediate/output ────────────

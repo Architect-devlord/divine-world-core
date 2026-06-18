@@ -1,4 +1,5 @@
 // src/main/java/com/divineworld/events/DWEventHandler.java
+// DivineWorld server mod
 package com.divineworld.events;
 
 import com.divineworld.DWMod;

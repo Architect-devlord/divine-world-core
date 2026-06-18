@@ -169,127 +169,90 @@ logging.getLogger().addHandler(_gui_log_handler)
 # Minecraft server integration
 # =============================================================================
 
-class MinecraftServerIntegration:
-    def __init__(self):
-        self.server_folder:       Optional[Path] = None
-        self.usercache_path:      Optional[Path] = None
-        self.usernamecache_path:  Optional[Path] = None
+# =============================================================================
+# FIX 1: MinecraftServerIntegration collapsed — was vestigial after usercache
+# removal. server_folder is now read directly from Config.SERVER_FOLDER.
+# FIX 2: Gender detection replaced — was a hardcoded 10-name set that would
+# misclassify any female agent not in the list. Now uses agents.json as the
+# single source of truth: if the name is already registered its gender is
+# preserved; for new names the caller must supply gender explicitly.
+# =============================================================================
 
-    def get_server_folder(self) -> Path:
-        try:
-            folder = Path(Config.SERVER_FOLDER)
-            if folder.is_dir():
-                return folder
-        except Exception:
-            pass
-        folder = Path(
-            input("Enter ABSOLUTE path of the Minecraft server folder: ").strip()
-        )
-        if not folder.is_absolute() or not folder.is_dir():
-            raise RuntimeError("Invalid Minecraft server folder")
-        return folder
-
-    def set_server_folder(self, folder: Path):
-        self.server_folder = folder
-        if folder and folder.exists():
-            self.usercache_path     = folder / "usercache.json"
-            self.usernamecache_path = folder / "usernamecache.json"
-            log.info(f"Server folder: {folder}")
-        else:
-            self.usercache_path     = None
-            self.usernamecache_path = None
-            log.warning(f"Server folder does not exist: {folder}")
-
-    def list_registered_agents(self) -> List[Dict[str, Any]]:
-        agents: List[Dict] = []
-        if self.usercache_path and self.usercache_path.exists():
-            try:
-                data = json.loads(self.usercache_path.read_text(encoding="utf-8"))
-                for e in data:
-                    agents.append({"agent_id": e.get("name"),
-                                   "uuid": e.get("uuid"), "type": "npc"})
-            except Exception as e:
-                log.warning(f"usercache read error: {e}")
-        return agents
-
-    def register_agent(self, agent_id: str, agent_uuid: str,
-                        agent_type: str = "npc",
-                        custom_name: Optional[str] = None):
-        display = (custom_name if custom_name and custom_name != "Unnamed"
-                   else agent_id)
-
-        self._register_in_agents_json(agent_id, agent_type, custom_name)
-
-        if not self.server_folder or not self.server_folder.exists():
-            log.warning("Server folder not set — skipping usercache registration")
-            return
-
-        # usercache.json
-        uc = []
-        if self.usercache_path and self.usercache_path.exists():
-            try:
-                uc = json.loads(self.usercache_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        if not any(e.get("name") == agent_id for e in uc):
-            uc.append({"name": agent_id, "uuid": agent_uuid,
-                       "expiresOn": "2099-12-31 23:59:59 +0000"})
-            try:
-                self.usercache_path.write_text(
-                    json.dumps(uc, indent=2), encoding="utf-8"
-                )
-                log.info(f"✅ Registered in usercache.json: {agent_id}")
-            except Exception as e:
-                log.warning(f"usercache write error: {e}")
-
-        # usernamecache.json
-        unc: Dict = {}
-        if self.usernamecache_path and self.usernamecache_path.exists():
-            try:
-                unc = json.loads(
-                    self.usernamecache_path.read_text(encoding="utf-8")
-                )
-            except Exception:
-                pass
-        if agent_id not in unc:
-            unc[agent_id] = agent_uuid
-            try:
-                self.usernamecache_path.write_text(
-                    json.dumps(unc, indent=2), encoding="utf-8"
-                )
-                log.info(f"✅ Registered in usernamecache.json: {agent_id}")
-            except Exception as e:
-                log.warning(f"usernamecache write error: {e}")
-
-    def _register_in_agents_json(self, agent_id: str, agent_type: str,
-                                   custom_name: Optional[str]):
-        display = (custom_name if custom_name and custom_name != "Unnamed"
-                   else agent_id)
+def list_registered_agents() -> List[Dict[str, Any]]:
+    """Return all agents registered in agents.json."""
+    try:
         mgr = get_agents_manager()
-        if agent_type.startswith("god_"):
-            god_type = agent_type[len("god_"):]   # e.g. "god_wither" → "wither"
-            mgr.register_god(display, god_type)
+        result: List[Dict[str, Any]] = []
+        for name in mgr.get_all_male_npcs():
+            result.append({"agent_id": name, "type": "npc_male"})
+        for name in mgr.get_all_female_npcs():
+            result.append({"agent_id": name, "type": "npc_female"})
+        for name in mgr.get_all_gods():
+            result.append({"agent_id": name, "type": "god"})
+        return result
+    except Exception as e:
+        log.warning(f"list_registered_agents error: {e}")
+        return []
+
+
+def register_agent(agent_id: str, agent_uuid: str,
+                   agent_type: str = "npc",
+                   custom_name: Optional[str] = None,
+                   gender: Optional[str] = None) -> None:
+    """
+    Register agent in agents.json only.
+    usercache.json / usernamecache.json are managed by the MC server.
+
+    FIX 2: gender parameter is now explicit (passed from the spawn request).
+    Fallback order when gender is None:
+      1. agents.json lookup — if the name is already registered, its existing
+         gender is preserved automatically (no action needed).
+      2. Default to "male" with a warning so callers know to pass gender.
+    """
+    display = (custom_name if custom_name and custom_name not in ("", "Unnamed")
+               else agent_id)
+    mgr = get_agents_manager()
+
+    if agent_type.startswith("god_"):
+        god_type = agent_type[len("god_"):]
+        mgr.register_god(display, god_type)
+        log.info(f"Registered god agent: {display} ({god_type})")
+        return
+
+    # NPC path — resolve gender
+    resolved_gender = gender  # caller-supplied (most reliable)
+    if not resolved_gender:
+        # Check if already in agents.json — preserve existing registration
+        if display in mgr.get_all_male_npcs():
+            resolved_gender = "male"
+        elif display in mgr.get_all_female_npcs():
+            resolved_gender = "female"
         else:
-            _female_hints = {
-                "eve", "alice", "diana", "emily", "fiona",
-                "grace", "hannah", "iris", "julia", "kate",
-            }
-            gender = (
-                "female"
-                if display.lower() in _female_hints
-                else "male"
+            resolved_gender = "male"
+            log.warning(
+                f"register_agent: no gender supplied for new NPC '{display}' "
+                f"— defaulting to 'male'. Pass gender= from the spawn request."
             )
-            mgr.register_npc(display, gender)
+
+    mgr.register_npc(display, resolved_gender)
+    log.info(f"Registered NPC: {display} ({resolved_gender})")
 
 
-server_integration = MinecraftServerIntegration()
+# Thin compatibility shim so existing code that imports server_integration
+# still works without changes to call sites.
+class _ServerIntegrationShim:
+    """Backward-compat wrapper — delegates to module-level functions."""
+    @property
+    def server_folder(self) -> Path:
+        return Config.SERVER_FOLDER if Config.SERVER_FOLDER.exists() else None
 
-try:
-    _sf = server_integration.get_server_folder()
-    server_integration.set_server_folder(_sf)
-except Exception as _e:
-    log.critical(f"❌ Minecraft server folder init failed: {_e}")
-    sys.exit(1)
+    def list_registered_agents(self): return list_registered_agents()
+
+    def register_agent(self, *args, **kwargs): return register_agent(*args, **kwargs)
+
+
+server_integration = _ServerIntegrationShim()
+log.info(f"Server folder: {Config.SERVER_FOLDER}")
 
 
 # =============================================================================
@@ -360,7 +323,8 @@ class AgentProcessManager:
                     agent_id, agent_type, custom_name
                 )
                 server_integration.register_agent(
-                    username, agent_uuid, agent_type, custom_name
+                    username, agent_uuid, agent_type, custom_name,
+                    gender=locals().get("gender")   # FIX 2: pass caller-supplied gender
                 )
 
                 # UltimMC setup is intentionally NOT called here.
@@ -1761,23 +1725,22 @@ async def save_agent_config(agent_id: str, request: Request):
 
 @app.post("/api/server/configure")
 async def configure_server_folder():
-    registered = server_integration.list_registered_agents()
+    registered = list_registered_agents()
     return {
         "status": "success",
-        "message": "Server folder configured at startup",
-        "server_folder": str(server_integration.server_folder),
+        "message": "Server folder read from Config",
+        "server_folder": str(Config.SERVER_FOLDER),
         "existing_agents": registered,
     }
 
 
 @app.get("/api/server/status")
 async def get_server_status():
-    if not server_integration.server_folder:
-        return {"status": "not_configured"}
-    registered = server_integration.list_registered_agents()
+    folder = Config.SERVER_FOLDER
+    registered = list_registered_agents()
     return {
-        "status": "configured",
-        "server_folder": str(server_integration.server_folder),
+        "status": "configured" if folder.exists() else "folder_missing",
+        "server_folder": str(folder),
         "registered_agents": registered,
         "agent_count": len(registered),
     }

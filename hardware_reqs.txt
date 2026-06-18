@@ -1,0 +1,73 @@
+What Each Agent Actually Does (the load profile)
+Per normal agent (one Python subprocess):
+ComponentRAMCPU loadPython interpreter + FastAPI/uvicorn~150MBbaselineWorldModel (6-layer multimodal Transformer)~300MBheavy — deliberationTransformerPolicy (SB3)~80MBmediumSelfSupervisedTrainer optimizer state~200MBheavy — backpropContinualLearner (Avalanche) + experience buffer~60MBmediumPolicyBridge + cl_head~10MBlightSkillTracker + misc~20MBlightTotal per normal agent~820MBsignificant
+The critical CPU spike is deliberation — at horizon=12, n_trials=40, that's 480 WorldModel forward passes per deliberation event. On a modern CPU core with a ~10M parameter Transformer, that's roughly 1–2 seconds per deliberation. Deliberation fires every ~5–10 cognitive cycles, so roughly every 5–10 seconds per agent. 20 agents staggered = near-constant load across cores.
+Per god agent (excl. oracle which is on Pi):
+
+Same architecture + GodAbilityHead + heavier deliberation parameters. Estimate ~1.4GB RAM, ~1.5× CPU load of a normal agent. Assuming 4 god types: ~5.5GB RAM.
+Minecraft Paper server (25 agent-players + plugin):
+
+The Java plugin routes HTTP/WebSocket to 25 agent ports per tick. ~10–12GB Java heap, 4 dedicated cores minimum.
+ScyllaDB:
+
+25 agents writing memory events continuously. Needs NVMe storage — ScyllaDB's latency degrades badly on spinning disk. ~8GB RAM, 4 cores, NVMe mandatory.
+
+Total Memory Calculation
+20 normal agents  × 820MB     =  16.4GB
+4 god agents      × 1.4GB     =   5.6GB
+Minecraft server               =  12.0GB
+ScyllaDB                       =   8.0GB
+OS + monitoring + buffers      =   6.0GB
+────────────────────────────────────────
+Minimum total                  =  48.0GB
+Comfortable headroom (+33%)    =  64.0GB
+Growth room (future agents)    =  96-128GB
+RAM is the hard constraint. Everything else scales from it.
+
+CPU Core Calculation
+25 agent processes (deliberation staggered)  =  20–28 cores under load
+Minecraft Paper server                       =   4–6 cores
+ScyllaDB                                     =   4 cores
+OS + monitoring                              =   2 cores
+──────────────────────────────────────────────────────────
+Minimum                                      =  30–40 cores
+Comfortable                                  =  48–64 cores
+
+Hardware Options
+🟡 Minimum Viable (~$2,500–3,500)
+Runs it. Will be tight under full load.
+Part            Spec
+CPU             AMD Ryzen 9 7950X (16 cores / 32 threads)
+RAM             128GB DDR5 (4×32GB)
+Storage         2TB Samsung 990 Pro NVMe
+GPU              None (CPU inference, add later)
+Network         Standard GbE to Pi
+Bottleneck: 16 cores for 25 processes is tight. Deliberation cycles will queue. Expect agent response latency to stretch to 3–5 seconds under full load. Workable for development, not ideal for running continuously.
+
+🟢 Recommended (~$4,500–6,500)
+Runs everything comfortably with headroom.
+Part            Spec
+CPU             AMD Ryzen Threadripper 7960X (24 cores / 48 threads)
+RAM             128GB DDR5 ECC (upgradeable to 256GB on this platform)
+Motherboard     TRX50 chipset (ASRock or Asus Pro WS)
+Storage         2TB Samsung 990 Pro NVMe (primary) + 4TB HDD (logs/backups)
+GPU             None initially — see GPU note below
+Network         1GbE to Pi is fine
+PSU             1000W 80+ Gold
+48 threads comfortably covers 25 agent processes, Minecraft, ScyllaDB, and OS simultaneously. The ECC platform matters here because agents save brain capsules every 60 seconds — a memory error corrupting a capsule mid-write silently breaks an agent.
+
+🔵 Future-Proof (~$8,000–12,000)
+For when you add more agents, human players, or a model serving layer.
+Part            Spec
+CPU             AMD Threadripper PRO 7965WX (24 cores / 48 threads) or 7985WX (64 cores)
+RAM             256GB DDR5 ECC (8-channel, expandable to 2TB on PRO platform)
+Storage         2× 2TB Samsung 990 Pro NVMe in RAID-1 (brain capsule safety) + 8TB HDD
+GPU             RTX 4090 24GB (for when model serving layer is added)
+Network         2.5GbE to Pi, 10GbE internal if multi-machine later
+
+On GPU — Why Not Now
+The current architecture runs one process per agent with no shared GPU state. If you add a GPU today, all 25 processes will fight over CUDA context switches, which is often slower than CPU for small Transformers at this batch size (1 sample per agent per step). The GPU becomes valuable when you have a model serving layer — one process that owns the GPU and queues inference requests from agents. That's future architectural work (not in the current plan).
+When GPU becomes worth it: once the model serving layer exists, a single RTX 4090 (24GB VRAM) could serve all 25 agents' WorldModel inference in batches of 25, reducing deliberation time from ~1.5s to ~50ms per agent. At that point it's transformative. For now it's premature.
+
+Pi Oracle Connection
+Nothing to worry about here. The oracle's observation payload is tiny: 128 floats × 4 bytes = 512 bytes per request. Even at 10 deliberation requests per second, that's 5KB/s. Standard LAN with <5ms RTT is all you need. Keep the Pi on the same local network and it's a non-issue. The only thing worth checking is that your router doesn't introduce jitter — give the Pi a static IP so the agent's HTTP client doesn't hit DNS on every call.

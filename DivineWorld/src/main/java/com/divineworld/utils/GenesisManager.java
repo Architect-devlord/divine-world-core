@@ -1,4 +1,5 @@
 // src/main/java/com/divineworld/utils/GenesisManager.java
+// DivineWorld server mod
 package com.divineworld.utils;
 
 import com.divineworld.DWMod;

@@ -1,4 +1,5 @@
 // src/main/java/com/divineworld/commands/DivineCommands.java
+// DivineWorld server mod
 package com.divineworld.commands;
 
 import com.divineworld.DWMod;

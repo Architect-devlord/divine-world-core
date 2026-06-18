@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/DWMod.java
+// DivineWorld server mod
 package com.divineworld;
 
 import com.divineworld.commands.CommandRegistrar;
@@ -55,8 +57,9 @@ public class DWMod {
         // CRITICAL: Initialize Oracle BEFORE any events
         initializeOracle();
 
-        // Register entities
+        // Register custom entities (server + client entity type registry)
         ModEntities.ENTITIES.register(modBus);
+        // NOTE: EntityAttributeRegistrar is @Mod.EventBusSubscriber(Bus.MOD) — auto-registered
 
         // Setup method for mod lifecycle
         modBus.addListener(this::setup);
@@ -77,6 +80,7 @@ public class DWMod {
         LOGGER.info("  ✅ Tag-Based Entity Tracking");
         LOGGER.info("  ✅ Genesis & Divine Reset");
         LOGGER.info("  ✅ God Entity System");
+        LOGGER.info("  ✅ GeckoLib Creaking God (divineworld:ai_creaking)");
         LOGGER.info("  ✅ Oracle System (ENHANCED)");
         LOGGER.info("  ✅ AI Player Management");
         LOGGER.info("=".repeat(60));

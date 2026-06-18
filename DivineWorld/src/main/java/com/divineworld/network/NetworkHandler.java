@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/network/NetworkHandler.java
+// DivineWorld server mod
 package com.divineworld.network;
 
 import net.minecraft.resources.ResourceLocation;

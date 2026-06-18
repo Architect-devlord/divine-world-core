@@ -15,6 +15,7 @@ Uses:
 import torch
 import torch.nn as nn
 import numpy as np
+from collections import deque
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 import logging
@@ -23,7 +24,7 @@ try:
     from avalanche.benchmarks.utils import AvalancheTensorDataset
     from avalanche.training.supervised.strategy_wrappers import Naive, Replay, EWC, LwF
     from avalanche.models import SimpleMLP
-    from avalanche.evaluation.metrics import accuracy_metrics, loss_metrics
+    from avalanche.evaluation.metrics import loss_metrics
     from avalanche.logging import InteractiveLogger
     from avalanche.training.plugins import EvaluationPlugin
     AVALANCHE_AVAILABLE = True
@@ -103,7 +104,8 @@ class ContinualLearner:
         self.memory_size = memory_size
 
         # Dimensions
-        self.obs_dim = 50
+        # FIX Step 2h: was 50 — must match Phase 6 obs_builder.OBS_DIM (128)
+        self.obs_dim = 128
         self.action_dim = 13   # FIX: must match TransformerPolicy.BASE_DIM
 
         # Networks
@@ -146,8 +148,13 @@ class ContinualLearner:
         criterion = nn.MSELoss()
 
         # Evaluation plugin
+        # FIX Step 2g: accuracy_metrics() is a classification metric (argmax
+        # comparison) — meaningless for our continuous 13-dim action vectors
+        # and a source of silent exceptions on some output shapes. Replaced
+        # with a plain rolling MSE deque the agent/cognitive_loop can read
+        # directly via get_recent_mse() / get_avg_mse().
+        self._mse_history: deque = deque(maxlen=100)
         self.eval_plugin = EvaluationPlugin(
-            accuracy_metrics(minibatch=True, epoch=True, experience=True, stream=True),
             loss_metrics(minibatch=True, epoch=True, experience=True, stream=True),
             loggers=[InteractiveLogger()]
         )
@@ -331,6 +338,21 @@ class ContinualLearner:
             # Train on experience
             results = self.strategy.train(dataset, num_workers=0)
 
+            # FIX Step 2g: record a plain rolling MSE value from whatever loss
+            # metric Avalanche logged this round. Avalanche's exact key naming
+            # varies by version, so search defensively rather than hardcoding
+            # one key — this is read by get_recent_mse()/get_avg_mse() instead
+            # of the removed accuracy_metrics().
+            try:
+                loss_vals = [
+                    float(v) for k, v in (results or {}).items()
+                    if 'loss' in k.lower() and isinstance(v, (int, float))
+                ]
+                if loss_vals:
+                    self._mse_history.append(sum(loss_vals) / len(loss_vals))
+            except Exception as _me:
+                log.debug(f"MSE history update skipped: {_me}")
+
             # Update statistics
             self.stats['total_updates'] += 1
 
@@ -452,6 +474,15 @@ class ContinualLearner:
             'buffer_size': len(self.experience_buffer),
             'strategy': self.strategy_name
         }
+
+    def get_recent_mse(self) -> List[float]:
+        """FIX Step 2g: rolling MSE values (replaces removed accuracy_metrics)."""
+        return list(self._mse_history)
+
+    def get_avg_mse(self) -> float:
+        """Mean of the rolling MSE window, or 0.0 if no updates recorded yet."""
+        return (sum(self._mse_history) / len(self._mse_history)
+                if self._mse_history else 0.0)
 
 
 # Convenience function for agent integration

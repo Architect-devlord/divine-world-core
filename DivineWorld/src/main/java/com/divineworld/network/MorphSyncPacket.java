@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/network/MorphSyncPacket.java
+// DivineWorld server mod
 package com.divineworld.network;
 
 import com.divineworld.DWMod;

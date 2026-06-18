@@ -78,6 +78,31 @@ def _event_to_text(event: dict) -> str:
     return ''
 
 
+def _get_dominant_event(agent) -> Optional[str]:
+    """
+    FIX Step 9 — return the most frequent memory-event type from the last
+    30 events. This is the proxy "domain" key used to attribute GRPO reward
+    history to a behavioural category (e.g. 'combat', 'block_broken') —
+    pure self-attribution from the agent's own memory stream, never an
+    externally-given label.
+
+    Confirmed against agent.py: agent.memory.events is a real, already-used
+    attribute (perceive() reads len(self.memory.events) directly), not a
+    method — no .recent_events() call exists on Memory.
+    """
+    try:
+        events = list(getattr(agent.memory, 'events', []))[-30:]
+        counts: Dict[str, int] = {}
+        for e in events:
+            t = e.get('type', '')
+            if not t:
+                continue
+            counts[t] = counts.get(t, 0) + 1
+        return max(counts, key=counts.get) if counts else None
+    except Exception:
+        return None
+
+
 class CognitiveState:
     """Tracks agent's cognitive state across cycles."""
 
@@ -126,6 +151,30 @@ class CognitiveLoop:
         self.last_action_time   = 0.0
         self.last_speech_time   = 0.0
         self.last_learning_time = 0.0
+
+        # FIX Step 8 — N=5 sustained-interest counter before entering
+        # PolicyBridge learning mode. A single surprising tick must not be
+        # enough; the agent needs sustained curiosity+surprise across
+        # several consecutive cognitive cycles.
+        self._curiosity_surprise_streak:      int   = 0
+        self._LEARNING_MODE_THRESHOLD_CYCLES: int   = 5
+        self._CURIOSITY_MIN:                  float = 0.65
+        self._SURPRISE_MIN:                   float = 0.30
+
+        # FIX Step 9 — per-domain reward history feeding the specialisation
+        # signal (Path 2 of _resolve_active_focus_task). Keyed by the
+        # dominant recent memory-event type, not by any externally-given
+        # label — this is pure self-attribution.
+        self._domain_reward_history: Dict[str, List[float]] = {}
+
+        # FIX Step 6/7/10 — most recent deliberation result + the observation
+        # it was computed from, threaded through to GRPO (Step 7) and
+        # SkillTracker (Step 10). Storing on the loop instance is the
+        # least-invasive wiring point given _decide()/_execute_action()'s
+        # current call shape.
+        self.agent._last_deliberation     = None
+        self.agent._last_deliberation_obs = None
+        self.agent._last_sst_surprise     = 0.0
 
         # Thresholds (personality-adjusted)
         self._update_thresholds()
@@ -565,6 +614,34 @@ class CognitiveLoop:
         else:
             thoughts['focus'] = 'observation'
 
+        # ── Step 8 — sustained curiosity+surprise → PolicyBridge learning ──
+        # mode. A single surprising tick must not be enough to commit the
+        # cl_head to practising something; only N=5 consecutive cycles of
+        # BOTH curiosity AND surprise above threshold count as genuine,
+        # sustained interest rather than a momentary spike.
+        bridge = getattr(self.agent, 'policy_bridge', None)
+        if bridge is not None:
+            emotions  = self.agent.emotion.snapshot()
+            curiosity = emotions.get('curiosity', 0.0)
+            surprise  = getattr(self.agent, '_last_sst_surprise', 0.0)
+
+            if curiosity > self._CURIOSITY_MIN and surprise > self._SURPRISE_MIN:
+                self._curiosity_surprise_streak += 1
+            else:
+                self._curiosity_surprise_streak = 0
+
+            if self._curiosity_surprise_streak >= self._LEARNING_MODE_THRESHOLD_CYCLES:
+                if not bridge.is_in_learning_mode():
+                    focus = self._resolve_active_focus_task()
+                    if focus:
+                        self.agent.active_focus_task = focus
+                        bridge.set_learning_mode(True, focus)
+                        self._curiosity_surprise_streak = 0  # reset after trigger
+            else:
+                if bridge.is_in_learning_mode():
+                    bridge.set_learning_mode(False)
+                    self.agent.active_focus_task = None
+
         return thoughts
 
     # =========================================================================
@@ -601,12 +678,17 @@ class CognitiveLoop:
                 )
 
         # Action (normal urgency or deliberation found something worth doing)
+        # FIX Step 2e: energy_level decays every tick (see _execute_continual_
+        # learning_async) but was never read anywhere — a tired agent acted
+        # exactly as fast as a fresh one. Effective cooldown now grows as
+        # energy approaches its floor (0.3), capping the slowdown at ~3.3x.
+        effective_cooldown = self.action_cooldown / max(0.3, self.state.energy_level)
         if perception['urgency'] > 0.6:
-            if now - self.last_action_time > self.action_cooldown:
+            if now - self.last_action_time > effective_cooldown:
                 reflection['should_act'] = True
         elif thoughts.get('deliberation') is not None:
             if (thoughts['deliberation'].best_action is not None and
-                    now - self.last_action_time > self.action_cooldown):
+                    now - self.last_action_time > effective_cooldown):
                 reflection['should_act'] = True
 
         # Web browsing
@@ -650,6 +732,15 @@ class CognitiveLoop:
                                 'deliberation': thoughts.get('deliberation'),
                             },
                             priority=0.7)
+
+            # FIX Step 7 — persist the deliberation + the observation it was
+            # computed from so _continual_learning_worker() can run GRPO on
+            # it later, and so _execute_action() can pass it to SkillTracker
+            # (Step 10). last_obs is the most recently perceived 128-dim
+            # vector — it's the same observation _think()'s deliberation call
+            # used moments earlier in this same cognitive cycle.
+            self.agent._last_deliberation     = thoughts.get('deliberation')
+            self.agent._last_deliberation_obs = getattr(self.agent, 'last_obs', None)
 
         elif reflection['should_learn']:
             decision.update(type='learn', priority=0.3)
@@ -717,7 +808,11 @@ class CognitiveLoop:
                 'health':   perception['state']['health'],
                 'hunger':   perception['state']['hunger'],
                 'emotions': perception['state']['emotions'],
-                'position': {'x': 0, 'y': 64, 'z': 0},
+                # FIX Step 2d: was hardcoded (0, 64, 0) — every deliberation
+                # and planner call thought the agent was always at spawn.
+                # Now reads the position obs_builder/perceive() last recorded.
+                'position': getattr(self.agent, 'last_known_position',
+                                    {'x': 0.0, 'y': 64.0, 'z': 0.0}),
                 'novelty':  perception['novelty'],
                 'urgency':  perception['urgency'],
             }
@@ -775,6 +870,14 @@ class CognitiveLoop:
                 )
                 self.last_action_time = time.time()
 
+                # ── Step 10 — SkillTracker: self-referential progress check ──
+                # Compares what the agent actually did (`step`, as a one-hot
+                # vector — same encoding scheme as deliberation's scored
+                # actions) against what its own most recent deliberation said
+                # was best. No external teacher: the agent's past self
+                # (via deliberation) is the only target it's measured against.
+                self._record_skill_attempt(step)
+
                 # ── Interruption check ────────────────────────────────
                 # Re-perceive cheaply (just health/hunger/urgency)
                 current_urgency = max(
@@ -829,6 +932,62 @@ class CognitiveLoop:
 
         except Exception as e:
             log.error(f"Action execution error: {e}", exc_info=True)
+
+    def _record_skill_attempt(self, step: Dict[str, Any]):
+        """
+        FIX Step 10 — Phase 5 SkillTracker wiring.
+
+        Encodes the action actually taken as a one-hot vector (the same
+        ACTION_TYPE_INDEX scheme BrainCore uses for all_scored_actions, so
+        it's directly comparable) and compares it against the most recent
+        deliberation's own top choice — best_action_vector, NOT best_action.
+        best_action stays a dict (the planner-facing candidate, used above
+        for plan splicing); best_action_vector is the ndarray form added
+        specifically for this self-referential comparison. There is no
+        external teacher anywhere in this loop — the agent's own prior
+        deliberation is the only target it's measured against.
+        """
+        agent = self.agent
+        if not (getattr(agent, 'active_focus_task', None) and
+                hasattr(agent, 'skill_tracker') and
+                getattr(agent, '_last_deliberation', None) is not None):
+            return
+
+        target = getattr(agent._last_deliberation, 'best_action_vector', None)
+        obs    = getattr(agent, 'last_obs', None)
+        if target is None or obs is None:
+            return
+
+        try:
+            from ai_core.planner import ACTION_TYPE_INDEX
+        except ImportError:
+            ACTION_TYPE_INDEX = {}
+
+        action_dim   = getattr(agent, 'action_dim', 13)
+        action_taken = np.zeros(action_dim, dtype=np.float32)
+        idx = ACTION_TYPE_INDEX.get(step.get('type', ''), 0) % action_dim
+        action_taken[idx] = 1.0
+
+        result = agent.skill_tracker.record_attempt(
+            task_label      = agent.active_focus_task,
+            obs_vector      = obs,
+            action_taken     = action_taken,
+            imagined_target  = target,
+        )
+
+        if result['improving']:
+            agent.emotion.add('joy',       0.15)
+            agent.emotion.add('curiosity', 0.10)
+        else:
+            agent.emotion.add('frustration', 0.10)
+            persistence = agent.personality.traits.get('persistence', 0.5)
+            frustration = agent.emotion.snapshot().get('frustration', 0.0)
+            if frustration > 0.7 * persistence:
+                agent.active_focus_task = None
+                bridge = getattr(agent, 'policy_bridge', None)
+                if bridge is not None:
+                    bridge.set_learning_mode(False)
+                self._curiosity_surprise_streak = 0
 
     def _execute_planned_action(self,
                                  action: Dict[str, Any],
@@ -1106,12 +1265,108 @@ class CognitiveLoop:
             learner = getattr(self.agent, 'continual_learner', None)
             if learner is None:
                 return
+
+            # FIX (found while wiring Step 7): learn_from_buffer() clears
+            # learner.experience_buffer at the end of its own run. The plan's
+            # literal wiring reads `agent.continual_learner.experience_buffer`
+            # AFTER calling learn_from_buffer() — by then it's always empty,
+            # so SST would silently train on nothing every single cycle.
+            # Snapshot it first; Avalanche still gets to consume-and-clear
+            # exactly as before, SST gets an honest, populated copy.
+            buffer_snapshot = list(learner.experience_buffer)
+
             res = learner.learn_from_buffer()
             log.info(
                 f"[{self.agent.agent_id}] 🧠 Continual learning: {res}"
             )
+
+            # ── Step 7.1 — SST online training step ─────────────────────
+            sst = getattr(self.agent, 'self_supervised_trainer', None)
+            if sst is not None and buffer_snapshot:
+                sst_result = sst.train_step(buffer_snapshot)
+                if sst_result:
+                    self.agent._last_sst_surprise = sst_result['mean_surprise']
+
+            # ── Step 7.2 — GRPO update from the most recent deliberation ──
+            delib = getattr(self.agent, '_last_deliberation', None)
+            if (delib is not None and
+                    getattr(delib, 'all_scored_actions', None) and
+                    hasattr(self.agent, 'policy') and
+                    hasattr(self.agent.policy, 'grpo_update')):
+
+                obs_for_grpo = getattr(self.agent, '_last_deliberation_obs', None)
+                if obs_for_grpo is None:
+                    obs_for_grpo = getattr(self.agent, 'last_obs', None)
+
+                if obs_for_grpo is not None:
+                    grpo_result = self.agent.policy.grpo_update(
+                        scored_actions=delib.all_scored_actions,
+                        obs=obs_for_grpo,
+                    )
+                    if grpo_result:
+                        # FIX (open question resolved): grpo_update() returns
+                        # mean_advantage instead of trying to set an attribute
+                        # on a bare nn.Module from inside the free function —
+                        # the caller (here) persists it on the agent.
+                        self.agent._last_grpo_mean_advantage = grpo_result['mean_advantage']
+
+                        # ── Step 9 — accumulate per-domain reward history ──
+                        domain = _get_dominant_event(self.agent)
+                        if domain:
+                            hist = self._domain_reward_history.setdefault(domain, [])
+                            hist.append(grpo_result['mean_advantage'])
+                            if len(hist) > 500:
+                                self._domain_reward_history[domain] = hist[-500:]
+
         except Exception as e:
             log.error(f"Continual learning error: {e}", exc_info=True)
+
+    # =========================================================================
+    # Focus-task resolution (Step 9 — dual trigger: specialisation or weakest skill)
+    # =========================================================================
+
+    def _resolve_active_focus_task(self) -> Optional[str]:
+        """
+        Decide what the agent should focus its PolicyBridge learning mode on.
+
+        Path 2 takes priority: if the agent has consistently earned
+        above-baseline reward in some domain, that's specialisation-by-choice
+        — the agent is good at something and reward says so, let it lean in.
+        Path 1 fallback: practise the weakest tracked skill (SkillTracker),
+        the generalist default when no domain has emerged as a clear strength.
+        """
+        chosen = self._check_specialisation_signal()
+        if chosen:
+            return chosen
+        if hasattr(self.agent, 'skill_tracker'):
+            return self.agent.skill_tracker.get_weakest_task()
+        return None
+
+    def _check_specialisation_signal(self) -> Optional[str]:
+        """
+        Returns a domain the agent has specialised into, or None.
+
+        A domain qualifies once it has ≥50 GRPO reward samples and its most
+        recent 50-sample mean exceeds the pre-existing baseline by more than
+        one standard deviation. A qualifying domain that has since plateaued
+        (near-zero variance over its last 30 samples — no longer improving
+        or declining) reverts to None so Path 1 (weakest skill) takes back
+        over instead of leaving the agent stuck practising a skill it has
+        already mastered and stopped learning from.
+        """
+        history = self._domain_reward_history
+        for domain, rewards in history.items():
+            if len(rewards) < 50:
+                continue
+            recent   = rewards[-50:]
+            all_data = rewards
+            baseline = float(np.mean(all_data[:-50])) if len(all_data) > 50 else 0.0
+            std      = float(np.std(all_data)) + 1e-8
+            if np.mean(recent) > baseline + std:
+                if len(rewards) >= 30 and float(np.var(rewards[-30:])) < 0.02:
+                    continue   # plateaued — let Path 1 take over
+                return domain
+        return None
 
     # =========================================================================
     # State update

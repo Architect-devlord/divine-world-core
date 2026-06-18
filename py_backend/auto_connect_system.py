@@ -52,6 +52,14 @@ class AutoConnectSystem:
         log.info(f"  Agents Folder : {self.agents_folder}")
         log.info(f"  Server        : {self.server_addr}")
 
+        # FIX 8: Scan on construction so required_agents is populated
+        # immediately. Any call to launch_all_agents() or the
+        # /api/autoconnect/launch endpoint will work without needing a
+        # prior explicit scan_agents_folder() call.
+        # The /api/autoconnect/scan endpoint can still trigger a re-scan
+        # (e.g. after new agents are packaged at runtime).
+        self.scan_agents_folder()
+
     # ------------------------------------------------------------------
     # Discovery
     # ------------------------------------------------------------------

@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/events/ProximityChatHandler.java
+// DivineWorld server mod
 package com.divineworld.events;
 
 import com.divineworld.DWMod;
@@ -99,7 +101,7 @@ public class ProximityChatHandler {
         event.setCanceled(true);
         if (oracleConsumed) {
             DWMod.LOGGER.debug("[ProximityChat] Oracle consumed message from {}",
-                sender.getName().getString());
+                    sender.getName().getString());
             return;
         }
 
@@ -109,7 +111,7 @@ public class ProximityChatHandler {
         for (ServerPlayer recipient : sender.getServer().getPlayerList().getPlayers()) {
             if (recipient == sender) continue;
             if (!sameDimension(sender, recipient)) continue;
-            if (distanceBetween(sender, recipient) > PROXIMITY_RADIUS) continue;
+            if (distanceSq(sender, recipient) > PROXIMITY_RADIUS * PROXIMITY_RADIUS) continue;
 
             recipient.sendSystemMessage(display);
 
@@ -145,7 +147,7 @@ public class ProximityChatHandler {
         for (ServerPlayer other : player.getServer().getPlayerList().getPlayers()) {
             if (!com.divineworld.entity.DWNPCManager.isAIPlayer(other)) continue;
             if (!sameDimension(player, other)) continue;
-            if (distanceBetween(player, other) <= PROXIMITY_RADIUS) return true;
+            if (distanceSq(player, other) <= PROXIMITY_RADIUS * PROXIMITY_RADIUS) return true;
         }
         return false;
     }
@@ -157,12 +159,13 @@ public class ProximityChatHandler {
         return Component.literal("<" + sender.getName().getString() + "> " + rawMessage);
     }
 
-    /** 3D Euclidean distance between two players. */
-    private static double distanceBetween(Player a, Player b) {
-        double dx = a.getX() - b.getX();
-        double dy = a.getY() - b.getY();
-        double dz = a.getZ() - b.getZ();
-        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    /**
+     * Squared 3D distance between two players.
+     * FIX HF-3: Use distanceToSqr for comparisons — avoids sqrt on every chat message.
+     * Compare against PROXIMITY_RADIUS² in callers.
+     */
+    private static double distanceSq(Player a, Player b) {
+        return a.distanceToSqr(b.getX(), b.getY(), b.getZ());
     }
 
     /** Both players must be in the same server-level dimension. */

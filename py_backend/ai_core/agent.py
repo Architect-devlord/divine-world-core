@@ -698,6 +698,29 @@ class NPCAgent:
         self.client_process = client_process
         self.agent_type     = 'npc'
         self.policy         = None
+
+        # FIX Step 6: obs_dim/action_dim were never set anywhere on the
+        # agent — agent_runner.py's Phase 2-5 attachment guard
+        # (hasattr(agent, 'obs_dim')/hasattr(agent, 'action_dim')) always
+        # failed, silently skipping PolicyBridge/SST/SkillTracker for every
+        # single agent. obs_dim matches Phase 6's obs_builder.OBS_DIM.
+        # action_dim is god-aware: self.god_type is already set above (the
+        # constructor parameter, not the buggy hardcoded self.agent_type
+        # right above this line) — GodTransformerPolicy.TOTAL_DIM is 18,
+        # TransformerPolicy.BASE_DIM is 13.
+        self.obs_dim    = 128
+        self.action_dim = 18 if self.god_type else 13
+
+        # FIX Step 9 — cleared focus task an agent is currently practising.
+        # Replaces the deleted ObservationImitator's active_imitation_task;
+        # set by CognitiveLoop's N=5 streak counter (Step 8), not by any
+        # external trigger.
+        self.active_focus_task: Optional[str] = None
+
+        # FIX Step 2d — last position seen in perceive()/obs_builder, read by
+        # CognitiveLoop._execute_action() instead of a hardcoded spawn point.
+        self.last_known_position: Dict[str, float] = {'x': 0.0, 'y': 64.0, 'z': 0.0}
+
         self.metadata:  Dict[str, Any] = {}
 
         # Neural stack
@@ -751,8 +774,18 @@ class NPCAgent:
         # random vector.  Build the spaces here and initialize eagerly.
         try:
             import gymnasium as _gym
+            # FIX Step 6/11: was hardcoded shape=(50,) — the policy was being
+            # built for an observation space that no longer exists once
+            # obs_builder.py produces 128-dim vectors. Left as-is, every
+            # policy.predict()/grpo_update() call below would silently
+            # mismatch input shape against a Linear(50, ...) first layer.
+            # self.obs_dim is already set above (this fix), so this just
+            # has to actually use it instead of a separate hardcoded literal.
+            # _act_space below is harmless dead weight for god agents — see
+            # initialize_policy(): when self.god_type is set it builds its
+            # own 18-dim god_action_space internally and ignores this param.
             _obs_space = _gym.spaces.Box(
-                low=-np.inf, high=np.inf, shape=(50,), dtype=np.float32
+                low=-np.inf, high=np.inf, shape=(self.obs_dim,), dtype=np.float32
             )
             _act_space = _gym.spaces.Box(
                 low=-1.0, high=1.0, shape=(13,), dtype=np.float32
@@ -904,65 +937,31 @@ class NPCAgent:
     # =========================================================================
 
     def perceive(self, raw_observation: Dict[str, Any]) -> np.ndarray:
-        obs_parts = []
+        """
+        FIX Step 11 — this used to hand-assemble a 50-dim vector inline
+        (vitals/position/3 nearest entities/personality/emotion/reward
+        history/memory count, zero-padded to 50). obs_builder.py existed as
+        a separate, unused module the whole time. Replaced with a direct
+        call to the canonical Phase 6 builder so there's exactly one place
+        that defines what an observation is.
 
-        obs_parts.append(raw_observation.get('health',     20.0) / 20.0)
-        obs_parts.append(raw_observation.get('hunger',     20.0) / 20.0)
-        obs_parts.append(raw_observation.get('saturation',  5.0) / 20.0)
+        raw_observation's nearby_entities/nearby_blocks are expected in
+        obs_builder's dict shape (distance/rel_dx/rel_dy/rel_dz/
+        movement_speed per entity); fields obs_builder doesn't find simply
+        default to neutral values rather than raising, so this keeps working
+        exactly as before even if the Java/perception side hasn't been
+        updated yet to send every new field — see obs_builder.py docstring.
+        """
+        from ai_core.obs_builder import build_observation
 
-        pos = raw_observation.get('position', {'x': 0, 'y': 0, 'z': 0})
-        obs_parts.extend([
-            pos['x'] / 100.0, pos['y'] / 100.0, pos['z'] / 100.0
-        ])
-
-        obs_parts.append(raw_observation.get('yaw',   0.0) / 360.0)
-        obs_parts.append(raw_observation.get('pitch', 0.0) /  90.0)
-        # FIX INT-04: old code only stored len(entities)/10 — full entity data
-        # (type_id, name, distance, angle) discarded. Agents never learned which
-        # entity types are near. Now encode the nearest 3 entities explicitly:
-        #   dim = [type_id/7, distance/32, sin(angle_rad), cos(angle_rad)]
-        # type_id range: 0=unknown 1=player 2=hostile 3=passive 4=item 5=boss 6=projectile 7=god
-        # Absent entities → [0, 0, 0, 0] (type=unknown, distance=0 signals nothing present)
-        entities = raw_observation.get('entities', [])
-        obs_parts.append(len(entities) / 10.0)  # keep count for backward compat
-        # Sort by distance ascending so nearest 3 are always in the same slots
-        sorted_ents = sorted(entities, key=lambda e: e[2] if len(e) > 2 else 999)[:3]
-        for ent in sorted_ents:
-            type_id  = ent[0] if len(ent) > 0 else 0
-            distance = ent[2] if len(ent) > 2 else 0.0
-            angle    = ent[3] if len(ent) > 3 else 0.0
-            angle_rad = float(angle) * 3.14159265 / 180.0
-            obs_parts.append(float(type_id) / 7.0)
-            obs_parts.append(min(float(distance), 32.0) / 32.0)
-            obs_parts.append(float(np.sin(angle_rad)))
-            obs_parts.append(float(np.cos(angle_rad)))
-        # Pad missing entities with zeros
-        for _ in range(3 - len(sorted_ents)):
-            obs_parts.extend([0.0, 0.0, 0.0, 0.0])
-
-        obs_parts.append(raw_observation.get('inventory', {}).get('slot_count', 0) / 36.0)
-
-        obs_parts.extend(self.personality.as_array().tolist())
-        obs_parts.extend(self.emotion.as_array().tolist())
-
-        if self.reward_system and self.reward_system.reward_history:
-            recent = list(self.reward_system.reward_history)[-20:]
-            obs_parts.extend([
-                np.mean(recent), np.std(recent),
-                np.max(recent),  np.min(recent),
-                len([r for r in recent if r > 0]) / len(recent),
-            ])
-        else:
-            obs_parts.extend([0.0] * 5)
-
-        obs_parts.append(len(self.memory.events) / 1000.0)
-        obs_parts.append(0.0)
-
-        while len(obs_parts) < 50:
-            obs_parts.append(0.0)
-
-        obs_array     = np.array(obs_parts[:50], dtype=np.float32)
+        obs_array     = build_observation(self, raw_observation)
         self.last_obs = obs_array
+
+        # FIX Step 2d — last_known_position now actually gets updated, so
+        # CognitiveLoop._execute_action() stops hardcoding the spawn point.
+        self.last_known_position = raw_observation.get(
+            'position', self.last_known_position
+        )
 
         if self.cognitive_loop and self.cognitive_loop.running:
             self.cognitive_loop.receive_state_update({
@@ -1842,103 +1841,6 @@ async def chat_loop(agent):
             break
         except Exception as e:
             log.error(f"Chat error: {e}")
-
-
-# =============================================================================
-# Executable generator
-# =============================================================================
-
-class AgentExecutableGenerator:
-    """Generate PyInstaller executables for dynamically spawned agents."""
-
-    def __init__(self, output_dir: str = "build/agents/dist"):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.build_temp = Path("build/agents/build_temp")
-        self.build_temp.mkdir(parents=True, exist_ok=True)
-
-    def generate_executable(self,
-                             agent_id:           str,
-                             agent_type:         Literal['npc', 'god'] = 'npc',
-                             god_type:           Optional[str]          = None,
-                             gender:             Optional[GenderType]   = None,
-                             personality_traits: Optional[Dict]         = None
-                             ) -> Optional[Path]:
-        if gender is None:
-            gender = assign_god_gender() if agent_type == 'god' else assign_npc_gender()
-
-        wrapper_script   = self.build_temp / f"{agent_id}_wrapper.py"
-        personality_json = json.dumps(personality_traits or {})
-        god_arg          = f" --god-type {god_type}" if god_type else ""
-
-        wrapper_script.write_text(f'''
-import sys
-from ai_core.agent import main
-sys.argv = [sys.argv[0],
-    "--agent-id", "{agent_id}", "--mode", "autonomous",
-    "--gender", "{gender}", "--personality", "{personality_json}"{god_arg}]
-if __name__ == "__main__":
-    main()
-''')
-
-        exe_name = (
-            f"DW_Agent_{agent_id.replace(' ', '_')}"
-            if agent_type == 'npc'
-            else f"DW_God_{agent_id.replace(' ', '_')}"
-        )
-
-        try:
-            import PyInstaller.__main__
-        except ImportError:
-            log.error("PyInstaller not installed.")
-            return None
-
-        PyInstaller.__main__.run([
-            '--onefile', f'--name={exe_name}',
-            f'--distpath={self.output_dir}',
-            f'--buildpath={self.build_temp}',
-            f'--specpath={self.build_temp}',
-            '--hidden-import=torch', '--hidden-import=numpy',
-            '--hidden-import=fastapi', '--hidden-import=uvicorn',
-            '--hidden-import=ai_core', '--collect-all=ai_core',
-            '--collect-all=torch', '--console',
-            str(wrapper_script),
-        ])
-
-        exe_path = self.output_dir / exe_name
-        if exe_path.exists():
-            log.info(f"✅ Executable: {exe_path}")
-            return exe_path
-        log.error(f"❌ Executable not found: {exe_path}")
-        return None
-
-    def launch_executable(self,
-                           exe_path:     Path,
-                           port:         int           = 0,
-                           tcp_port:     int           = 0,
-                           minecraft:    bool          = False,
-                           ultimmc_path: Optional[str] = None
-                           ) -> Optional[subprocess.Popen]:
-        if not exe_path.exists():
-            log.error(f"Not found: {exe_path}")
-            return None
-        cmd = [str(exe_path)]
-        if port:
-            cmd += ['--port', str(port)]
-        if tcp_port:
-            cmd += ['--tcp-port', str(tcp_port)]
-        if minecraft:
-            cmd.append('--minecraft')
-            if ultimmc_path:
-                cmd.extend(['--ultimmc-path', ultimmc_path])
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True)
-            log.info(f"✅ Launched PID {proc.pid}")
-            return proc
-        except Exception as e:
-            log.error(f"Launch failed: {e}")
-            return None
 
 
 # =============================================================================

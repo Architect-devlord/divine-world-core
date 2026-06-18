@@ -96,32 +96,60 @@ class AgentNameManager:
         'wither', 'ender_dragon', 'oracle', 'elder_guardian', 'creaking', 'warden',
     ]
 
-    # Raw name pools — ports are assigned dynamically by _build_default_content()
-    _DEFAULT_NAMES: Dict[str, Any] = {
-        "NPCs": {
-            "male": [
-                "Adam", "Abel", "Cain", "Noah", "Abraham", "Isaac", "Jacob",
-                "David", "Solomon", "Marcus", "Julius", "Augustus", "Nero",
-                "Thor", "Loki", "Odin", "Baldur", "Heimdall", "Tyr", "Freyr",
-            ],
-            "female": [
-                "Eve", "Sarah", "Rebecca", "Rachel", "Leah", "Ruth", "Esther",
-                "Deborah", "Miriam", "Diana", "Minerva", "Juno", "Venus",
-                "Freyja", "Frigg", "Sif", "Idunn", "Skadi", "Hel", "Nanna",
-            ],
-        },
-        "GODs": {
-            "dual": {
-                "wither":         ["Mortis", "Necros", "Vexis", "Umbra"],
-                "ender_dragon":   ["Draconis", "Voidwing", "Abyss", "Sable"],
-                "warden":         ["Tenebris", "Obsidius", "Cavern", "Gloom"],
-                "oracle":         ["Zeus", "Odin", "Ra", "Athena", "Thoth",
-                                   "Apollo", "Hermes", "Isis", "Brahma", "Inari"],
-                "elder_guardian": ["Pelagius", "Thetis", "Nereus", "Triton"],
-                "creaking":       ["Sylvanus", "Arbor", "Rootweald", "Grimwood"],
+    # FIX 7: Default name pool loaded from default_agents.json if present,
+    # so operators can customise names without touching Python source.
+    # Falls back to the hardcoded dict if the file is absent.
+    _DEFAULT_NAMES: Dict[str, Any] = {}  # populated by _load_default_names()
+
+    @classmethod
+    def _load_default_names(cls) -> Dict[str, Any]:
+        """
+        Load agent name pools.
+        Priority:
+          1. default_agents.json  beside this file
+          2. default_agents.json  beside config.py (py_backend root)
+          3. Built-in fallback dict
+        """
+        candidates = [
+            Path(__file__).parent / "default_agents.json",
+            Path(__file__).parent.parent / "default_agents.json",
+        ]
+        for path in candidates:
+            if path.exists():
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    log.debug(f"[AgentNameManager] Loaded default names from {path}")
+                    return data
+                except Exception as _e:
+                    log.warning(f"[AgentNameManager] Could not read {path}: {_e}")
+
+        # Hardcoded fallback (identical content to the shipped JSON)
+        log.debug("[AgentNameManager] Using built-in default name pool")
+        return {
+            "NPCs": {
+                "male": [
+                    "Adam","Abel","Cain","Noah","Abraham","Isaac","Jacob",
+                    "David","Solomon","Marcus","Julius","Augustus","Nero",
+                    "Thor","Loki","Odin","Baldur","Heimdall","Tyr","Freyr",
+                ],
+                "female": [
+                    "Eve","Sarah","Rebecca","Rachel","Leah","Ruth","Esther",
+                    "Deborah","Miriam","Diana","Minerva","Juno","Venus",
+                    "Freyja","Frigg","Sif","Idunn","Skadi","Hel","Nanna",
+                ],
             },
-        },
-    }
+            "GODs": {
+                "dual": {
+                    "wither":         ["Mortis","Necros","Vexis","Umbra"],
+                    "ender_dragon":   ["Draconis","Voidwing","Abyss","Sable"],
+                    "warden":         ["Tenebris","Obsidius","Cavern","Gloom"],
+                    "oracle":         ["Zeus","Odin","Ra","Athena","Thoth",
+                                      "Apollo","Hermes","Isis","Brahma","Inari"],
+                    "elder_guardian": ["Pelagius","Thetis","Nereus","Triton"],
+                    "creaking":       ["Sylvanus","Arbor","Rootweald","Grimwood"],
+                },
+            },
+        }
 
     # ------------------------------------------------------------------
     # Default content builder — assigns ports sequentially
@@ -132,7 +160,9 @@ class AgentNameManager:
         """
         Convert the flat name lists in _DEFAULT_NAMES into {name: port} dicts
         with ports starting at PORT_START and incrementing globally.
+        Reloads from JSON each call so hot-edits to default_agents.json are picked up.
         """
+        names = cls._load_default_names()
         port   = PORT_START
         result: Dict[str, Any] = {
             "server":            {"host": "127.0.0.1", "port": 25565},
@@ -143,13 +173,13 @@ class AgentNameManager:
         }
 
         for gender in ("male", "female"):
-            for name in cls._DEFAULT_NAMES["NPCs"][gender]:
+            for name in names["NPCs"][gender]:
                 result["NPCs"][gender][name] = port
                 port += 1
 
-        for god_type, names in cls._DEFAULT_NAMES["GODs"]["dual"].items():
+        for god_type, type_names in names["GODs"]["dual"].items():
             result["GODs"]["dual"][god_type] = {}
-            for name in names:
+            for name in type_names:
                 result["GODs"]["dual"][god_type][name] = port
                 port += 1
 

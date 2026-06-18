@@ -170,11 +170,13 @@ class PatternRecognizer:
     # ── private ─────────────────────────────────────────────────────────────
 
     def _hash_pattern(self, data: Any) -> str:
-        if isinstance(data, np.ndarray):
-            return '_'.join(str(x) for x in np.round(data.flatten()[:20], 2))
-        if isinstance(data, dict):
-            return '_'.join(f"{k}:{v}" for k, v in sorted(data.items())[:10])
-        return str(data)[:100]
+        # FIX Step 2a: old impl joined rounded-float strings / sorted key:value
+        # pairs — distinct arrays/dicts with similar shapes routinely collided,
+        # corrupting the novelty signal that gates all deliberation.
+        import hashlib, json
+        return hashlib.md5(
+            json.dumps(data, sort_keys=True, default=str).encode()
+        ).hexdigest()
 
     def _related(self, pt: str, h: str, limit: int = 5) -> List[str]:
         rel = []
@@ -205,7 +207,8 @@ class DeliberationResult:
                  imagination_summaries: List[Dict[str, Any]],
                  context_novelty: float,
                  context_urgency: float,
-                 used_world_model: bool):
+                 used_world_model: bool,
+                 all_scored_actions: Optional[List[Tuple[float, np.ndarray]]] = None):
         # [(score, action_dict), ...] — highest score first
         self.ranked_actions        = ranked_actions
         # One summary dict per imagined trajectory (from ImagineResult.summary())
@@ -213,12 +216,32 @@ class DeliberationResult:
         self.context_novelty       = context_novelty
         self.context_urgency       = context_urgency
         self.used_world_model      = used_world_model
+        # FIX Step 2c: GRPO needs [(score, action_ndarray), ...] — ranked_actions
+        # holds dicts, not arrays, so a dedicated field is required. Populated
+        # by _deliberate_with_world_model() / _deliberate_with_table() using the
+        # same one-hot ACTION_TYPE_INDEX encoding already used for imagination.
+        self.all_scored_actions: List[Tuple[float, np.ndarray]] = (
+            all_scored_actions if all_scored_actions is not None else []
+        )
 
     @property
     def best_action(self) -> Optional[Dict[str, Any]]:
-        """The highest-scored action candidate."""
+        """The highest-scored action candidate (dict form) — used by the
+        planner/cognitive-loop plan-splicing flow (_execute_action)."""
         if self.ranked_actions:
             return self.ranked_actions[0][1]
+        return None
+
+    @property
+    def best_action_vector(self) -> Optional[np.ndarray]:
+        """
+        The highest-scored action as a raw numpy vector — used by SkillTracker
+        to compute MSE against the agent's own attempt (fully self-referential,
+        no external teacher). all_scored_actions is sorted in the same order
+        as ranked_actions, so index 0 is always the top trial.
+        """
+        if self.all_scored_actions:
+            return self.all_scored_actions[0][1]
         return None
 
     @property
@@ -577,8 +600,8 @@ class BrainCore:
     def deliberate(self,
                    perception: Dict[str, Any],
                    candidate_actions: Optional[List[Dict]] = None,
-                   horizon: int = 3,
-                   n_trials: int = 15) -> DeliberationResult:
+                   horizon: int = 12,       # FIX Step 2b: was 3 — too myopic
+                   n_trials: int = 40) -> DeliberationResult:  # FIX Step 2b: was 15
         """
         Full imagination-based deliberation via the WorldModel.
 
@@ -613,15 +636,16 @@ class BrainCore:
                     {'type': 'attack'}, {'type': 'eat'},
                 ]
 
-        ranked: List[Tuple[float, Dict]] = []
-        summaries: List[Dict]            = []
-        used_wm                          = False
+        ranked:     List[Tuple[float, Dict]]      = []
+        summaries:  List[Dict]                    = []
+        all_scored: List[Tuple[float, np.ndarray]] = []
+        used_wm                                    = False
 
         wm = self.world_model  # snapshot — safe even if swapped mid-call
         if wm is not None and context:
             used_wm = True
             try:
-                ranked, summaries = self._deliberate_with_world_model(
+                ranked, summaries, all_scored = self._deliberate_with_world_model(
                     wm, candidate_actions, context, horizon, n_trials
                 )
             except Exception as e:
@@ -630,10 +654,13 @@ class BrainCore:
 
         # Fallback to value-table scoring if WM unavailable or failed
         if not ranked:
-            ranked = self._deliberate_with_table(candidate_actions, context)
+            ranked, all_scored = self._deliberate_with_table(candidate_actions, context)
 
-        # Sort descending by score
-        ranked.sort(key=lambda x: x[0], reverse=True)
+        # Sort descending by score — keep ranked_actions and all_scored_actions
+        # in the same relative order so best_action_vector[0] matches best_action.
+        order = sorted(range(len(ranked)), key=lambda i: ranked[i][0], reverse=True)
+        ranked     = [ranked[i]     for i in order]
+        all_scored = [all_scored[i] for i in order] if len(all_scored) == len(order) else all_scored
 
         self._last_deliberation_ts = time()
 
@@ -643,6 +670,7 @@ class BrainCore:
             context_novelty       = novelty,
             context_urgency       = urgency,
             used_world_model      = used_wm,
+            all_scored_actions    = all_scored,   # FIX Step 2c
         )
 
         log.debug(
@@ -662,7 +690,7 @@ class BrainCore:
             context: Dict,
             horizon: int,
             n_trials: int
-    ) -> Tuple[List[Tuple[float, Dict]], List[Dict]]:
+    ) -> Tuple[List[Tuple[float, Dict]], List[Dict], List[Tuple[float, np.ndarray]]]:
         """
         Score each candidate action by imagining short rollouts and applying
         the planner's scoring function (if available) or pure reward.
@@ -689,12 +717,20 @@ class BrainCore:
         action_dim  = wm.config.action_dim
         device      = wm.device
 
-        ranked:    List[Tuple[float, Dict]] = []
-        summaries: List[Dict]               = []
+        ranked:     List[Tuple[float, Dict]]       = []
+        summaries:  List[Dict]                     = []
+        all_scored: List[Tuple[float, np.ndarray]] = []   # FIX Step 2c
 
         for candidate in candidates:
             best_trial_score = -1e9
             best_summary     = None
+
+            # FIX Step 2c: the candidate is always seq[0], so its one-hot
+            # vector is identical across every trial — compute it once here
+            # rather than re-deriving it from inside the trial loop.
+            cand_vec = np.zeros(action_dim, dtype=np.float32)
+            cand_idx = ACTION_TYPE_INDEX.get(candidate.get('type', ''), 0) % action_dim
+            cand_vec[cand_idx] = 1.0
 
             for _ in range(n_trials):
                 # Build a short sequence starting with this candidate
@@ -736,19 +772,44 @@ class BrainCore:
             if best_summary is not None:
                 ranked.append((best_trial_score, candidate))
                 summaries.append(best_summary)
+                all_scored.append((best_trial_score, cand_vec))   # FIX Step 2c
 
-        return ranked, summaries
+        return ranked, summaries, all_scored
 
     def _deliberate_with_table(
             self,
             candidates: List[Dict],
             context: Optional[Dict]
-    ) -> List[Tuple[float, Dict]]:
-        """Score candidates using the learned value table only."""
-        return [
-            (self.predict_value_of_action(c, context), c)
-            for c in candidates
-        ]
+    ) -> Tuple[List[Tuple[float, Dict]], List[Tuple[float, np.ndarray]]]:
+        """
+        Score candidates using the learned value table only.
+
+        FIX Step 2c: also returns all_scored_actions (one-hot vectors) so
+        GRPO/SkillTracker still get correctly-typed data even when the
+        WorldModel is unavailable and deliberation falls back to this path.
+        """
+        try:
+            from ai_core.planner import ACTION_TYPE_INDEX
+        except ImportError:
+            ACTION_TYPE_INDEX = {}
+
+        # No WorldModel here by definition, so action_dim can't come from
+        # wm.config — use the agent's own action space (set in NPCAgent.__init__,
+        # Step 6), falling back to the NPC baseline of 13 if unavailable.
+        action_dim = getattr(self.agent, 'action_dim', 13) if self.agent else 13
+
+        ranked:     List[Tuple[float, Dict]]       = []
+        all_scored: List[Tuple[float, np.ndarray]] = []
+        for c in candidates:
+            score = self.predict_value_of_action(c, context)
+            ranked.append((score, c))
+
+            vec = np.zeros(action_dim, dtype=np.float32)
+            idx = ACTION_TYPE_INDEX.get(c.get('type', ''), 0) % action_dim
+            vec[idx] = 1.0
+            all_scored.append((score, vec))
+
+        return ranked, all_scored
 
     # =========================================================================
     # Value prediction (used by both deliberation and planner)

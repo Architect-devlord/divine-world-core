@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/entity/DWNPCManager.java
+// DivineWorld server mod
 package com.divineworld.entity;
 
 import com.divineworld.DWMod;

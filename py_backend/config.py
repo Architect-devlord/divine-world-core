@@ -125,30 +125,30 @@ class Config:
         'stable_baselines3.common.policies',
 
         # -- ai_core: agent & brain --------------------------------------
-        'ai_core',
-        'ai_core.agent',                   # NPCAgent -- the agent itself
-        'ai_core.brain_core',              # deliberation engine
-        'ai_core.brain_capsule',           # save / load brain
-        'ai_core.brain_language',          # language intelligence (lazy)
-        'ai_core.cognitive_loop',          # background thinking thread
-        'ai_core.communication_protocol',  # WebSocket IPC with Minecraft mod
-        'ai_core.emotion',                 # emotion system
-        'ai_core.memory',                  # unified memory store
-        'ai_core.personality',             # personality + gender types
-        'ai_core.planner',                 # cognitive planner
-        'ai_core.actuators',               # action execution
-        'ai_core.reward_system',           # reward / intrinsic motivation
-        'ai_core.vision',                  # visual perception
-        'ai_core.audio_processors',        # audio perception (FIX: plural, matches audio_processors.py)
-        'ai_core.god_controls',            # god-tier abilities (no-op for NPCs)
-        'ai_core.web_browser',             # web-browsing tool
-        'ai_core.world_model',             # forward model (lazy)
-        'ai_core.config',                  # Config class
+        'py_backend.ai_core',
+        'py_backend.ai_core.agent',                   # NPCAgent -- the agent itself
+        'py_backend.ai_core.brain_core',              # deliberation engine
+        'py_backend.ai_core.brain_capsule',           # save / load brain
+        'py_backend.ai_core.brain_language',          # language intelligence (lazy)
+        'py_backend.ai_core.cognitive_loop',          # background thinking thread
+        'py_backend.ai_core.communication_protocol',  # WebSocket IPC with Minecraft mod
+        'py_backend.ai_core.emotion',                 # emotion system
+        'py_backend.ai_core.memory',                  # unified memory store
+        'py_backend.ai_core.personality',             # personality + gender types
+        'py_backend.ai_core.planner',                 # cognitive planner
+        'py_backend.ai_core.actuators',               # action execution
+        'py_backend.ai_core.reward_system',           # reward / intrinsic motivation
+        'py_backend.ai_core.vision',                  # visual perception
+        'py_backend.ai_core.audio_processors',        # audio perception (FIX: plural, matches audio_processors.py)
+        'py_backend.ai_core.god_controls',            # god-tier abilities (no-op for NPCs)
+        'py_backend.ai_core.web_browser',             # web-browsing tool
+        'py_backend.ai_core.world_model',             # forward model (lazy)
+        'py_backend.ai_core.config',                  # Config class
 
         # -- RL / policy (agent uses these for inference) ----------------
-        'rl',
-        'rl.policy',                       # TransformerPolicy / GodTransformerPolicy
-        'ai_core.reward_system',                # rl-specific reward shaping
+        'py_backend.rl',
+        'py_backend.rl.policy',                       # TransformerPolicy / GodTransformerPolicy
+        'py_backend.ai_core.reward_system',                # rl-specific reward shaping
 
         # -- py_backend: only the pieces the agent process needs ---------
         'py_backend',
@@ -178,7 +178,7 @@ class Config:
         'py_backend.minecraft_launcher',
         'py_backend.chat_system',
         'py_backend.chat_launcher',
-        'ai_core.agent_spawner',
+        'py_backend.ai_core.agent_spawner',
         # Heavy server-only deps (not needed inside an agent exe)
         'psutil',
         # Dev / test tools

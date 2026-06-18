@@ -1,4 +1,5 @@
 // src/main/java/com/divineworld/utils/DivineMagicCircle.java
+// DivineWorld server mod
 package com.divineworld.utils;
 
 import net.minecraft.core.BlockPos;

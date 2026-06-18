@@ -54,6 +54,82 @@ FRAME_ACTION = 0x02
 # Base interface
 # ==============================================================================
 
+# ==============================================================================
+# Inventory action helpers
+# ==============================================================================
+
+def build_inv_action(slot: int, button: int = 0, click_type: int = 0) -> str:
+    """
+    Build an inventory action string for the TCP special-action field.
+
+    Args:
+        slot:       0-based slot index in the currently open container.
+                    Player InventoryMenu layout (when no external container open):
+                      0       = crafting result
+                      1-4     = crafting grid (2x2)
+                      5-8     = armour (head=5, chest=6, legs=7, feet=8)
+                      9-35    = main inventory (row-major, top row first)
+                      36-44   = hotbar (36=slot0 … 44=slot8)
+                      45      = offhand
+                    For external containers (CraftingTable, Furnace, StoneCutter…):
+                      slots are numbered from 0 in the order they appear in that
+                      container's AbstractContainerMenu, usually:
+                        0..(N-1)  = container-specific slots
+                        N..N+26   = player main inventory
+                        N+27..N+35= hotbar
+        button:     0 = left click / SWAP target hotbar slot (for SWAP type)
+                    1 = right click
+                    2 = middle click
+        click_type: ClickType ordinal (matches net.minecraft.world.inventory.ClickType):
+                    0 = PICKUP      — normal left/right click
+                    1 = QUICK_MOVE  — shift-click (moves item automatically)
+                    2 = SWAP        — swaps slot with hotbar[button]
+                    3 = CLONE       — creative middle-click copy
+                    4 = THROW       — drop with Q
+                    5 = SPREAD      — drag-spread
+
+    Returns:
+        String in the format "inv:SLOT,BUTTON,CLICK_TYPE"
+
+    Common usage examples:
+        # Move main-inventory slot 9 to hotbar slot 0 (SWAP):
+        build_inv_action(slot=9, button=0, click_type=2)  → "inv:9,0,2"
+
+        # Shift-click craft result into inventory (QUICK_MOVE):
+        build_inv_action(slot=0, button=0, click_type=1)  → "inv:0,0,1"
+
+        # Pick up item from hotbar slot 3 onto cursor (PICKUP left-click):
+        build_inv_action(slot=39, button=0, click_type=0) → "inv:39,0,0"
+
+        # Right-click to split a stack (PICKUP right-click):
+        build_inv_action(slot=10, button=1, click_type=0) → "inv:10,1,0"
+    """
+    return f"inv:{slot},{button},{click_type}"
+
+
+def build_screen_action(command: str) -> str:
+    """
+    Build a screen control action string.
+
+    Args:
+        command: "close" — close any open GUI screen
+                 "inv"   — open player inventory
+
+    Returns:
+        String in the format "screen:COMMAND"
+    """
+    return f"screen:{command}"
+
+
+# ClickType ordinal constants (mirrors net.minecraft.world.inventory.ClickType)
+INV_CLICK_PICKUP     = 0   # normal left / right click
+INV_CLICK_QUICK_MOVE = 1   # shift-click → automatic move
+INV_CLICK_SWAP       = 2   # swap slot ↔ hotbar[button]
+INV_CLICK_CLONE      = 3   # creative middle-click copy
+INV_CLICK_THROW      = 4   # Q / drop
+INV_CLICK_SPREAD     = 5   # drag-spread
+
+
 class BaseActuatorBackend:
     def apply_action(self, action: Dict[str, Any]) -> bool:
         raise NotImplementedError
@@ -253,10 +329,26 @@ class ForgeIPCClient:
         hotbar = action.get('hotbar_slot')
         hotbar_byte = 0xFF if hotbar is None else int(max(0, min(8, hotbar)))  # FIX Bug 2
 
-        # God ability section (FIX Bug 2: entirely absent on TCP before)
-        god_ability = action.get('god_ability')
-        if god_ability:
-            ab     = god_ability.encode('utf-8')
+        # Special action section (FIX Bug 2 + inventory actions):
+        # Priority: inv_action > screen_action > god_ability > (none)
+        #
+        # inv_action — inventory slot click for ALL agents:
+        #   Format built by build_inv_action():
+        #     "inv:SLOT,BUTTON,CLICK_TYPE"  e.g. "inv:9,0,2" = SWAP slot 9 → hotbar 0
+        #   ClickType ordinals: 0=PICKUP 1=QUICK_MOVE 2=SWAP 3=CLONE 4=THROW 5=SPREAD
+        #
+        # screen_action — GUI screen control:
+        #   "screen:close"  close any open screen
+        #   "screen:inv"    open player inventory
+        #
+        # god_ability — god-agent abilities (existing behaviour unchanged)
+        inv_action    = action.get('inv_action')    # e.g. "inv:9,0,2"
+        screen_action = action.get('screen_action') # e.g. "screen:close"
+        god_ability   = action.get('god_ability')
+
+        special = inv_action or screen_action or god_ability
+        if special:
+            ab     = special.encode('utf-8')
             params = action.get('god_params') or {}
             ability_section = (
                 struct.pack('!H', len(ab)) + ab +
@@ -499,10 +591,29 @@ class ActuatorAdapterIsaacSim(BaseActuatorBackend):
     def _do_inspect(self):
         art = self._articulation
         dof_names = list(art.dof_names); n = len(dof_names)
-        kps, kds = art.get_dof_gains()
+        # Isaac Sim 5.0: get_gains() replaces get_dof_gains()
+        try:
+            kps, kds = art.get_gains()
+        except AttributeError:
+            try:
+                kps, kds = art.get_dof_gains()
+            except AttributeError:
+                kps = [1000.0] * n; kds = [100.0] * n
         drive_modes = [_infer_drive_mode(float(kps[i]), float(kds[i])) for i in range(n)]
-        lower_limits, upper_limits = art.get_joint_limits()
-        dof_types = art.get_dof_types() or []
+        # Isaac Sim 5.0: get_dof_position_limits() replaces get_joint_limits()
+        try:
+            limits = art.get_dof_position_limits()
+            lower_limits = limits[:, 0]; upper_limits = limits[:, 1]
+        except AttributeError:
+            try:
+                lower_limits, upper_limits = art.get_joint_limits()
+            except AttributeError:
+                lower_limits = [-1e4] * n; upper_limits = [1e4] * n
+        # Isaac Sim 5.0: dof_types may not exist; default to revolute
+        try:
+            dof_types = art.get_dof_types() or []
+        except AttributeError:
+            dof_types = []
         self._profiles = [
             _DOFProfile(dof_names[i], i, drive_modes[i], float(lower_limits[i]),
                         float(upper_limits[i]), "rot" in str(dof_types[i]).lower() if dof_types else True)
@@ -550,9 +661,14 @@ class ActuatorAdapterIsaacSim(BaseActuatorBackend):
             return
         if not _ISAAC_AVAILABLE or not self._inspected: return
         if self._is_wheeled and self._diff_ctrl:
-            self._articulation.apply_wheel_actions(
-                self._diff_ctrl.forward(command=np.array([mf*self._linear_scale,
-                                                           float(np.deg2rad(yd))*self._angular_scale])))
+            # Isaac Sim 5.0: apply_wheel_actions() removed from generic Articulation.
+            # Use apply_action(ArticulationAction(joint_velocities=...)) instead.
+            wheel_action = self._diff_ctrl.forward(
+                command=np.array([mf * self._linear_scale,
+                                  float(np.deg2rad(yd)) * self._angular_scale])
+            )
+            if _ISAAC_AVAILABLE and ArticulationAction is not None:
+                self._articulation.apply_action(wheel_action)
             return
         av = {"move_forward": mf*self._linear_scale, "move_strafe": ms*self._linear_scale,
               "yaw_delta": float(np.deg2rad(yd))*self._angular_scale,

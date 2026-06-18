@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/oracle/OllamaManager.java
+// DivineWorld server mod
 package com.divineworld.oracle;
 
 import com.divineworld.DWMod;

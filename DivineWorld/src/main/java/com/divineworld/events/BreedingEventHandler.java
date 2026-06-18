@@ -1,4 +1,5 @@
 // src/main/java/com/divineworld/events/BreedingEventHandler.java
+// DivineWorld server mod
 package com.divineworld.events;
 
 import com.divineworld.DWMod;
@@ -161,9 +162,11 @@ public class BreedingEventHandler {
                 PythonBackendClient.notifyBreeding(idA, idB, typeA, typeB);
                 PAIR_COOLDOWNS.put(pairKey, JAVA_COOLDOWN_TICKS);
 
+                // FIX HF-1: Log4j2 uses {} not {:.1f} — format distance with String.format
                 DWMod.LOGGER.info(
-                    "[Breeding] Pair detected: {} ({}/{}) x {} ({}/{}) dist={:.1f}m",
-                    idA, genderA, typeA, idB, genderB, typeB, Math.sqrt(distSq));
+                        "[Breeding] Pair detected: {} ({}/{}) x {} ({}/{}) dist={}m",
+                        idA, genderA, typeA, idB, genderB, typeB,
+                        String.format("%.1f", Math.sqrt(distSq)));
             }
         }
     }
@@ -187,7 +190,7 @@ public class BreedingEventHandler {
     private static boolean areGendersCompatible(String a, String b) {
         if ("dual".equals(a) || "dual".equals(b)) return true;
         return ("male".equals(a) && "female".equals(b))
-            || ("female".equals(a) && "male".equals(b));
+                || ("female".equals(a) && "male".equals(b));
     }
 
     // ── Bed detection ─────────────────────────────────────────────────────────
@@ -199,9 +202,9 @@ public class BreedingEventHandler {
      */
     private static boolean hasTwoBedsNearby(ServerLevel level, BlockPos posA, BlockPos posB) {
         BlockPos mid = new BlockPos(
-            (posA.getX() + posB.getX()) / 2,
-            (posA.getY() + posB.getY()) / 2,
-            (posA.getZ() + posB.getZ()) / 2
+                (posA.getX() + posB.getX()) / 2,
+                (posA.getY() + posB.getY()) / 2,
+                (posA.getZ() + posB.getZ()) / 2
         );
 
         int r    = (int) Math.ceil(BED_SEARCH_RADIUS);

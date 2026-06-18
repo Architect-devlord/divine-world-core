@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/commands/OracleCommandRegistrar.java
+// DivineWorld server mod
 package com.divineworld.commands;
 
 import com.divineworld.oracle.LLMOracleBrain;

@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/utils/Config.java
+// DivineWorld server mod
 package com.divineworld.utils;
 
 import com.divineworld.DWMod;

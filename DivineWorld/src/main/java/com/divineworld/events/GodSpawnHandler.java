@@ -1,4 +1,5 @@
 // src/main/java/com/divineworld/events/GodSpawnHandler.java
+// DivineWorld server mod
 package com.divineworld.events;
 
 import com.divineworld.DWMod;
@@ -28,7 +29,7 @@ import java.util.UUID;
  *
  * Entity type mapping (UPDATED):
  *   oracle   → EVOKER   (robed mage look; can summon Vexes/fangs as god powers)
- *   creaking → WARDEN   (no autonomous side effects under setNoAi, replaces old EVOKER placeholder)
+ *   creaking → WARDEN   (no autonomous side-effects under setNoAi, replaces old EVOKER placeholder)
  *   warden   → WARDEN
  *   wither   → WITHER
  *   dragon   → ENDER_DRAGON
@@ -91,7 +92,10 @@ public class GodSpawnHandler {
 
         // Disable vanilla AI
         if (godEntity instanceof EnderDragon dragon) {
-            dragon.getPhaseManager().setPhase(EnderDragonPhase.HOVERING);
+            // FIX CF-2: HOVERING phase calls getDragonFight() which returns null
+            // in non-End dimensions → NullPointerException on first phase tick.
+            // SITTING_FLAPPING_WINGS is safe in all dimensions and looks natural.
+            dragon.getPhaseManager().setPhase(EnderDragonPhase.SITTING_FLAPPING_WINGS);
         } else if (godEntity instanceof net.minecraft.world.entity.Mob mob) {
             mob.setNoAi(true);
         }
@@ -229,7 +233,7 @@ public class GodSpawnHandler {
             case "warden"                 -> EntityType.WARDEN;
             case "elder_guardian"         -> EntityType.ELDER_GUARDIAN;
             case "oracle"                 -> EntityType.EVOKER;   // CHANGED: Wandering Trader → Evoker
-            case "creaking"               -> EntityType.WARDEN;   // CHANGED: Evoker → Warden (no random Vex spawns)
+            case "creaking"               -> com.divineworld.entity.ModEntities.AI_CREAKING.get();
             default                       -> null;
         };
     }
@@ -256,6 +260,25 @@ public class GodSpawnHandler {
 
     public static Entity getGodEntity(UUID playerUuid) {
         return GOD_ENTITY_MAP.get(playerUuid);
+    }
+
+    /**
+     * Trigger a GeckoLib animation on the god body entity if it is an
+     * AICreakingEntity (GeoEntity). Safe to call for any god type — no-ops
+     * for vanilla boss entities that don't implement GeoEntity.
+     *
+     * @param playerUuid      UUID of the god puppet player
+     * @param controllerName  "base_controller" or "ability_controller"
+     * @param animName        animation ID matching the .animation.json entry
+     */
+    public static void triggerGodAnimation(java.util.UUID playerUuid,
+                                           String controllerName,
+                                           String animName) {
+        Entity body = GOD_ENTITY_MAP.get(playerUuid);
+        if (body instanceof com.divineworld.entity.AICreakingEntity creaking) {
+            creaking.triggerAnim(controllerName, animName);
+        }
+        // Future: add more GeoEntity god types here as they are implemented
     }
 
     @SubscribeEvent

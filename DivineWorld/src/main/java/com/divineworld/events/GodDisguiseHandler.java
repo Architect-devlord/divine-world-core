@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/events/GodDisguiseHandler.java
+// DivineWorld server mod
 package com.divineworld.events;
 
 import com.divineworld.DWMod;

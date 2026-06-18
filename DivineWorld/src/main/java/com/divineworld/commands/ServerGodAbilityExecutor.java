@@ -1,4 +1,5 @@
 // src/main/java/com/divineworld/commands/ServerGodAbilityExecutor.java
+// DivineWorld server mod
 package com.divineworld.commands;
 
 import com.divineworld.DWMod;
@@ -142,7 +143,7 @@ public class ServerGodAbilityExecutor {
     // =========================================================================
 
     private static void executeWardenAbility(ServerPlayer player, LivingEntity attacker,
-                                              String ability, ServerLevel level) {
+                                             String ability, ServerLevel level) {
         switch (ability) {
 
             case "sonic_boom" -> {
@@ -152,7 +153,7 @@ public class ServerGodAbilityExecutor {
                 for (double d = 0; d <= 30; d += 0.5) {
                     Vec3 point  = start.add(look.scale(d));
                     AABB hitBox = new AABB(point.x-1.5, point.y-1.5, point.z-1.5,
-                                          point.x+1.5, point.y+1.5, point.z+1.5);
+                            point.x+1.5, point.y+1.5, point.z+1.5);
                     for (LivingEntity target : level.getEntitiesOfClass(LivingEntity.class, hitBox,
                             e -> e != player && e.isAlive())) {
                         target.hurt(level.damageSources().magic(), 25.0f);
@@ -243,7 +244,7 @@ public class ServerGodAbilityExecutor {
     // =========================================================================
 
     private static void executeWitherAbility(ServerPlayer player, LivingEntity attacker,
-                                              String ability, ServerLevel level) {
+                                             String ability, ServerLevel level) {
         switch (ability) {
 
             case "wither_skull", "blue_skull" -> {
@@ -323,7 +324,7 @@ public class ServerGodAbilityExecutor {
     // =========================================================================
 
     private static void executeDragonAbility(ServerPlayer player, LivingEntity attacker,
-                                              String ability, ServerLevel level) {
+                                             String ability, ServerLevel level) {
         switch (ability) {
 
             case "dragon_breath" -> {
@@ -374,7 +375,7 @@ public class ServerGodAbilityExecutor {
     // =========================================================================
 
     private static void executeElderGuardianAbility(ServerPlayer player, LivingEntity attacker,
-                                                     String ability, ServerLevel level) {
+                                                    String ability, ServerLevel level) {
         switch (ability) {
 
             case "mining_fatigue" -> {
@@ -437,7 +438,7 @@ public class ServerGodAbilityExecutor {
     // =========================================================================
 
     private static void executeOracleAbility(ServerPlayer player, LivingEntity attacker,
-                                              String ability, ServerLevel level) {
+                                             String ability, ServerLevel level) {
         switch (ability) {
 
             // ── Evoker-native powers (Oracle controls these as god abilities) ──
@@ -450,9 +451,15 @@ public class ServerGodAbilityExecutor {
                     if (vex != null) {
                         double angle = (Math.PI * 2 * i) / 3;
                         vex.moveTo(player.getX() + Math.cos(angle) * 2,
-                                   player.getY() + 1,
-                                   player.getZ() + Math.sin(angle) * 2, 0, 0);
-                        vex.setOwner(attacker);
+                                player.getY() + 1,
+                                player.getZ() + Math.sin(angle) * 2, 0, 0);
+                        // FIX: setOwner(Mob) — attacker is LivingEntity but god body
+                        // entities (Evoker, Warden, Wither…) all extend Mob.
+                        // If for any reason attacker is not a Mob (e.g. the fallback
+                        // godPlayer ServerPlayer), skip setOwner; the vex still spawns.
+                        if (attacker instanceof net.minecraft.world.entity.Mob mob) {
+                            vex.setOwner(mob);
+                        }
                         vex.setLimitedLife(40 * 20);   // 40 seconds
                         level.addFreshEntity(vex);
                     }
@@ -529,7 +536,7 @@ public class ServerGodAbilityExecutor {
                 for (double d = 0; d <= 40; d += 0.5) {
                     Vec3 p      = start.add(look.scale(d));
                     AABB hitBox = new AABB(p.x-0.8, p.y-0.8, p.z-0.8,
-                                          p.x+0.8, p.y+0.8, p.z+0.8);
+                            p.x+0.8, p.y+0.8, p.z+0.8);
                     for (LivingEntity t : level.getEntitiesOfClass(LivingEntity.class, hitBox,
                             e -> e != player && e.isAlive())) {
                         t.hurt(level.damageSources().magic(), 40.0f);
@@ -562,11 +569,16 @@ public class ServerGodAbilityExecutor {
     // =========================================================================
 
     private static void executeCreakingAbility(ServerPlayer player, LivingEntity attacker,
-                                                String ability, ServerLevel level) {
+                                               String ability, ServerLevel level) {
+        // Helper: get the Creaking body entity for animation triggers
+        java.util.UUID uuid = player.getUUID();
+
         switch (ability) {
 
+            // ── Tentacle whip — damage + animation ───────────────────────
             case "tentacle_whip" -> {
                 if (isOnCooldown(player, "tentacle_whip")) return;
+                boolean tentaclesOut = isBodyTentaclesDeployed(uuid);
                 for (LivingEntity target : nearbyLiving(player, 8)) {
                     target.hurt(level.damageSources().mobAttack(attacker), 12.0f);
                     Vec3 knock = target.position().subtract(player.position()).normalize();
@@ -575,9 +587,14 @@ public class ServerGodAbilityExecutor {
                 level.sendParticles(ParticleTypes.SPORE_BLOSSOM_AIR,
                         player.getX(), player.getY() + 1, player.getZ(),
                         50, 2, 0.5, 2, 0.03);
+                // FIX CF-1: trigger animation on body entity
+                // Use tentacles_attack when tentacles are deployed, attack otherwise
+                GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller",
+                        tentaclesOut ? "tentacles_attack" : "attack");
                 setCooldown(player, "tentacle_whip", 40);
             }
 
+            // ── Life steal — grab and drain ───────────────────────────────
             case "life_steal" -> {
                 if (isOnCooldown(player, "life_steal")) return;
                 float stolen = 0;
@@ -588,36 +605,14 @@ public class ServerGodAbilityExecutor {
                     }
                 }
                 if (stolen > 0) player.heal(stolen * 0.5f);
+                GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller", "grab_eat");
                 setCooldown(player, "life_steal", 80);
             }
 
-            case "toggle_underground" -> {
-                if (isOnCooldown(player, "toggle_underground")) return;
-                player.noPhysics = !player.noPhysics;
-                level.sendParticles(ParticleTypes.ASH,
-                        player.getX(), player.getY(), player.getZ(),
-                        30, 0.5, 0.2, 0.5, 0.05);
-                setCooldown(player, "toggle_underground", 40);
-            }
-
-            case "toggle_ceiling" -> {
-                if (isOnCooldown(player, "toggle_ceiling")) return;
-                boolean currentlyUp = player.hasEffect(MobEffects.LEVITATION);
-                if (!currentlyUp) {
-                    player.addEffect(new MobEffectInstance(MobEffects.LEVITATION, 100, 3));
-                    player.noPhysics = true;
-                } else {
-                    player.removeEffect(MobEffects.LEVITATION);
-                    player.noPhysics = false;
-                }
-                level.sendParticles(ParticleTypes.ASH,
-                        player.getX(), player.getY(), player.getZ(),
-                        30, 0.5, 0.2, 0.5, 0.05);
-                setCooldown(player, "toggle_ceiling", 40);
-            }
-
+            // ── Deploy tentacles ──────────────────────────────────────────
             case "deploy_tentacles" -> {
                 if (isOnCooldown(player, "deploy_tentacles")) return;
+                setBodyTentaclesDeployed(uuid, true);
                 for (LivingEntity target : nearbyLiving(player, 6)) {
                     target.hurt(level.damageSources().magic(), 8.0f);
                     target.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 60, 3));
@@ -625,10 +620,103 @@ public class ServerGodAbilityExecutor {
                 level.sendParticles(ParticleTypes.SPORE_BLOSSOM_AIR,
                         player.getX(), player.getY() + 1, player.getZ(),
                         40, 1.5, 0.5, 1.5, 0.02);
+                GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller", "tentacles_out");
                 setCooldown(player, "deploy_tentacles", 100);
+            }
+
+            // ── Retract tentacles ─────────────────────────────────────────
+            case "retract_tentacles" -> {
+                if (isOnCooldown(player, "retract_tentacles")) return;
+                setBodyTentaclesDeployed(uuid, false);
+                GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller", "tentacles_retract");
+                setCooldown(player, "retract_tentacles", 40);
+            }
+
+            // ── Underground / burrow — AI controls emerge ─────────────────
+            case "toggle_underground", "burrow" -> {
+                if (isOnCooldown(player, "burrow")) return;
+                // Puppet invulnerability — AICreakingEntity handles visibility via setUnderground()
+                player.getAbilities().invulnerable = true;
+                player.onUpdateAbilities();
+                player.getPersistentData().putBoolean("dw_burrowed", true);
+                setBodyUnderground(uuid, true);
+                GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller", "burrow");
+                level.sendParticles(ParticleTypes.ASH,
+                        player.getX(), player.getY(), player.getZ(), 30, 0.5, 0.2, 0.5, 0.05);
+                setCooldown(player, "burrow", 200);
+                DWMod.LOGGER.info("[Creaking] {} burrowed — AI controls emerge", player.getName().getString());
+            }
+
+            // ── Emerge — AI sends this when ready to surface ──────────────
+            case "emerge", "dig_out" -> {
+                if (!player.getPersistentData().getBoolean("dw_burrowed")) return;
+                player.getPersistentData().putBoolean("dw_burrowed", false);
+                player.getAbilities().invulnerable = false;
+                player.onUpdateAbilities();
+                setBodyUnderground(uuid, false);
+                GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller", "dig_out");
+                for (LivingEntity target : nearbyLiving(player, 5)) {
+                    target.hurt(level.damageSources().mobAttack(attacker), 18.0f);
+                    Vec3 knock = target.position().subtract(player.position()).normalize();
+                    target.push(knock.x * 2.5, 1.5, knock.z * 2.5);
+                }
+                level.sendParticles(ParticleTypes.SCULK_CHARGE_POP,
+                        player.getX(), player.getY(), player.getZ(), 60, 1, 0.2, 1, 0.1);
+                DWMod.LOGGER.info("[Creaking] {} emerged", player.getName().getString());
+            }
+
+            // ── Ceiling mode — wall-climb entrance leap ───────────────────
+            case "toggle_ceiling" -> {
+                if (isOnCooldown(player, "toggle_ceiling")) return;
+                boolean currentlyUp = isBodyOnCeiling(uuid);
+                if (!currentlyUp) {
+                    player.addEffect(new MobEffectInstance(MobEffects.LEVITATION, 60, 3));
+                    player.noPhysics = true;
+                    setBodyOnCeiling(uuid, true);
+                    GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller", "tentacles_jump");
+                } else {
+                    player.removeEffect(MobEffects.LEVITATION);
+                    player.noPhysics = false;
+                    setBodyOnCeiling(uuid, false);
+                }
+                level.sendParticles(ParticleTypes.ASH,
+                        player.getX(), player.getY(), player.getZ(), 30, 0.5, 0.2, 0.5, 0.05);
+                setCooldown(player, "toggle_ceiling", 40);
             }
 
             default -> DWMod.LOGGER.warn("[AbilityExecutor] Unknown creaking ability: {}", ability);
         }
+    }
+
+    // ── Body entity state helpers ─────────────────────────────────────────────
+
+    private static com.divineworld.entity.AICreakingEntity getCreakingBody(java.util.UUID uuid) {
+        net.minecraft.world.entity.Entity e = GodSpawnHandler.getGodEntity(uuid);
+        return e instanceof com.divineworld.entity.AICreakingEntity c ? c : null;
+    }
+
+    private static boolean isBodyTentaclesDeployed(java.util.UUID uuid) {
+        com.divineworld.entity.AICreakingEntity c = getCreakingBody(uuid);
+        return c != null && c.isTentaclesDeployed();
+    }
+
+    private static void setBodyTentaclesDeployed(java.util.UUID uuid, boolean v) {
+        com.divineworld.entity.AICreakingEntity c = getCreakingBody(uuid);
+        if (c != null) c.setTentaclesDeployed(v);
+    }
+
+    private static boolean isBodyOnCeiling(java.util.UUID uuid) {
+        com.divineworld.entity.AICreakingEntity c = getCreakingBody(uuid);
+        return c != null && c.isOnCeiling();
+    }
+
+    private static void setBodyOnCeiling(java.util.UUID uuid, boolean v) {
+        com.divineworld.entity.AICreakingEntity c = getCreakingBody(uuid);
+        if (c != null) c.setOnCeiling(v);
+    }
+
+    private static void setBodyUnderground(java.util.UUID uuid, boolean v) {
+        com.divineworld.entity.AICreakingEntity c = getCreakingBody(uuid);
+        if (c != null) c.setUnderground(v);
     }
 }

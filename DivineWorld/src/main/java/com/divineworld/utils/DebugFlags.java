@@ -1,3 +1,5 @@
+// src/main/java/com/divineworld/utils/DebugFlags.java
+// DivineWorld server mod
 package com.divineworld.utils;
 
 import java.util.HashSet;

@@ -51,7 +51,7 @@ from typing import Dict, Any, List
 from ai_core.los_filter import filter_entities_by_los, filter_blocks_by_los
 
 OBS_DIM            = 128
-BLOCK_TYPE_BUCKETS = 27
+# BLOCK_TYPE_BUCKETS removed (Step 5) — see module docstring below.
 N_TRACKED_ENTITIES = 4
 N_INVENTORY_SLOTS  = 18
 
@@ -116,12 +116,22 @@ def build_observation(agent, world_state: Dict[str, Any]) -> np.ndarray:
     idx += 8
 
     # ── [23–49] Block neighbourhood 3×3×3 (27 blocks × 1 dim) ───────────
-    # type_bucket only — no hardness. Hardness is felt through mining
-    # outcomes (reward), not pre-given in perception.
+    # Step 5: block identity removed entirely — no raw ID, no bucket, no
+    # material category. Each cell is a single passability bit (0.0 = solid/
+    # collidable, 1.0 = air or liquid or any block with no collision shape)
+    # decoded directly from the Java-side uint32 bitmask.
+    #
+    # Why: OnlineVisualVocabulary in vision.py already handles block recognition
+    # properly — it's an online clustering system over real captured CNN features
+    # that lets the agent form its own visual categories from experience, with no
+    # hand-given labels. A structured type ID sitting alongside it would be a
+    # cheap shortcut that undermines the harder-won self-organizing pathway.
+    # Also: the old _block_type_bucket() / BLOCK_TYPE_BUCKETS approach produced
+    # values up to id/27 ≈ 12.96 for registry IDs > 27, breaking [0,1] normalization.
     blocks = filter_blocks_by_los(world_state.get('nearby_blocks', []))
     for i in range(27):
         if i < len(blocks):
-            obs[idx] = _block_type_bucket(blocks[i]) / BLOCK_TYPE_BUCKETS
+            obs[idx] = float(blocks[i])  # already 0.0 or 1.0 from the decoder
         idx += 1
 
     # ── [50–85] Inventory (18 slots × 2 dims) ───────────────────────────
@@ -189,19 +199,7 @@ def _centered(v: float, scale: float) -> float:
     return float(np.clip(v / scale, -1.0, 1.0))
 
 
-def _block_type_bucket(block: Any) -> float:
-    """
-    Accept any of: bare int type id, (type, hardness) tuple (legacy Java
-    wire format — hardness discarded), or {'type': ...} dict.
-    """
-    if isinstance(block, dict):
-        return float(block.get('type', block.get('type_bucket', 0)))
-    if isinstance(block, (tuple, list)):
-        return float(block[0]) if block else 0.0
-    try:
-        return float(block)
-    except (TypeError, ValueError):
-        return 0.0
+# _block_type_bucket() removed (Step 5) — see block neighbourhood section above.
 
 
 def _unpack_inventory_slot(slot: Any):

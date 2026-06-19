@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DW Human Controller</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #080b12; overflow: hidden; }
@@ -463,8 +463,8 @@
               value={selAgent?.agent || ''}
               onChange={e => connectAgent(e.target.value)}>
               <option value="">— Select Agent —</option>
-              {agents.map(a => (
-                <option key={a.name} value={a.name}>
+              {agents.map((a, idx) => (
+                <option key={`${a.type}-${a.name}-${idx}`} value={a.name}>
                   {a.type === 'god' ? (GOD_ICN[a.god_type] || '✨') : '👤'}{' '}
                   {a.name}  ({a.type}{a.god_type ? '/'+a.god_type : ''})  :{a.tcp_port}
                 </option>

@@ -96,8 +96,17 @@ class PerceptionFrame:
     position: tuple   # (x, y, z)
     rotation: tuple   # (yaw, pitch)
 
-    # Entities: list of (type_id: int, name: str, distance: float, angle: float)
+    # Entities: list of dicts with keys:
+    #   type_id, name, distance, angle         (original fields — unchanged on wire)
+    #   rel_dx, rel_dy, rel_dz, movement_speed (Step 1 — new egocentric physics fields)
+    # type_id/name stay in the dict for memory tagging and debug display;
+    # obs_builder.py must NOT read them into the policy observation vector.
     entities: list
+
+    # Step 2 — 3×3×3 block neighbourhood: 27 floats, each 0.0 (solid) or 1.0 (passable).
+    # Decoded from a uint32 bitmask (27 bits used, LSB = cell 0, forward/right/up order).
+    # Empty list when the Java mod is an older version that doesn't send this section.
+    nearby_blocks: list = None
 
     # Optional raw PCM audio from server-side microphone capture
     audio_data: Optional[bytes] = None
@@ -232,12 +241,28 @@ class BinaryProtocol:
 
         buf.write(struct.pack('!H', len(frame.entities)))
         for entity in frame.entities:
-            type_id, name, distance, angle = entity
+            # Step 3: entities are now dicts; also accept legacy tuples from callers
+            # that haven't been updated yet (human_controller_server, older test stubs).
+            if isinstance(entity, dict):
+                type_id        = entity.get('type_id', 0)
+                name           = entity.get('name', '')
+                distance       = entity.get('distance', 0.0)
+                angle          = entity.get('angle', 0.0)
+                rel_dx         = entity.get('rel_dx', 0.0)
+                rel_dy         = entity.get('rel_dy', 0.0)
+                rel_dz         = entity.get('rel_dz', 0.0)
+                movement_speed = entity.get('movement_speed', 0.0)
+            else:
+                # Legacy tuple: (type_id, name, distance, angle)
+                type_id, name, distance, angle = entity
+                rel_dx = rel_dy = rel_dz = movement_speed = 0.0
             name_bytes = (name or "").encode('utf-8')
             buf.write(struct.pack('!B', int(type_id)))
             buf.write(struct.pack('!I', len(name_bytes)))
             buf.write(name_bytes)
             buf.write(struct.pack('!ff', float(distance), float(angle)))
+            buf.write(struct.pack('!ffff',
+                float(rel_dx), float(rel_dy), float(rel_dz), float(movement_speed)))
 
         if frame.audio_data:
             buf.write(struct.pack('!I', len(frame.audio_data)))
@@ -253,6 +278,15 @@ class BinaryProtocol:
             ev_bytes = json.dumps(ev).encode('utf-8')
             buf.write(struct.pack('!I', len(ev_bytes)))
             buf.write(ev_bytes)
+
+        # Step 3: block neighbourhood bitmask (uint32, 27 bits used).
+        # Re-pack the list of floats back into the same bitmask format.
+        blocks = frame.nearby_blocks or []
+        block_mask = 0
+        for i, v in enumerate(blocks[:27]):
+            if v:
+                block_mask |= (1 << i)
+        buf.write(struct.pack('!I', block_mask))
 
         return buf.getvalue()
 
@@ -282,11 +316,30 @@ class BinaryProtocol:
         entity_count = struct.unpack('!H', buf.read(2))[0]
         entities = []
         for _ in range(entity_count):
-            type_id = struct.unpack('!B', buf.read(1))[0]
+            type_id  = struct.unpack('!B', buf.read(1))[0]
             name_len = struct.unpack('!I', buf.read(4))[0]
-            name = buf.read(name_len).decode('utf-8')
+            name     = buf.read(name_len).decode('utf-8')
             distance, angle = struct.unpack('!ff', buf.read(8))
-            entities.append((type_id, name, distance, angle))
+            # Step 3: decode 4 new egocentric float32 fields appended by Step 1 Java change.
+            # The try-except keeps decoding working against older mod builds that send the
+            # original 9-byte-per-entity format — they'll just be missing the new fields.
+            try:
+                rel_dx, rel_dy, rel_dz, movement_speed = struct.unpack('!ffff', buf.read(16))
+            except Exception:
+                rel_dx = rel_dy = rel_dz = movement_speed = 0.0
+            # Build dict — obs_builder.py already calls .get() on each entity and
+            # expects this shape. type_id/name stay for memory tagging and debug display;
+            # obs_builder.py must NOT read them into the policy vector.
+            entities.append({
+                'type_id':        type_id,
+                'name':           name,
+                'distance':       distance,
+                'angle':          angle,
+                'rel_dx':         rel_dx,
+                'rel_dy':         rel_dy,
+                'rel_dz':         rel_dz,
+                'movement_speed': movement_speed,
+            })
 
         audio_len = struct.unpack('!I', buf.read(4))[0]
         audio_data = None
@@ -308,6 +361,20 @@ class BinaryProtocol:
         except Exception:
             pass   # older mod versions without sound event support
 
+        # Step 3: decode block neighbourhood bitmask (appended last by Step 2).
+        # 27 bits packed into one uint32. Placed in its own try-except so older
+        # mod versions that don't send this section produce an empty list rather
+        # than a decoding error — same strategy as sound events above.
+        nearby_blocks = []
+        try:
+            block_mask = struct.unpack('!I', buf.read(4))[0]
+            nearby_blocks = [
+                1.0 if (block_mask >> i) & 1 else 0.0
+                for i in range(27)
+            ]
+        except Exception:
+            pass  # older mod without block neighbourhood support
+
         return PerceptionFrame(
             agent_id=agent_id,
             timestamp=timestamp,
@@ -319,6 +386,7 @@ class BinaryProtocol:
             position=position,
             rotation=rotation,
             entities=entities,
+            nearby_blocks=nearby_blocks or None,
             audio_data=audio_data,
             audio_sample_rate=audio_sample_rate,
             sound_events=sound_events or None,
@@ -955,34 +1023,43 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
 
             # ── 4. Build info dict for agent.observe() ────────────────────
             info = {
-                'health':    perception.health,
-                'hunger':    perception.hunger,
-                'position':  perception.position,
-                'rotation':  perception.rotation,
-                'entities':  perception.entities,
-                'timestamp': perception.timestamp,
+                'health':          perception.health,
+                'hunger':          perception.hunger,
+                'position':        perception.position,
+                'rotation':        perception.rotation,
+                # Step 4: was 'entities' — renamed to 'nearby_entities' to match
+                # the key obs_builder.py expects (it was silently missing every tick).
+                'nearby_entities': perception.entities,
+                'nearby_blocks':   perception.nearby_blocks or [],   # Step 4 new
+                'timestamp':       perception.timestamp,
             }
 
             # ── 5. Agent observation ──────────────────────────────────────
             # observe() stores the visual frame in memory/vision pipeline
             # but returns shape (3,84,84) which the policy cannot use.
-            # Policy expects 50-dim obs (Box(50,) per env.py).
-            # perceive() builds the correct 50-dim vector and updates agent.last_obs.
+            # Step 4: stale comment removed — policy now uses the Phase 6 128-dim
+            # obs_builder (Box(128,) per rl_env.py after the plan-divine-world-core
+            # wiring); perceive() calls build_observation() and updates agent.last_obs.
             agent.observe(frame_bgr, info)
             agent.health = perception.health
             agent.hunger = perception.hunger
             obs = agent.perceive({
-                'health':   perception.health,
-                'hunger':   perception.hunger,
+                'health':          perception.health,
+                'hunger':          perception.hunger,
                 'position': {
                     'x': perception.position[0],
                     'y': perception.position[1],
                     'z': perception.position[2],
                 },
-                'yaw':      perception.rotation[0],
-                'pitch':    perception.rotation[1],
-                'entities': perception.entities,
-            })   # returns 50-dim ndarray, updates agent.last_obs
+                'yaw':             perception.rotation[0],
+                'pitch':           perception.rotation[1],
+                # Step 4: was 'entities' — the wrong key caused obs_builder.py
+                # to see an empty entity list on every single tick, silently
+                # zeroing the 20-dim entity block of every observation produced
+                # since Phase 6 was deployed.  'nearby_entities' is the correct key.
+                'nearby_entities': perception.entities,
+                'nearby_blocks':   perception.nearby_blocks or [],   # Step 4 new
+            })   # Step 4: returns 128-dim ndarray (Phase 6 obs_builder), updates agent.last_obs
 
             # ── 6. Route Minecraft audio through AudioProcessor ───────────
             # The Minecraft mod captures in-world audio (mob sounds, ambient,

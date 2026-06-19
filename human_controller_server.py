@@ -38,6 +38,7 @@ import uvicorn
 import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -348,6 +349,15 @@ async def _dispatch(msg: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="DW Human Controller", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.get("/")
+async def root():
+    """Serve the HTML controller file"""
+    html_file = Path(__file__).parent / "dw_controller.html"
+    if not html_file.exists():
+        raise HTTPException(404, "dw_controller.html not found")
+    return FileResponse(html_file, media_type="text/html")
 
 
 @app.get("/api/agents")

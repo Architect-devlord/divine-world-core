@@ -337,13 +337,15 @@ public class WebSocketManager {
                     byte[] imageData = VisionCaptureSystem.encodePixelsToJPEG(pixels, imgW, imgH);
                     if (imageData == null) return;
 
+                    int blockMask = collectBlockNeighbourhood(mc);  // Step 2
                     ByteBuffer frame = buildPerceptionFrame(
                         imageData,
                         audioData != null ? audioData : new byte[0],
                         health, hunger, x, y, z, yaw, pitch,
                         imgW, imgH,
                         entities,
-                        soundEvents
+                        soundEvents,
+                        blockMask
                     );
 
                     WebSocket ws = webSocket;
@@ -368,13 +370,27 @@ public class WebSocketManager {
         final byte   typeId;
         final String name;
         final float  distance;
-        final float  angle;  // degrees, relative to player yaw
+        final float  angle;         // degrees, relative to player yaw (0 = in front)
 
-        EntityInfo(byte typeId, String name, float distance, float angle) {
-            this.typeId   = typeId;
-            this.name     = name;
-            this.distance = distance;
-            this.angle    = angle;
+        // Step 1 — egocentric relative position (same rotation convention as angle).
+        // relDx = forward component (+ve = ahead), relDz = right component (+ve = right),
+        // relDy = vertical offset (+ve = above player eye).  movementSpeed = scalar
+        // magnitude of getDeltaMovement(); forced to 0 for ENTITY_UNKNOWN (audible-only).
+        final float  relDx;
+        final float  relDy;
+        final float  relDz;
+        final float  movementSpeed;
+
+        EntityInfo(byte typeId, String name, float distance, float angle,
+                   float relDx, float relDy, float relDz, float movementSpeed) {
+            this.typeId        = typeId;
+            this.name          = name;
+            this.distance      = distance;
+            this.angle         = angle;
+            this.relDx         = relDx;
+            this.relDy         = relDy;
+            this.relDz         = relDz;
+            this.movementSpeed = movementSpeed;
         }
     }
 
@@ -449,7 +465,18 @@ public class WebSocketManager {
             if (regName.length() > 48) regName = regName.substring(0, 48);
 
             visibleIds.add(entity.getUUID());
-            result.add(new EntityInfo(typeId, regName, dist, angle));
+
+            // Step 1: derive egocentric forward/right/vertical offsets from the
+            // already-computed relative angle, guaranteeing the same rotation
+            // convention as computeRelativeAngle() with no independent trig.
+            Vec3  entityCentreForSpeed = entity.getBoundingBox().getCenter();
+            float angleRad    = (float) Math.toRadians(angle);
+            float relDxVal    = dist * (float) Math.cos(angleRad);   // forward
+            float relDzVal    = dist * (float) Math.sin(angleRad);   // right
+            float relDyVal    = (float) (entityCentreForSpeed.y - eyePos.y);
+            float speedVal    = (float) entity.getDeltaMovement().length();
+            result.add(new EntityInfo(typeId, regName, dist, angle,
+                                      relDxVal, relDyVal, relDzVal, speedVal));
         }
 
         // ── Phase 2: nearby-but-not-visible (audible range) ───────────────
@@ -470,7 +497,14 @@ public class WebSocketManager {
 
                 // ENTITY_UNKNOWN + empty name: agent senses presence but cannot
                 // identify it without turning to look.  Encourages exploration behaviour.
-                result.add(new EntityInfo(ENTITY_UNKNOWN, "", dist, angle));
+                // Step 1: full position info for audible entities; movement_speed forced to
+                // 0 since speed can't be inferred from sound alone (per plan spec).
+                float aAngleRad = (float) Math.toRadians(angle);
+                float aRelDx    = dist * (float) Math.cos(aAngleRad);
+                float aRelDz    = dist * (float) Math.sin(aAngleRad);
+                float aRelDy    = (float) (entity.getBoundingBox().getCenter().y - eyePos.y);
+                result.add(new EntityInfo(ENTITY_UNKNOWN, "", dist, angle,
+                                          aRelDx, aRelDy, aRelDz, 0f));
             }
         }
 
@@ -487,6 +521,56 @@ public class WebSocketManager {
         // Check if this is the local agent's own god body
         if (GodEntityManager.isGodEntity(entity)) return ENTITY_GOD;
         return ENTITY_UNKNOWN;
+    }
+
+    /**
+     * Step 2 — Collect the 3×3×3 block neighbourhood around the agent's feet,
+     * packed as a single uint32 bitmask (27 bits used, LSB = cell 0).
+     *
+     * Each bit is 1 if the cell is passable (no collision shape: air, liquids,
+     * plants, signs, torches…) or 0 if solid/collidable. This is the only
+     * block signal the agent receives — no type ID, no hardness, no material.
+     *
+     * Sampling order: forward/right/up (egocentric), where forward snaps to the
+     * nearest cardinal direction, keeping "block directly ahead" in a stable slot
+     * regardless of which way the agent faces.
+     */
+    private static int collectBlockNeighbourhood(Minecraft mc) {
+        if (mc.player == null || mc.level == null) return 0;
+
+        Level level  = mc.level;
+        Vec3  pos    = mc.player.position();
+        int   feetX  = (int) Math.floor(pos.x);
+        int   feetY  = (int) Math.floor(pos.y);
+        int   feetZ  = (int) Math.floor(pos.z);
+
+        // Snap yaw to nearest cardinal using the same convention as computeRelativeAngle:
+        // yaw=0 → forward=(0,0,+1)=south, 90 → (+1,0,0)=east, etc.
+        float snapRad = (float) Math.toRadians(Math.round(mc.player.getYRot() / 90f) * 90f);
+        int fwdX = Math.round((float) Math.sin(snapRad));
+        int fwdZ = Math.round((float) Math.cos(snapRad));
+        // Right = forward rotated 90° clockwise (sin→cos, cos→−sin)
+        int rgtX = Math.round((float) Math.cos(snapRad));
+        int rgtZ = -Math.round((float) Math.sin(snapRad));
+
+        int mask = 0;
+        int bit  = 0;
+        // Iterate forward[-1..1], right[-1..1], up[-1..1]
+        for (int f = -1; f <= 1; f++) {
+            for (int r = -1; r <= 1; r++) {
+                for (int u = -1; u <= 1; u++) {
+                    int wx = feetX + f * fwdX + r * rgtX;
+                    int wy = feetY + u;
+                    int wz = feetZ + f * fwdZ + r * rgtZ;
+                    BlockState bs = level.getBlockState(new BlockPos(wx, wy, wz));
+                    // isPassable = 1 when no collision shape (air, liquid, vegetation…)
+                    boolean passable = bs.getCollisionShape(level, new BlockPos(wx, wy, wz)).isEmpty();
+                    if (passable) mask |= (1 << bit);
+                    bit++;
+                }
+            }
+        }
+        return mask;
     }
 
     /**
@@ -565,7 +649,8 @@ public class WebSocketManager {
             float yaw, float pitch,
             int imgW, int imgH,
             List<EntityInfo> entities,
-            List<Map<String, Object>> soundEvents) {
+            List<Map<String, Object>> soundEvents,
+            int blockMask) {       // Step 2: 27-bit passability bitmask
 
         byte[] idBytes = agentId.getBytes(StandardCharsets.UTF_8);
         boolean hasAudio = audioData.length > 0;
@@ -574,13 +659,19 @@ public class WebSocketManager {
         List<byte[]> entityBlobs = new ArrayList<>();
         for (EntityInfo ei : entities) {
             byte[] nameBytes = ei.name.getBytes(StandardCharsets.UTF_8);
-            // 1(typeId) + 4(nameLen) + N(name) + 4(dist) + 4(angle)
-            ByteBuffer eb = ByteBuffer.allocate(1 + 4 + nameBytes.length + 4 + 4);
+            // Step 1: extended entity format (additive — existing fields unchanged):
+            //   1(typeId) + 4(nameLen) + N(name) + 4(dist) + 4(angle)
+            //   + 4(relDx) + 4(relDy) + 4(relDz) + 4(movementSpeed)
+            ByteBuffer eb = ByteBuffer.allocate(1 + 4 + nameBytes.length + 4 + 4 + 4 + 4 + 4 + 4);
             eb.put(ei.typeId);
             eb.putInt(nameBytes.length);
             eb.put(nameBytes);
             eb.putFloat(ei.distance);
             eb.putFloat(ei.angle);
+            eb.putFloat(ei.relDx);
+            eb.putFloat(ei.relDy);
+            eb.putFloat(ei.relDz);
+            eb.putFloat(ei.movementSpeed);
             entityBlobs.add(eb.array());
         }
 
@@ -617,7 +708,8 @@ public class WebSocketManager {
                   + 4 + 4                           // yaw, pitch
                   + 2 + entityBytes                 // entities
                   + audioSection
-                  + soundSection;
+                  + soundSection
+                  + 4;                              // Step 2: block neighbourhood (uint32 bitmask)
 
         ByteBuffer buf = ByteBuffer.allocate(total);
 
@@ -657,6 +749,11 @@ public class WebSocketManager {
             buf.putInt(sb.length);
             buf.put(sb);
         }
+
+        // Step 2: block neighbourhood — 27-bit passability bitmask packed into uint32.
+        // Appended last so all older fields are at unchanged byte offsets; Python decoder
+        // reads this inside a try-except exactly like it handles sound events.
+        buf.putInt(blockMask);
 
         buf.flip();
         return buf;

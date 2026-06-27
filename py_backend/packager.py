@@ -294,6 +294,15 @@ class AgentPackager:
         agent_name:         Optional[str] = None,
         gender:             str = "neutral",
         agent_type:         str = "npc",
+        # FIX (Consolidate Duplicate Implementations plan, Step 5): mode was
+        # missing entirely — the packaged executable had no way to know
+        # whether it should run as chat/minecraft/autonomous, so launch()
+        # always did the same bare-NPCAgent-plus-FastAPI thing regardless.
+        # Mirrors run_standalone_agent()'s own `mode` parameter semantics
+        # exactly (agent.py) — not to be confused with agent_type above,
+        # which is the god-type concept (npc/wither/oracle/etc), a
+        # completely separate axis.
+        mode:                str = "minecraft",
         icon_path:          Optional[str] = None,
         include_frontend:   bool = True,
         include_mod:        bool = True,
@@ -302,7 +311,11 @@ class AgentPackager:
         agent=None,         # live NPCAgent; used to auto-save brain if .pcap missing
     ) -> Dict[str, str]:
         """Build a self-contained executable for an agent."""
-        log.info(f"📦 Packaging {agent_id} (type={agent_type}, gender={gender})")
+        log.info(f"📦 Packaging {agent_id} (type={agent_type}, gender={gender}, mode={mode})")
+
+        if mode not in ('chat', 'minecraft', 'autonomous'):
+            log.warning(f"Unknown mode '{mode}' — falling back to 'minecraft'")
+            mode = 'minecraft'
 
         brain_path = Path(brain_capsule_path)
         if not brain_path.exists():
@@ -364,9 +377,9 @@ class AgentPackager:
         # ── Launcher + config ─────────────────────────────────────────
         launcher_path = self._create_launcher(
             agent_id, agent_dir, frontend_included, agent_type,
-            backend_port, minecraft_name,
+            backend_port, minecraft_name, mode,
         )
-        config_path = self._create_config(agent_id, agent_dir, gender, agent_type, backend_port)
+        config_path = self._create_config(agent_id, agent_dir, gender, agent_type, backend_port, mode)
 
         # ── Build .exe ────────────────────────────────────────────────
         exe_path     = self._build_executable(agent_id, launcher_path, agent_dir, icon_path, frontend_included)
@@ -499,9 +512,18 @@ class AgentPackager:
 
     def _create_launcher(self, agent_id: str, agent_dir: Path,
                           has_frontend: bool, agent_type: str,
-                          backend_port: int, minecraft_name: str) -> Path:
+                          backend_port: int, minecraft_name: str,
+                          mode: str = "minecraft") -> Path:
         """
         Generate launcher.py.
+
+        FIX (Consolidate Duplicate Implementations plan, Step 5): mode was
+        previously not a parameter at all — the generated launcher always
+        constructed a bare NPCAgent and started only the FastAPI server,
+        regardless of whether this was meant to be a chat/minecraft/
+        autonomous deployment. See launch()'s body below for the actual
+        mode-aware dispatch (chat -> start_autonomous_speech(), minecraft/
+        autonomous -> start_autonomous_mode()/CognitiveLoop).
 
         When frozen (sys.frozen=True):
           - BASE_DIR  = sys._MEIPASS   (extracted bundle, read-only)
@@ -590,6 +612,13 @@ import json, logging, time, threading, webbrowser
 AGENT_ID       = "{agent_id}"
 MINECRAFT_NAME = "{minecraft_name}"
 AGENT_TYPE     = "{agent_type}"
+# FIX (Consolidate Duplicate Implementations plan, Step 5): MODE was missing
+# entirely — launch() always did the same bare-NPCAgent-plus-FastAPI thing
+# regardless of chat/minecraft/autonomous. Baked in at packaging time, but
+# (matching how BACKEND_PORT below already works) load_config() at the
+# bottom of this file lets a user override it post-packaging by editing
+# config.json directly, without needing to repackage.
+MODE           = "{mode}"
 BRAIN_PATH     = AGENT_DIR / "brain.pcap"
 CONFIG_PATH    = AGENT_DIR / "config.json"
 FRONTEND_PATH  = AGENT_DIR / "frontend"
@@ -606,7 +635,7 @@ def load_config():
         with open(CONFIG_PATH) as f:
             return json.load(f)
     return {{"agent_id": AGENT_ID, "backend_port": BACKEND_PORT,
-             "default_server": "127.0.0.1:25565"}}
+             "mode": MODE, "default_server": "127.0.0.1:25565"}}
 
 
 def is_server_up(host, port, timeout=2.0):
@@ -667,13 +696,64 @@ def try_ultimmc(server_addr, agent_name):
         return False
 
 
+def _run_async_loop(coro_fn):
+    """
+    Run an async agent loop method (start_autonomous_mode / start_autonomous_
+    speech — both async def, both expected to run until stopped) on its own
+    background thread with a private event loop.
+
+    FIX (Consolidate Duplicate Implementations plan, Step 5): launch() itself
+    is synchronous (mirrors start_backend()'s own daemon-thread pattern just
+    above for uvicorn) — neither of those coroutines can simply be awaited
+    inline here. Returns the Thread so launch()'s shutdown path can join it
+    briefly, though both loops are cooperative (flag-based) and the thread is
+    already a daemon, so the process exiting cleans it up regardless.
+    """
+    def _runner():
+        import asyncio as _asyncio
+        loop = _asyncio.new_event_loop()
+        _asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(coro_fn())
+        except Exception as e:
+            log.error(f"Background agent loop failed: {{e}}")
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    return t
+
+
+def _serve_frontend(backend_port):
+    """Serve the bundled frontend over HTTP and open it in the default browser."""
+    import http.server, socketserver
+    fp = backend_port + 1
+    class H(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(FRONTEND_PATH), **kw)
+        def log_message(self, *a): pass
+    t = threading.Thread(
+        target=lambda: socketserver.TCPServer(("", fp), H).__enter__().serve_forever(),
+        daemon=True,
+    )
+    t.start()
+    time.sleep(1)
+    webbrowser.open(f"http://localhost:{{fp}}")
+
+
 def launch():
     cfg            = load_config()
     backend_port   = cfg.get('backend_port', BACKEND_PORT)
+    # FIX (Consolidate Duplicate Implementations plan, Step 5): read mode
+    # from config.json with the baked-in MODE constant as fallback — same
+    # pattern backend_port already uses, so editing config.json post-
+    # packaging can change mode without repackaging.
+    mode = cfg.get('mode', MODE)
+    if mode not in ('chat', 'minecraft', 'autonomous'):
+        log.warning(f"Unknown mode '{{mode}}' in config — falling back to 'minecraft'")
+        mode = 'minecraft'
     default_server = cfg.get('default_server', '127.0.0.1:25565')
     srv_host, srv_port = (default_server.split(':') + ['25565'])[:2]
 
-    log.info(f"Loading brain from {{BRAIN_PATH}}…")
+    log.info(f"Loading brain from {{BRAIN_PATH}}… (mode={{mode}})")
     if getattr(sys, 'frozen', False):
         from agent          import NPCAgent
         from brain_language import add_language_to_brain
@@ -681,7 +761,22 @@ def launch():
         from ai_core.agent          import NPCAgent
         from ai_core.brain_language import add_language_to_brain
 
-    agent = NPCAgent(AGENT_ID)
+    # FIX (Consolidate Duplicate Implementations plan, Step 5): was a bare
+    # NPCAgent(AGENT_ID) — mode/god_type were never passed at all, so this
+    # constructor call was identical regardless of what kind of agent or
+    # deployment this was supposed to be. Mirrors run_standalone_agent()'s
+    # own construction call (agent.py) exactly, including the same
+    # autonomous=(mode=='autonomous') convention — that flag only controls
+    # whether CognitiveLoop is eagerly pre-built during __init__; the actual
+    # mode-specific loop is started explicitly below regardless, since
+    # start_autonomous_mode() builds CognitiveLoop itself on demand if it
+    # isn't already there.
+    agent = NPCAgent(
+        AGENT_ID,
+        mode=mode,
+        god_type=(AGENT_TYPE if AGENT_TYPE != 'npc' else None),
+        autonomous=(mode == 'autonomous'),
+    )
     if BRAIN_PATH.exists():
         try:
             agent.load(str(BRAIN_PATH))
@@ -696,31 +791,43 @@ def launch():
     if not start_backend(backend_port):
         sys.exit(1)
 
-    server_up = is_server_up(srv_host, int(srv_port))
-    if server_up:
-        print(f"🎮 Server detected at {{default_server}}")
-        if not try_ultimmc(default_server, MINECRAFT_NAME):
-            log.info("Manual Minecraft join required — see README")
-            print(f"\\n  ⚠️  UltimMC launch failed. Manual setup needed:")
-            print(f"  Add JVM arg: -Ddw.backend=http://127.0.0.1:{{backend_port}}")
-        else:
-            print(f"🚀 Minecraft launching (allow 30-60 seconds for first load)...")
-    elif HAS_FRONTEND and FRONTEND_PATH.exists():
-        import http.server, socketserver
-        fp = backend_port + 1
-        class H(http.server.SimpleHTTPRequestHandler):
-            def __init__(self, *a, **kw):
-                super().__init__(*a, directory=str(FRONTEND_PATH), **kw)
-            def log_message(self, *a): pass
-        t = threading.Thread(
-            target=lambda: socketserver.TCPServer(("", fp), H).__enter__().serve_forever(),
-            daemon=True,
-        )
-        t.start()
-        time.sleep(1)
-        webbrowser.open(f"http://localhost:{{fp}}")
+    # ── Mode-specific engagement loop ───────────────────────────────────
+    # FIX (Consolidate Duplicate Implementations plan, Step 5): this is the
+    # actual core fix — the packaged executable previously started nothing
+    # beyond the bare FastAPI server, regardless of mode. chat mode gets the
+    # lightweight start_autonomous_speech() loop (agent.py) — NOT
+    # CognitiveLoop, which is built around Minecraft's perceive/deliberate
+    # cycle and has no meaning for a text-only deployment. minecraft and
+    # autonomous modes both get start_autonomous_mode() (CognitiveLoop) —
+    # the difference between them is what act() ends up calling (Minecraft
+    # actions vs. hardware/controller actions), not whether the loop runs.
+    if mode == 'chat':
+        _run_async_loop(agent.start_autonomous_speech)
+        log.info("💬 Chat mode — autonomous speech engagement loop running")
+    else:
+        _run_async_loop(agent.start_autonomous_mode)
+        log.info(f"🧠 {{mode}} mode — CognitiveLoop running")
 
-    print(f"\\n{sep}\\n  ✅ {{AGENT_ID}} RUNNING\\n  Backend: http://localhost:{{backend_port}}")
+    # ── Minecraft server detection — minecraft mode only ────────────────
+    # FIX: was unconditional (always ran is_server_up()/try_ultimmc(),
+    # regardless of mode) — chat and autonomous deployments have no
+    # Minecraft server to look for at all.
+    if mode == 'minecraft':
+        server_up = is_server_up(srv_host, int(srv_port))
+        if server_up:
+            print(f"🎮 Server detected at {{default_server}}")
+            if not try_ultimmc(default_server, MINECRAFT_NAME):
+                log.info("Manual Minecraft join required — see README")
+                print(f"\\n  ⚠️  UltimMC launch failed. Manual setup needed:")
+                print(f"  Add JVM arg: -Ddw.backend=http://127.0.0.1:{{backend_port}}")
+            else:
+                print(f"🚀 Minecraft launching (allow 30-60 seconds for first load)...")
+        elif HAS_FRONTEND and FRONTEND_PATH.exists():
+            _serve_frontend(backend_port)
+    elif HAS_FRONTEND and FRONTEND_PATH.exists():
+        _serve_frontend(backend_port)
+
+    print(f"\\n{sep}\\n  ✅ {{AGENT_ID}} RUNNING ({{mode}} mode)\\n  Backend: http://localhost:{{backend_port}}")
     if HAS_FRONTEND:
         print(f"  Frontend: http://localhost:{{backend_port + 1}}")
     print("  Ctrl+C to stop\\n{sep}")
@@ -738,6 +845,18 @@ def launch():
                     log.error(f"Auto-save failed: {{e}}")
     except KeyboardInterrupt:
         log.info("Saving before exit…")
+        # FIX: stop the background engagement loop cleanly before saving —
+        # both start_autonomous_mode()/start_autonomous_speech() are
+        # cooperative (flag-based) loops; this lets the current tick finish
+        # rather than yanking the thread out from under an in-flight save.
+        try:
+            import asyncio as _asyncio
+            if mode == 'chat':
+                agent._autonomous_speech_running = False
+            elif agent.cognitive_loop is not None:
+                agent.cognitive_loop.running = False
+        except Exception:
+            pass
         try:
             agent.save(str(BRAIN_PATH))
             log.info("✅ Saved")
@@ -768,10 +887,15 @@ if __name__ == "__main__":
     # ------------------------------------------------------------------
 
     def _create_config(self, agent_id: str, agent_dir: Path, gender: str,
-                        agent_type: str, backend_port: int) -> Path:
+                        agent_type: str, backend_port: int,
+                        mode: str = "minecraft") -> Path:
         config = {
             "agent_id":      agent_id,
             "agent_type":    agent_type,
+            # FIX (Consolidate Duplicate Implementations plan, Step 5):
+            # was missing — the launcher had no config-level way to know
+            # which of chat/minecraft/autonomous it should run as.
+            "mode":          mode,
             "gender":        gender,
             "version":       "2.1.0",
             "default_server":"127.0.0.1:25565",

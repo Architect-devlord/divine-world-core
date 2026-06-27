@@ -213,6 +213,15 @@ async def get_thoughts():
 @app.post("/chat")
 async def chat(message: str = Form(...),
                agent_id: str = Form(None),
+               # FIX (Chat & Web GRPO plan — extraversion reward fix): new
+               # optional field. The web/Electron frontend sends a stable
+               # per-installation visitor id here so this agent can build
+               # genuine repeat-visitor familiarity (RewardSystem's new
+               # familiarity_r term). Defaults to a generic bucket for any
+               # older client that hasn't been updated to send it yet —
+               # familiarity just won't differentiate between visitors in
+               # that case, nothing breaks.
+               speaker_id: str = Form(None),
                allowed_websites: str = Form(None)):
     if not global_agent:
         return {"error": "Agent not running"}
@@ -230,7 +239,7 @@ async def chat(message: str = Form(...),
         except Exception as e:
             log.error(f"Error updating allowed websites: {e}")
 
-    response = await global_agent.process_chat(message)
+    response = await global_agent.process_chat(message, speaker_id=speaker_id or "web_user")
     await broadcast_to_clients({
         "type": "chat", "from": "agent",
         "text": response, "timestamp": time.time(),
@@ -745,8 +754,14 @@ class NPCAgent:
         # ── Subsystem init (order matters) ────────────────────────────────
 
         # 1. Reward system — eager, so brain.reward_system is never None
+        # FIX (Consolidate Duplicate Implementations plan, Step 4): was a
+        # bare call with no arguments, silently falling back to the stale
+        # obs_dim=50 default below — the first real 128-dim observation that
+        # reached RND/ICM's first nn.Linear(50, ...) layer would crash.
+        # self.obs_dim/self.action_dim are already set above (lines ~720-721,
+        # well before this point in __init__), so this can simply use them.
         self.reward_system: Optional[RewardSystem] = None
-        self.initialize_reward_system()
+        self.initialize_reward_system(obs_dim=self.obs_dim, action_dim=self.action_dim)
 
         # 2. World model
         self._init_world_model()
@@ -759,6 +774,10 @@ class NPCAgent:
 
         # 5. Cognitive loop
         self.cognitive_loop = None
+        # Chat-mode engagement loop flag (start_autonomous_speech() above) —
+        # separate from cognitive_loop entirely; a chat-mode agent never
+        # constructs a CognitiveLoop at all.
+        self._autonomous_speech_running = False
         if self.autonomous_mode:
             self._init_cognitive_loop()
 
@@ -793,6 +812,82 @@ class NPCAgent:
             self.initialize_policy(_obs_space, _act_space)
         except Exception as _pe:
             log.warning(f"[{agent_id}] Policy auto-init failed: {_pe}")
+
+        # ── Phase 2/3/5 component attachment (PolicyBridge / SelfSupervised-
+        # Trainer / SkillTracker / active_focus_task) ──────────────────────
+        # FIX (Consolidate Duplicate Implementations plan, Step 1): this used
+        # to live only in agent_runner.py, which is never invoked by anything
+        # that actually ships — the packaged executable (packager.py's
+        # launcher.py) constructs NPCAgent directly and never ran this block
+        # at all, meaning PolicyBridge/SST/SkillTracker silently never
+        # attached to any agent running in production. Moved here so every
+        # NPCAgent is fully wired the moment it's constructed, regardless of
+        # which entry point created it (CLI dev, packaged launcher, or any
+        # future caller) — agent_runner.py's copy is deleted, not kept as a
+        # second copy (see process_manager.py/agent_runner.py deletion note).
+        #
+        # Placement: must run AFTER the auto-policy-init block directly
+        # above, not before. self.policy is set to None earlier in this
+        # same __init__ (so a bare hasattr(agent,'policy') check is true
+        # from that point on regardless of whether real construction below
+        # ever succeeds) — the guard below explicitly checks `is not None`
+        # too, not just attribute existence, so a failed policy auto-init
+        # correctly skips attachment instead of building a PolicyBridge
+        # around a None policy.
+        try:
+            from ai_core.policy_bridge           import PolicyBridge
+            from ai_core.self_supervised_trainer import SelfSupervisedTrainer, grpo_update
+            from ai_core.skill_tracker           import SkillTracker
+
+            if (getattr(self, 'policy', None) is not None and
+                    hasattr(self, 'continual_learner') and
+                    hasattr(self, 'obs_dim') and
+                    hasattr(self, 'action_dim')):
+
+                self.policy_bridge = PolicyBridge(
+                    transformer_policy = self.policy,
+                    cl_policy_net      = self.continual_learner.policy_net,
+                    obs_dim            = self.obs_dim,
+                    action_dim         = self.action_dim,
+                )
+                # Monkeypatch grpo_update onto the policy model — NOT added
+                # to the TransformerPolicy/GodTransformerPolicy class
+                # definitions themselves, which stay completely untouched.
+                import types
+                self.policy.grpo_update = types.MethodType(
+                    lambda _self, scored_actions, obs, lr=1e-4:
+                        grpo_update(_self, scored_actions, obs, lr),
+                    self.policy,
+                )
+
+                # world_model is frequently still None here — _init_world_model()
+                # runs later in this same __init__ (subsystem init step 2,
+                # above). SelfSupervisedTrainer resolves it lazily from
+                # self.brain.world_model on every train_step() call instead
+                # of caching it once at construction, so attachment order
+                # relative to world model init doesn't matter.
+                self.self_supervised_trainer = SelfSupervisedTrainer(
+                    world_model    = self.brain.world_model,
+                    brain          = self.brain,
+                    emotion_system = self.emotion,
+                )
+
+                self.skill_tracker = SkillTracker(self.continual_learner)
+
+                # active_focus_task is already set to None earlier in this
+                # __init__ (Step 6/9 above) — nothing further needed here.
+
+                log.info(
+                    f"[{agent_id}] Phase 2/3/5 components attached ✅ "
+                    "(PolicyBridge, SelfSupervisedTrainer, SkillTracker)"
+                )
+            else:
+                log.warning(
+                    f"[{agent_id}] Cannot attach Phase 2/3/5 components "
+                    "(missing/None policy, continual_learner, obs_dim, or action_dim)"
+                )
+        except ImportError as e:
+            log.warning(f"[{agent_id}] Phase 2/3/5 import failed (non-fatal): {e}")
 
         # ── Optional integrations ─────────────────────────────────────────
         try:
@@ -897,7 +992,16 @@ class NPCAgent:
     # Reward system
     # =========================================================================
 
-    def initialize_reward_system(self, obs_dim: int = 50, action_dim: int = 13):  # FIX DIM-02: was 11, must match TransformerPolicy.BASE_DIM
+    def initialize_reward_system(self, obs_dim: int = 128, action_dim: int = 13):
+        # FIX (Consolidate Duplicate Implementations plan, Step 4): default
+        # was obs_dim=50 — stale, predates the Phase 6 128-dim obs_builder
+        # rebuild. The call site below now passes self.obs_dim/self.action_dim
+        # explicitly so this default is never actually relied on in normal
+        # operation, but a future bare initialize_reward_system() call (e.g.
+        # from a test, or code that doesn't know about self.obs_dim) would
+        # otherwise silently reintroduce the exact crash this fixes: RND/ICM's
+        # first nn.Linear layer built for 50 dims, fed a real 128-dim
+        # observation the moment anything actually runs.
         if self.reward_system is not None:
             return
         self.reward_system = RewardSystem(
@@ -925,6 +1029,54 @@ class NPCAgent:
         if self.cognitive_loop:
             await self.cognitive_loop.stop()
         log.info(f"🛑 {self.agent_id} autonomous mode stopped")
+
+    # FIX (Consolidate Duplicate Implementations plan, Step 5): chat mode
+    # needs an active engagement loop too — the agent can speak unprompted
+    # or choose silence — but explicitly NOT the Minecraft-specific 20Hz
+    # perceive/deliberate cycle CognitiveLoop is built around. This was
+    # referenced by name in earlier planning (start_autonomous_speech()) as
+    # if it already existed; it didn't. should_speak()/generate_speech() on
+    # LanguageIntelligence (bound onto BrainCore via add_language_to_brain())
+    # already exist and already work — this is the lightweight, timer-driven
+    # loop that actually calls them autonomously, the real piece that was
+    # missing.
+    async def start_autonomous_speech(self, check_interval: float = 5.0):
+        """
+        Chat-mode engagement loop. Every `check_interval` seconds, asks the
+        language system whether the agent currently wants to say something
+        unprompted (should_speak() — gated by language_stage, a speech
+        cooldown, emotional intensity, and sociability-weighted randomness;
+        see brain_language.py) and broadcasts it if so. No Minecraft
+        perception or action involved at all — this is for the packaged
+        chat-mode launcher and any other text-only deployment.
+        """
+        self._autonomous_speech_running = True
+        log.info(f"[{self.agent_id}] 💬 Autonomous speech loop started (chat mode)")
+        while self._autonomous_speech_running:
+            try:
+                if hasattr(self.brain, 'should_speak') and self.brain.should_speak():
+                    ctx = {
+                        'emotions':         self.emotion.snapshot(),
+                        'dominant_emotion': self.emotion.dominant_emotion(),
+                        'health':           self.health,
+                        'hunger':           self.hunger,
+                    }
+                    msg = self.brain.generate_speech(ctx)
+                    if msg and msg.strip():
+                        await self.broadcast({
+                            'type': 'chat', 'from': 'agent',
+                            'text': msg, 'timestamp': time.time(),
+                        })
+            except Exception as e:
+                log.warning(f"[{self.agent_id}] Autonomous speech tick failed: {e}")
+            await asyncio.sleep(check_interval)
+        log.info(f"[{self.agent_id}] Autonomous speech loop stopped")
+
+    async def stop_autonomous_speech(self):
+        self._autonomous_speech_running = False
+
+    def is_speaking_autonomously(self) -> bool:
+        return bool(getattr(self, '_autonomous_speech_running', False))
 
     def is_autonomous(self) -> bool:
         return bool(self.cognitive_loop and self.cognitive_loop.running)
@@ -1100,7 +1252,7 @@ class NPCAgent:
                 pass
         return info
 
-    async def process_chat(self, message: str) -> str:
+    async def process_chat(self, message: str, speaker_id: str = "web_user") -> str:
         self.memory.remember({
             'type':    'chat_message',
             'sender':  'user',
@@ -1134,7 +1286,20 @@ class NPCAgent:
                     'emotions':        self.emotion.snapshot(),
                     'recent_memory':   self.memory.recall(5),
                 }
-                resp = self.brain.language.generate_speech(ctx)
+                # FIX: was generate_speech(ctx) — that method is for
+                # AUTONOMOUS monologue and ignores `message` entirely (it
+                # only seeds generation from recalled memories / current
+                # conversation topics, ignoring what the user actually just
+                # typed). process_input() is what actually conditions
+                # generation on the real exchange, updates ConversationBuffer,
+                # feeds the training_buffer, and — per the Chat & Web GRPO
+                # design — tracks repeat-visitor familiarity and schedules
+                # the background epistemic-reward pass. Without this fix,
+                # every one of those systems was dead code for any chat that
+                # came through this REST endpoint (i.e. the actual web/
+                # Electron UI); only the console chat_loop() dev path called
+                # process_input() correctly.
+                resp = self.brain.language.process_input(message, ctx, speaker_id=speaker_id)
                 if resp and resp.strip():
                     response = resp
         except Exception as e:
@@ -1736,9 +1901,21 @@ async def run_standalone_agent(
     if mode == 'autonomous':
         await agent.start_autonomous_mode()
     elif mode == 'minecraft':
-        # Start the TCP-driven action loop immediately.
-        # This sends actions over TCP regardless of WebSocket state,
-        # so the agent controls the body as soon as TCPServer accepts the connection.
+        # FIX (Consolidate Duplicate Implementations plan, Step 5): this
+        # branch previously started run_tcp_action_loop (the documented WS-
+        # disconnection FALLBACK) and waited for the Minecraft connection,
+        # but never actually started CognitiveLoop at all — meaning
+        # deliberation/GRPO/skill-tracking never ran for an agent launched
+        # in minecraft mode via this path, contrary to what the surrounding
+        # comments and the rest of this codebase assume happens. start_auto-
+        # nomous_mode() is non-blocking (CognitiveLoop.start() schedules
+        # itself via asyncio.create_task() and returns immediately), so this
+        # is safe to call inline here without blocking the rest of startup.
+        await agent.start_autonomous_mode()
+
+        # Start the TCP-driven action loop as the documented fallback for
+        # when the WS connection to the mod drops — not the primary
+        # mechanism (CognitiveLoop, just started above, is).
         asyncio.ensure_future(run_tcp_action_loop(agent, agent_id, loop_hz=20.0))
 
         # ── UltimMC presence check ────────────────────────────────────────
@@ -1783,6 +1960,20 @@ async def run_standalone_agent(
                 print("⚠️  Minecraft mod not yet connected — will retry when mod joins.")
         except asyncio.TimeoutError:
             print("⚠️  Connection wait timed out — continuing anyway.")
+    elif mode == 'chat':
+        # FIX (Consolidate Duplicate Implementations plan, Step 5): chat mode
+        # previously started nothing autonomous at all here — only the
+        # interactive chat_loop() console reader below (gated on
+        # chat_interface, a SEPARATE flag for live human stdin typing). An
+        # agent in chat mode with chat_interface=False would do absolutely
+        # nothing on its own. start_autonomous_speech() (agent.py, new) is
+        # the lightweight, timer-driven engagement loop — NOT CognitiveLoop,
+        # which is built around Minecraft's perceive/deliberate cycle and
+        # has no meaning here. Scheduled as a background task since, unlike
+        # start_autonomous_mode(), it's a blocking loop internally and must
+        # not be awaited directly here.
+        asyncio.create_task(agent.start_autonomous_speech())
+        print("💬 Chat mode — autonomous speech engagement loop running")
 
     start_time = time.time()
     chat_task  = asyncio.create_task(chat_loop(agent)) if chat_interface else None
@@ -1812,6 +2003,11 @@ async def run_standalone_agent(
     finally:
         if chat_task:
             chat_task.cancel()
+        # FIX (Consolidate Duplicate Implementations plan, Step 5): stop the
+        # chat-mode speech loop cleanly too, mirroring how cognitive_loop is
+        # already stopped via agent.shutdown() below.
+        if agent.is_speaking_autonomously():
+            await agent.stop_autonomous_speech()
         if global_server:
             global_server.should_exit = True
             try:
@@ -1835,7 +2031,9 @@ async def chat_loop(agent):
                 'emotions':         agent.emotion.snapshot(),
                 'dominant_emotion': agent.emotion.dominant_emotion(),
             }
-            response = agent.brain.process_language_input(user_input, ctx)
+            response = agent.brain.process_language_input(
+                user_input, ctx, speaker_id='console_user'
+            )
             print(f"{agent.agent_id}: {response or '[Learning...]'}")
         except EOFError:
             break

@@ -6,6 +6,7 @@ import com.divineworld.DWMod;
 import net.minecraft.server.MinecraftServer;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -18,6 +19,24 @@ public class LLMOracleBrain {
     private final boolean isSecondOracle;
     private double temperature;
     private int contextTokens;
+
+    // FIX (plan-creaking-geckolib-and-oracle-teach.md, Part 4, step 1):
+    // gates the teaching loop so the Oracle never starts (or continues)
+    // teaching while it's mid-generation answering a direct question, and
+    // vice versa — both would otherwise compete for the same Ollama
+    // backend. Lives HERE rather than on OracleSystem because OracleSystem
+    // is not the only caller: OracleCommandRegistrar.java also calls
+    // oracleBrain.queryAsync() directly (the /oracle ask-style command),
+    // and any future caller holding a reference to this same LLMOracleBrain
+    // instance needs to see the same state. Managed automatically inside
+    // queryAsync()/query() below rather than by each call site manually —
+    // every existing AND future caller is covered for free, with no risk of
+    // a call site forgetting to wrap itself.
+    private final AtomicBoolean busy = new AtomicBoolean(false);
+
+    public boolean isBusy() {
+        return busy.get();
+    }
 
     public LLMOracleBrain(String modelName, String endpoint, boolean isSecondOracle) {
         this.modelName = modelName;
@@ -86,6 +105,14 @@ public class LLMOracleBrain {
 
         DWMod.LOGGER.info("[LLMOracleBrain] Pre-flight checks passed, starting async generation...");
 
+        // FIX: set busy AFTER pre-flight checks pass (a check failure returns
+        // immediately without ever touching Ollama, so it shouldn't claim the
+        // resource at all) and clear it as soon as the actual generation call
+        // returns — not after the callback runs, since the callback itself
+        // doesn't touch the shared LLM resource, just delivers already-
+        // computed text back to the caller.
+        busy.set(true);
+
         // Run in separate thread with timeout
         CompletableFuture.runAsync(() -> {
             DWMod.LOGGER.info("[LLMOracleBrain] [ASYNC THREAD] Generation started");
@@ -129,6 +156,12 @@ public class LLMOracleBrain {
                 response = "§c[Oracle Error] " + e.getMessage();
                 DWMod.LOGGER.error("[LLMOracleBrain] [ASYNC THREAD] Generation failed", e);
                 e.printStackTrace();
+            } finally {
+                // FIX: finally, not just the happy path — a thrown exception
+                // must still release the busy flag or the teaching loop (and
+                // any other caller) would stay locked out forever after a
+                // single failed generation.
+                busy.set(false);
             }
 
             // Send response back on server thread
@@ -175,14 +208,22 @@ public class LLMOracleBrain {
                     return;
                 }
 
-                String response = OllamaManager.generateWithOptions(
-                        modelName,
-                        prompt,
-                        temperature,
-                        contextTokens
-                );
+                // FIX: same busy-flag treatment as queryAsync() above — set
+                // only after pre-flight checks pass, cleared in finally so a
+                // thrown/completedExceptionally path still releases it.
+                busy.set(true);
+                try {
+                    String response = OllamaManager.generateWithOptions(
+                            modelName,
+                            prompt,
+                            temperature,
+                            contextTokens
+                    );
 
-                future.complete(response);
+                    future.complete(response);
+                } finally {
+                    busy.set(false);
+                }
 
             } catch (Exception e) {
                 future.completeExceptionally(e);

@@ -829,71 +829,40 @@ def _grpo_policy_update(agent, deliberation_result, obs: "np.ndarray") -> None:
     """
     Group Relative Policy Optimisation update using imagination rankings.
 
-    Scores from brain.deliberate() are normalised into advantages:
-        advantage_i = (score_i - mean) / (std + ε)
-    One gradient step per call — no separate critic needed.
+    FIX (Consolidate Duplicate Implementations plan, Step 3): this used to
+    reimplement GRPO from scratch — sampling a fresh action from
+    agent.policy.forward(obs_t) and weighting its log-prob by the MEAN
+    advantage across deliberation_result.ranked_actions (a list of (score,
+    action_dict) pairs). Two real problems with that: (1) ranked_actions
+    holds planner-facing action dicts, not the one-hot vectors GRPO actually
+    needs to score against — there is no direct relationship between "what
+    the planner chose" and "what the policy's continuous action_net
+    predicts," so the log-prob being optimised didn't correspond to any of
+    the actually-ranked candidates. (2) it used a generic
+    agent.policy.parameters() / freshly-constructed Adam optimizer, instead
+    of the policy's real features_extractor/action_net/log_std path
+    verified in self_supervised_trainer.py.
+
+    Replaced with a thin call into the one verified implementation. Per
+    Phase 2/3/5 attachment (NPCAgent.__init__), agent.policy.grpo_update is
+    already a bound method (monkeypatched onto the live policy instance,
+    wrapping self_supervised_trainer.grpo_update()) — this function just
+    calls that, using deliberation_result.all_scored_actions (numpy one-hot
+    vectors, the field GRPO is actually built around) instead of
+    ranked_actions. Function name and both call sites below are left as-is
+    per the plan — the fix is entirely in what this body does.
     """
     try:
-        import torch, numpy as _np
         if agent.policy is None or deliberation_result is None:
             return
-        if len(deliberation_result.ranked_actions) < 2:
+        scored_actions = getattr(deliberation_result, 'all_scored_actions', None)
+        if not scored_actions or len(scored_actions) < 4:
+            return   # grpo_update() itself also guards this, but skip the call cleanly
+        if not hasattr(agent.policy, 'grpo_update'):
+            log.debug("[GRPO] agent.policy.grpo_update not attached — skipping "
+                     "(Phase 2/3/5 components not wired for this agent)")
             return
-
-        scores     = _np.array([s for s, _ in deliberation_result.ranked_actions], dtype=_np.float32)
-        advantages = (scores - scores.mean()) / (scores.std() + 1e-8)
-        obs_t      = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
-
-        optimizer = getattr(agent.policy, 'optimizer', None)
-        if optimizer is None:
-            optimizer = torch.optim.Adam(agent.policy.parameters(), lr=3e-5)
-            agent.policy.optimizer = optimizer
-
-        optimizer.zero_grad()
-
-        # FIX RL-04: old code mapped planning action names ('collect', 'flee')
-        # to movement dim indices via ACTION_TYPE_INDEX, which is semantically
-        # wrong — 'collect' maps to dim 0 (move_forward), meaning GRPO was
-        # reinforcing "move forward" for any high-scoring plan regardless of
-        # what the plan required.
-        #
-        # Correct approach: sample the current policy action for this observation,
-        # then reinforce that sample proportionally to its advantage.
-        # This is the standard REINFORCE / GRPO update: maximise E[adv * log π(a|s)].
-        try:
-            action_mean, _ = agent.policy.forward(obs_t)
-            log_std = getattr(agent.policy, 'log_std', None)
-            if log_std is None:
-                log_std = getattr(agent.policy, 'log_std_base',
-                                  torch.zeros_like(action_mean))
-            std = torch.exp(log_std)
-            # FIX: GodTransformerPolicy.log_std_base has shape (13,) but
-            # action_mean has shape (B, 18).  PyTorch cannot broadcast (13,)
-            # onto dim-1 of size 18, causing a RuntimeError on every god GRPO
-            # step.  Pad std to match action_mean's last dim if needed.
-            action_dim = action_mean.shape[-1]
-            if std.shape[-1] < action_dim:
-                pad = torch.zeros(action_dim - std.shape[-1],
-                                  device=std.device, dtype=std.dtype)
-                std = torch.cat([std, pad])
-            elif std.shape[-1] > action_dim:
-                std = std[..., :action_dim]
-            dist = torch.distributions.Normal(action_mean, std.clamp(min=1e-6))
-            # Sample one action from current policy for this observation
-            sampled_action = dist.sample()
-            log_prob       = dist.log_prob(sampled_action).sum(dim=-1)  # (1,)
-
-            # Weight log_prob by mean advantage across the group.
-            # Using mean advantage (not per-action) because we have one
-            # sampled action per observation, not per trajectory.
-            mean_adv = float(advantages.mean())
-            loss     = -(mean_adv * log_prob).mean()
-            loss.backward()
-        except Exception:
-            pass
-
-        torch.nn.utils.clip_grad_norm_(agent.policy.parameters(), 1.0)
-        optimizer.step()
+        agent.policy.grpo_update(scored_actions=scored_actions, obs=obs)
     except Exception as e:
         log.debug(f"[GRPO] policy update skipped: {e}")
 
@@ -1195,21 +1164,48 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
                 )
 
                 # ── 9b. GRPO policy update ────────────────────────────────
-                _delib = getattr(agent.brain, '_last_deliberation_result', None)
-                if _delib is not None:
-                    _grpo_policy_update(agent, _delib, obs)
-                    agent.brain._last_deliberation_result = None
-
-
-
-                # ── 9b. GRPO policy update ────────────────────────────────
-                # If the brain just ran a deliberation this cycle, use the
-                # ranked trajectories as the advantage group and push one
-                # gradient step through TransformerPolicy — no critic needed.
-                _delib = getattr(agent.brain, '_last_deliberation_result', None)
-                if _delib is not None:
-                    _grpo_policy_update(agent, _delib, obs)
-                    agent.brain._last_deliberation_result = None
+                # FIX (Consolidate Duplicate Implementations plan, Step 3):
+                # was reading agent.brain._last_deliberation_result — an
+                # attribute never set anywhere in the codebase, since
+                # cognitive_loop.py's _decide() actually sets
+                # agent._last_deliberation (on the agent, not agent.brain) —
+                # confirmed via direct grep across every file. This made the
+                # block permanently inert: _delib was always None regardless
+                # of what _grpo_policy_update()'s body did. Also removed a
+                # literal second copy of this exact block that immediately
+                # followed (same read, same call, same clear — calling the
+                # function twice in a row for no reason).
+                #
+                # obs_for_grpo prefers the observation deliberation was
+                # actually scored against (agent._last_deliberation_obs, set
+                # alongside _last_deliberation in cognitive_loop.py's
+                # _decide()) over this tick's freshly-computed `obs` — GRPO's
+                # log-prob computation needs to match what all_scored_actions
+                # was computed for, not whatever the obs happens to be a few
+                # ticks later when this TCP loop gets around to checking.
+                # FIX (introduced by the attribute-name fix above, resolved
+                # here): cognitive_loop.py's own _continual_learning_worker()
+                # ALSO reads/clears agent._last_deliberation for its own GRPO
+                # trigger. Before this fix, THIS block was permanently inert
+                # (wrong attribute name), so the two never actually competed.
+                # Now that this reads the correct attribute, both would fire
+                # on the same signal if CognitiveLoop is also running —
+                # whichever runs first "wins" and silently starves the other.
+                # run_tcp_action_loop already documents itself as the
+                # WS-disconnection fallback, not the primary mechanism (see
+                # plan-perception-wire-sync.md's locked decision on this same
+                # point) — so this block should only act as a genuine
+                # fallback, deferring to CognitiveLoop's own trigger whenever
+                # CognitiveLoop is actually the one driving this agent.
+                cl = getattr(agent, 'cognitive_loop', None)
+                if not (cl is not None and getattr(cl, 'running', False)):
+                    _delib = getattr(agent, '_last_deliberation', None)
+                    if _delib is not None:
+                        obs_for_grpo = getattr(agent, '_last_deliberation_obs', None)
+                        if obs_for_grpo is None:
+                            obs_for_grpo = obs
+                        _grpo_policy_update(agent, _delib, obs_for_grpo)
+                        agent._last_deliberation = None
 
             last_obs    = obs
             last_action = action_array

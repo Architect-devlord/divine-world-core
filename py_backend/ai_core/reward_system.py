@@ -30,6 +30,40 @@ import logging
 log = logging.getLogger("reward_system")
 
 
+def sycophancy_weight(traits: Dict[str, float]) -> float:
+    """
+    Personality-derived anti-sycophancy pressure (Chat & Web GRPO plan §3.4).
+
+    Uniform anti-sycophancy pressure across every agent was rejected — it
+    would homogenize every NPC into the same "careful, hedges everything"
+    voice. A conscientious, low-agreeableness "skeptic" pushes back harder,
+    in character; a high-agreeableness agent keeps more warmth, just
+    somewhat more grounded warmth.
+
+    Shared between RewardSystem and LanguageIntelligence (brain_language.py
+    calls this via its own _sycophancy_weight() wrapper) so both compute the
+    exact same trait→weight mapping instead of maintaining two formulas that
+    could silently drift apart.
+    """
+    return 0.1 + 0.3 * max(
+        0.0, traits.get('conscientiousness', 0.0) - traits.get('agreeableness', 0.0)
+    )
+
+
+def _extract_domain(url: str) -> str:
+    """Minimal domain extraction for the evidence-diversity term (§3.6b).
+    Deliberately independent of web_browser.py's own _extract_domain() —
+    RewardSystem has no reference to a WebBrowser instance (it's invoked
+    generically via evaluate_event(), decoupled from specific subsystems),
+    so this reads straight from the event payload's url string instead."""
+    try:
+        from urllib.parse import urlparse
+        netloc = urlparse(url).netloc or urlparse(url).path
+        return netloc.replace('www.', '').lower()
+    except Exception:
+        return ''
+
+
 class RandomNetworkDistillation(nn.Module):
     def __init__(self, obs_dim: int, hidden_dim: int = 256):
         super().__init__()
@@ -99,7 +133,8 @@ class ActionEntropyTracker:
 class RewardSignal:
     """Structured output of compute_reward(). Always pass to apply_signal()."""
     __slots__ = ('total','curiosity','exploration','survival',
-                 'task','social','aesthetic','emotion_deltas','personality_pressure')
+                 'task','social','familiarity','evidence','aesthetic',
+                 'emotion_deltas','personality_pressure')
     def __init__(self, **kw):
         for k in self.__slots__: setattr(self, k, kw.get(k, 0.0))
     def to_dict(self): return {k: getattr(self, k) for k in self.__slots__}
@@ -119,7 +154,12 @@ class RewardSystem:
       neurotic agent  -> more fear/pain from danger
       social agent    -> more reward from language/interaction
       bold agent      -> survival penalties are dampened
-      open agent      -> more reward from creative/exploratory actions
+      open agent      -> more reward from creative/exploratory actions, and
+                          from the act of checking web evidence
+      extraverted agent -> more reward from a familiar, recurring
+                          conversation partner (Chat & Web GRPO plan §3.x) —
+                          previously a write-only/decay-only trait that never
+                          fed back into any reward term
 
     Emotion -> personality drift (slow, irreversible):
       sustained joy    -> openness, conscientiousness nudge up
@@ -170,6 +210,12 @@ class RewardSystem:
         self.alive_ticks  = 0
         self.last_health  = 20.0
         self.reward_history: deque = deque(maxlen=500)
+        # FIX (Chat & Web GRPO plan §3.6b): rolling window of recently visited
+        # distinct domains, for the evidence diversity term. Lives here, not on
+        # WebBrowser — RewardSystem has no reference to a live WebBrowser
+        # instance, and only needs the URL already present in each web event's
+        # own payload.
+        self._recent_domains: deque = deque(maxlen=20)
         self._pressure: Dict[str, float] = defaultdict(float)
         self._since_drift = 0
         log.info(f"RewardSystem ready on {self.device}")
@@ -247,6 +293,31 @@ class RewardSystem:
             social_r = soc * 0.15
             if payload.get('success'): social_r += 0.1
 
+        # 5b. FAMILIARITY (repeat-visitor rapport, scaled by extraversion) — NEW.
+        # FIX: extraversion was a write-only/decay-only trait — drift could push
+        # it down (sustained sadness) but nothing ever read it as an input to any
+        # reward term, so it had zero behavioral effect. partner_visit_count is
+        # written by LanguageIntelligence.process_input() from its own
+        # self-tracked visit history (a partner is "the same visitor returning"
+        # once 120s+ has passed since they last talked — the same threshold
+        # ConversationBuffer.is_active() already uses for "still mid-conversation"
+        # vs "a new exchange") — fully self-referential, no external identity
+        # database involved.
+        familiarity_r = 0.0
+        if 'language' in tags or 'chat' in tags or etype in ('language_input','autonomous_speech'):
+            visit_count = float(payload.get('partner_visit_count', 0))
+            # FIX: was `extra * 0.15 * ...` with extra=max(0,extraversion) and no
+            # baseline — unlike every other trait-weight formula in this file
+            # (c_w, e_w, s_scale, t_scale all use baseline + scale*trait), that
+            # left a zero-extraversion agent at EXACTLY zero familiarity reward,
+            # which meant trust could never cross the 0.05 threshold in
+            # _personality_pressure from familiarity alone — extraversion could
+            # never bootstrap upward from a cold start. Baseline + scale matches
+            # the rest of the file and models "even an introvert appreciates a
+            # familiar face, just less than an extravert does."
+            extra_w = 0.05 + 0.15 * max(0.0, traits.get('extraversion', 0.0))
+            familiarity_r = extra_w * min(1.0, np.log1p(visit_count) / np.log1p(20.0))
+
         # 6. AESTHETIC/CREATIVE (build/craft/express, scaled by openness)
         aesthetic_r = 0.0
         if etype in ('craft','build','language_output','autonomous_speech','file_processed'):
@@ -254,17 +325,36 @@ class RewardSystem:
             aesthetic_r = op * 0.1
             if payload.get('success'): aesthetic_r += op * 0.15
 
+        # 6b. EVIDENCE (web-checking behavior, scaled by openness) — Chat & Web
+        # GRPO plan §3.6b. The agent is rewarded for the ACT of checking, not
+        # for what it finds: claim_support_delta is an absolute shift in
+        # memory-search overlap before/after the visit (computed by the
+        # caller, cognitive_loop._execute_web_browsing()) — a page that
+        # contradicts the user's claim is worth exactly as much as one that
+        # confirms it. That's the actual anti-sycophancy lever on the web side.
+        evidence_r = 0.0
+        if 'web' in tags or etype == 'web_browsed':
+            domain = _extract_domain(payload.get('url', ''))
+            if domain:
+                self._recent_domains.append(domain)
+            diversity = min(1.0, len(set(self._recent_domains)) / 5.0)
+            grounding = payload.get('claim_support_delta', 0.0)   # |shift|, not direction
+            op = max(0.0, traits.get('openness', 0.0))
+            evidence_r = (0.1 * diversity + 0.2 * abs(grounding)) * (0.5 + 0.5 * op)
+
         # 7. EMOTION MODULATION (current feelings bias reward perception)
         joy_boost  = 1.0 + 0.2 * emotions.get('joy',  0.0)
         fear_boost = 1.0 + 0.2 * emotions.get('fear', 0.0)
-        pos = (curiosity_r + entropy_r + task_r + social_r + aesthetic_r) * joy_boost
+        pos = (curiosity_r + entropy_r + task_r + social_r + familiarity_r
+               + evidence_r + aesthetic_r) * joy_boost
         neg = min(0.0, survival_r) * fear_boost
         survival_r = max(0.0, survival_r) + neg
         total = pos + survival_r
 
         # 8. EMOTION DELTAS
         ed = self._emotion_deltas(total, curiosity_r, survival_r,
-                                   social_r, aesthetic_r, is_dead, payload, traits)
+                                   social_r, familiarity_r, aesthetic_r,
+                                   is_dead, payload, traits)
 
         # 9. PERSONALITY PRESSURE (per-event nudge — applied in apply_signal)
         pp = self._personality_pressure(total, ed, traits)
@@ -273,6 +363,7 @@ class RewardSystem:
             total=float(total), curiosity=float(curiosity_r),
             exploration=float(entropy_r), survival=float(survival_r),
             task=float(task_r), social=float(social_r),
+            familiarity=float(familiarity_r), evidence=float(evidence_r),
             aesthetic=float(aesthetic_r),
             emotion_deltas=ed, personality_pressure=pp)
 
@@ -325,7 +416,7 @@ class RewardSystem:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _emotion_deltas(self, total, curiosity, survival, social,
+    def _emotion_deltas(self, total, curiosity, survival, social, familiarity,
                          aesthetic, is_dead, payload, traits) -> Dict[str, float]:
         d: Dict[str, float] = {}
         n = traits.get('neuroticism', 0.0)
@@ -343,6 +434,14 @@ class RewardSystem:
         if social > 0.05:
             d['trust'] = social * 0.3 * (1.0 + a)
             d['joy']   = d.get('joy', 0.0) + social * 0.1
+        # FIX: familiarity feeds the same trust/joy channels social does —
+        # a recurring conversation partner builds the same kind of warmth a
+        # smooth single exchange does, just compounding across visits instead
+        # of resetting each time. This is also what gives _personality_pressure
+        # below something to read for the new positive-extraversion path.
+        if familiarity > 0.02:
+            d['trust'] = d.get('trust', 0.0) + familiarity * 0.25
+            d['joy']   = d.get('joy',   0.0) + familiarity * 0.1
         if aesthetic > 0.02:
             amp = 1.0 + max(0.0, o)
             d['joy']          = d.get('joy', 0.0) + aesthetic * 0.15 * amp
@@ -364,12 +463,21 @@ class RewardSystem:
             p['neuroticism'] = fear * 0.02; p['boldness'] = -fear * 0.01
         if trust > 0.05:
             p['agreeableness'] = trust * 0.015; p['sociability'] = trust * 0.01
+            # FIX: extraversion previously had ONLY a negative path (sustained
+            # sadness pushes it down, below) — nothing ever pushed it back up,
+            # making it a one-way ratchet toward introversion regardless of how
+            # sociable the agent's actual experience was. Sustained trust (which
+            # now includes the familiarity bonus above) is the natural positive
+            # counterpart: an agent that keeps having warm, recurring
+            # conversations should drift toward more extraverted over time, the
+            # same way sustained fear already drifts boldness down.
+            p['extraversion'] = p.get('extraversion', 0.0) + trust * 0.01
         if surp + anti > 0.05:
             p['curiosity'] = (surp + anti) * 0.01
             p['openness']  = p.get('openness', 0.0) + (surp + anti) * 0.005
         if total < -0.2:
             p['neuroticism']  = p.get('neuroticism', 0.0) + abs(total) * 0.01
-            p['extraversion'] = -abs(total) * 0.005
+            p['extraversion'] = p.get('extraversion', 0.0) - abs(total) * 0.005
         if total > 0 and self.alive_ticks > 100:
             p['boldness'] = p.get('boldness', 0.0) + 0.001
         return p

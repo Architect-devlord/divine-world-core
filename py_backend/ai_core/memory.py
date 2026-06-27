@@ -541,14 +541,86 @@ class UnifiedMemoryStore:
         return filtered
 
     def search(self, query: str, limit: int = 5) -> List[Dict]:
-        """Simple substring search across the `text` field of cached events."""
+        """
+        Substring search across the `text` field of cached events.
+
+        FIX (raised directly: "what about conversations that refer to old
+        memories which are in ScyllaDB and not in the memory deque"):
+        previously this method ONLY ever looked at self.events (the capped
+        in-RAM cache, default 10000 entries) — unlike recall(), which
+        explicitly "Delegates to ScyllaDB when the in-memory cache is large".
+        search() had no equivalent fallback at all, silently going blind to
+        anything older than the cache window. epistemic_reward() (Chat & Web
+        GRPO plan) and the web-browsing claim_support_delta computation both
+        call this method, so both were quietly limited to recent memory only.
+
+        ScyllaDB has no full-text search of its own (Cassandra/Scylla aren't
+        built for ad-hoc substring queries without a separate search index),
+        so this can't become a true delegated query the way recall() does.
+        Instead: when the in-memory cache doesn't fill the request, widen
+        the candidate pool via the already-working query_recent() and apply
+        the same substring filter to that wider set — same honest fallback
+        shape as recall()'s "delegate when the fast path is insufficient",
+        just implemented as widen-then-filter since Scylla can't filter by
+        substring itself.
+        """
         q = query.lower()
         results = []
+        seen_ids = set()
         for event in reversed(self.events):
             if q in str(event.get('text', '')).lower():
+                eid = event.get('event_id')
+                if eid is not None:
+                    seen_ids.add(eid)
                 results.append(event.copy())
                 if len(results) >= limit:
                     break
+
+        if len(results) < limit and self.use_scylla and self.scylla:
+            try:
+                # Widen the candidate pool well beyond `limit` since most
+                # won't match the substring filter — same multiplier
+                # query_by_tags() already uses for its own widen-then-filter.
+                wider = self.scylla.query_recent(self.agent_id, limit=limit * 8)
+                for event in wider:
+                    if len(results) >= limit:
+                        break
+                    eid = event.get('event_id')
+                    if eid is not None and eid in seen_ids:
+                        continue   # already matched from the in-memory pass
+                    if q in str(event.get('text', '')).lower():
+                        results.append(event)
+                        if eid is not None:
+                            seen_ids.add(eid)
+            except Exception as e:
+                log.debug(f"search() ScyllaDB fallback failed: {e}")
+
+        return results
+
+    def search_by_tag(self, tag: str, limit: int = 10) -> List[Dict]:
+        """
+        Return events carrying an exact tag, in-memory first then ScyllaDB.
+
+        Added alongside the search() fix above for the same reason: a
+        specific partner's conversation history is tagged 'partner:{id}'
+        (see brain_language.py._store_exchange_in_memory) precisely so it
+        can be recovered this way once it's aged out of the in-RAM cache,
+        without needing a substring match at all.
+        """
+        results = [e.copy() for e in self.events if tag in e.get('tags', [])][:limit]
+        if len(results) < limit and self.use_scylla and self.scylla:
+            try:
+                seen_ids = {e.get('event_id') for e in results if e.get('event_id') is not None}
+                scylla_results = self.scylla.query_by_tags(self.agent_id, [tag], limit * 2)
+                for event in scylla_results:
+                    if len(results) >= limit:
+                        break
+                    eid = event.get('event_id')
+                    if eid is not None and eid in seen_ids:
+                        continue
+                    results.append(event)
+            except Exception as e:
+                log.debug(f"search_by_tag() ScyllaDB fallback failed: {e}")
         return results
 
     def semantic_search(self, query_embedding: np.ndarray, k: int = 10,

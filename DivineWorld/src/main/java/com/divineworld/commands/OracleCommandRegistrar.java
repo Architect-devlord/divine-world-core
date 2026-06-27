@@ -77,6 +77,44 @@ public class OracleCommandRegistrar {
                         })
                 )
 
+                // ===== TEACH ===== (plan-creaking-geckolib-and-oracle-teach.md, Part 4)
+                // Sets "teaching requested" intent only — actual engagement
+                // waits for both gating flags (tutorial completed + Ollama
+                // not busy) on OracleSystem's next server tick.
+                .then(Commands.literal("teach")
+                        .executes(ctx -> {
+                            try {
+                                ServerPlayer player = ctx.getSource().getPlayerOrException();
+                                oracleSystem.requestTeaching(player.getUUID());
+                                player.sendSystemMessage(Component.literal(
+                                        "§dThe Oracle will begin wandering among the agents to teach them, once it is free."));
+                                player.sendSystemMessage(Component.literal(
+                                        "§7(Requires your own tutorial to be complete. Use §b/oracle stop_teach §7to recall it.)"));
+                                return 1;
+                            } catch (Exception e) {
+                                DWMod.LOGGER.error("Oracle teach command failed", e);
+                                ctx.getSource().sendFailure(Component.literal("§cFailed to start teaching: " + e.getMessage()));
+                                return 0;
+                            }
+                        })
+                )
+
+                // ===== STOP_TEACH =====
+                .then(Commands.literal("stop_teach")
+                        .executes(ctx -> {
+                            try {
+                                ServerPlayer player = ctx.getSource().getPlayerOrException();
+                                oracleSystem.stopTeaching(player.getUUID());
+                                player.sendSystemMessage(Component.literal("§dThe Oracle returns to your side."));
+                                return 1;
+                            } catch (Exception e) {
+                                DWMod.LOGGER.error("Oracle stop_teach command failed", e);
+                                ctx.getSource().sendFailure(Component.literal("§cFailed to stop teaching: " + e.getMessage()));
+                                return 0;
+                            }
+                        })
+                )
+
                 // ===== SET_MODEL =====
                 .then(Commands.literal("set_model")
                         .then(Commands.argument("model", StringArgumentType.greedyString())
@@ -327,6 +365,8 @@ public class OracleCommandRegistrar {
                                 player.sendSystemMessage(Component.literal("§d━━━━━ Oracle Commands ━━━━━"));
                                 player.sendSystemMessage(Component.literal("§b/oracle spawn §7- Summon the Oracle"));
                                 player.sendSystemMessage(Component.literal("§b/oracle despawn §7- Dismiss the Oracle"));
+                                player.sendSystemMessage(Component.literal("§b/oracle teach §7- Send the Oracle to teach AI agents"));
+                                player.sendSystemMessage(Component.literal("§b/oracle stop_teach §7- Recall the Oracle from teaching"));
                                 player.sendSystemMessage(Component.literal("§b/oracle set_model <n> §7- Change AI model"));
                                 player.sendSystemMessage(Component.literal("§b/oracle list_models §7- Show available models"));
                                 player.sendSystemMessage(Component.literal("§b/oracle test §7- Test LLM connection"));
@@ -346,6 +386,6 @@ public class OracleCommandRegistrar {
         ); // <-- CLOSING PARENTHESIS FOR THE WHOLE COMMAND TREE
 
         DWMod.LOGGER.info("[OracleCommandRegistrar] ✅ Oracle commands registered successfully");
-        DWMod.LOGGER.info("[OracleCommandRegistrar] Available: spawn, despawn, set_model, list_models, test, status, refresh, restart, help");
+        DWMod.LOGGER.info("[OracleCommandRegistrar] Available: spawn, despawn, teach, stop_teach, set_model, list_models, test, status, refresh, restart, help");
     }
 }

@@ -22,7 +22,7 @@ import net.minecraftforge.api.distmarker.OnlyIn;
 public class CreakingRenderer extends LivingEntityRenderer<AICreaking, CreakingModel<AICreaking>> {
 
     private static final ResourceLocation CREAKING_TEXTURE =
-            new ResourceLocation(DWClientMod.MOD_ID, "textures/entity/creaking.png");
+            new ResourceLocation(DWClientMod.MOD_ID, "textures/entity/ai_creaking.png");
 
     public static final ModelLayerLocation CREAKING_LAYER = new ModelLayerLocation(
             new ResourceLocation(DWClientMod.MOD_ID, "creaking"),

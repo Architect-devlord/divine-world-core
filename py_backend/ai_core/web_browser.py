@@ -237,6 +237,16 @@ class WebBrowser:
         self.page_cache: Dict[str, PageSnapshot] = {}
         self.browse_queue: deque = deque(maxlen=200)
 
+        # FIX (Chat & Web GRPO plan §3.6b): rolling window of recently visited
+        # distinct domains, for introspection/debugging (exposed via
+        # get_stats() below). Note: the actual evidence_r diversity SCORING
+        # in reward_system.py maintains its own separate _recent_domains —
+        # RewardSystem has no live reference to this WebBrowser instance, so
+        # it tracks domains straight from each web event's own payload
+        # instead. This deque is for visibility into this object directly
+        # (e.g. the human-controller debug panel), not the reward path.
+        self._recent_domains: deque = deque(maxlen=20)
+
         # Rate limiting
         self.last_request_time: Dict[str, float] = {}
         self.min_request_interval: float = 2.0   # seconds per domain
@@ -423,6 +433,7 @@ class WebBrowser:
 
             self.page_cache[url]  = snapshot
             self.visited_urls.add(url)
+            self._recent_domains.append(self._extract_domain(url))
             self.stats["pages_visited"]     += 1
             self.stats["total_text_bytes"]  += len(visible_text)
             self.stats["links_discovered"]  += len(links)
@@ -799,6 +810,9 @@ class WebBrowser:
             "cached_pages":    len(self.page_cache),
             "queue_size":      len(self.browse_queue),
             "visited_urls":    len(self.visited_urls),
+            # FIX (Chat & Web GRPO plan §3.6b): was previously not exposed —
+            # get_stats() reported counts only, never the recent distinct set.
+            "recent_domains":  list(self._recent_domains),
         }
 
 

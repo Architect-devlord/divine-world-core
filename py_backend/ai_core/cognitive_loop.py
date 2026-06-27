@@ -425,8 +425,15 @@ class CognitiveLoop:
                         'hunger':   perception['state']['hunger'],
                         'emotions': perception['state']['emotions'],
                     }
+                    # FIX: speaker_id distinguishes real voice-chat partners
+                    # from other process_language_input() callers — without
+                    # an actual per-speaker identity from audio_processor
+                    # (not available on this object today), 'nearby_voice' is
+                    # a single shared bucket for "someone talked nearby" —
+                    # still meaningfully different from the synthetic
+                    # internal-replay bucket used in _learning_worker() below.
                     response = self.agent.brain.process_language_input(
-                        transcription, context
+                        transcription, context, speaker_id='nearby_voice'
                     )
                     await self._broadcast_audio_heard(
                         transcription, audio_result.get('emotion_label')
@@ -1169,11 +1176,31 @@ class CognitiveLoop:
             # Visit up to 2 pages per cognitive decision — keeps loop responsive
             pages_visited = 0
             while browser.browse_queue and pages_visited < 2:
-                url      = browser.browse_queue[0]   # peek, don't pop yet
+                # FIX: was `browser.browse_queue[0]` (peek-only, never dequeued)
+                # — the same URL would be re-browsed every cognitive cycle
+                # forever, since nothing ever removed it from the queue.
+                # web_browser.py's own autonomous_browse() already does this
+                # correctly via popleft(); this path just hadn't matched it.
+                url      = browser.browse_queue.popleft()
                 snapshot = await browser.browse(url)
                 pages_visited += 1
 
                 if snapshot and snapshot.visible_text:
+                    # FIX (Chat & Web GRPO plan §3.6a/§3.6b): capture the
+                    # current conversation's topic BEFORE this page is added
+                    # to memory, so claim_support_delta can measure how much
+                    # this specific visit actually changed what the agent can
+                    # find on the topic. abs() of this is taken in
+                    # RewardSystem — a page that contradicts the user's claim
+                    # is worth exactly as much "checking effort" credit as
+                    # one that confirms it; this isn't graded on being right.
+                    lang = getattr(self.agent.brain, 'language', None)
+                    topic_words = (lang.conversation_buffer.current_topics()[:3]
+                                  if lang is not None else [])
+                    topic_query = ' '.join(topic_words)
+                    before_count = (len(self.agent.memory.search(topic_query, limit=10))
+                                    if topic_query else 0)
+
                     # Store in memory (browser already did this, but add a
                     # browsing-event tag so language learning picks it up)
                     self.agent.memory.remember(
@@ -1186,6 +1213,28 @@ class CognitiveLoop:
                         },
                         tags=['web', 'learning', 'language'],
                     )
+
+                    after_count = (len(self.agent.memory.search(topic_query, limit=10))
+                                   if topic_query else 0)
+                    claim_support_delta = float(after_count - before_count)
+
+                    # Fire the reward event — feeds RewardSystem's new
+                    # evidence_r term (openness-scaled web-checking reward).
+                    if hasattr(self.agent, 'brain') and self.agent.brain is not None:
+                        try:
+                            event = {
+                                'type': 'web_browsed',
+                                'tags': ['web', 'evidence'],
+                                'payload': {
+                                    'url':                  snapshot.url,
+                                    'title':                snapshot.title,
+                                    'text_len':             len(snapshot.visible_text),
+                                    'claim_support_delta':  claim_support_delta,
+                                },
+                            }
+                            self.agent.brain.evaluate_event(event)
+                        except Exception as _ee:
+                            log.debug(f"Web evidence reward event failed: {_ee}")
 
                     # If the agent is verbal, let it comment on what it found
                     if (hasattr(self.agent.brain, 'language') and
@@ -1247,9 +1296,18 @@ class CognitiveLoop:
                             # Serialize perception/action events to text
                             text = _event_to_text(event)
                         if text:
+                            # FIX: this is synthetic training on serialized
+                            # perception/action events, not a real exchange
+                            # with anyone — tagging it as a distinct internal
+                            # bucket keeps it from ever being counted toward
+                            # genuine repeat-visitor familiarity (which would
+                            # otherwise grow every single learning cycle
+                            # regardless of whether any real partner ever
+                            # talked to this agent at all).
                             self.agent.brain.process_language_input(
                                 text,
                                 event.get('context_snapshot', {}),
+                                speaker_id='_internal_experience_replay',
                             )
         except Exception as e:
             log.error(f"Learning worker error: {e}", exc_info=True)

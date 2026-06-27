@@ -13,16 +13,48 @@ import WorldModelVisualizer from "./components/WorldModelVisualizer.jsx";
 import MentalMatrixModal  from "./components/MentalMatrixModal.jsx";
 
 // ─── Backend constants ────────────────────────────────────────────────────────
-// The per-agent FastAPI server always runs on BASE_BACKEND_PORT (11400).
-// The GUI server (main.py) also defaults to 11400 but is a separate concern.
-// The React frontend talks to the AGENT backend.
-const BACKEND_URL = "http://127.0.0.1:11400";
-const WS_URL      = "ws://127.0.0.1:11400/ws";
-const AGENT_ID    = "demo";
+// This bundle is identical for every agent (packager.py copies the same
+// build output into every agent's package), so nothing here can be a literal
+// per-agent constant. The packaged launcher always serves this frontend from
+// backend_port + 1 (see packager.py's _create_launcher), so the page's own
+// URL already tells us which backend to talk to.
+const BACKEND_PORT = window.location.port ? Number(window.location.port) - 1 : 11400;
+const BACKEND_URL  = `http://${window.location.hostname}:${BACKEND_PORT}`;
+const WS_URL       = `ws://${window.location.hostname}:${BACKEND_PORT}/ws`;
+// AGENT_ID can't be derived from the URL the same way — it's fetched from
+// /status on mount (see the useEffect in App()) and threaded through as
+// state/props from there. "demo" below is only the value used before that
+// first fetch resolves.
+
+// ─── Visitor identity (Chat & Web GRPO plan — extraversion reward fix) ───────
+// A stable per-installation id, persisted in localStorage, sent with every
+// chat message as speaker_id. This is what lets an agent recognize "the
+// same person keeps coming back to talk" and build genuine repeat-visitor
+// familiarity (RewardSystem's new familiarity_r term, scaled by the agent's
+// own extraversion trait) — previously there was no visitor identity at all,
+// so every chat looked identical to the backend and extraversion had
+// nothing to read as a reward signal. Falls back to a per-session id if
+// localStorage is unavailable (e.g. private browsing); familiarity just
+// won't persist across reloads in that case, nothing else breaks.
+function getOrCreateVisitorId() {
+  try {
+    let id = localStorage.getItem("dw_visitor_id");
+    if (!id) {
+      id = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `visitor-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem("dw_visitor_id", id);
+    }
+    return id;
+  } catch {
+    return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+const VISITOR_ID = getOrCreateVisitorId();
 
 // ─── Simple 3-D Renderer (inline — no separate file needed) ──────────────────
 // ─── Web Access Manager ────────────────────────────────────────────────────────
-function WebAccessManager({ onWebsitesChange }) {
+function WebAccessManager({ onWebsitesChange, agentId }) {
   const [websites,  setWebsites]  = useState([]);
   const [newUrl,    setNewUrl]    = useState("");
   const [isAdding,  setIsAdding]  = useState(false);
@@ -30,7 +62,7 @@ function WebAccessManager({ onWebsitesChange }) {
   // Keep backend in sync whenever the allow-list changes
   useEffect(() => {
     if (websites.length === 0) return;
-    fetch(`${BACKEND_URL}/api/agents/${AGENT_ID}/web/allow`, {
+    fetch(`${BACKEND_URL}/api/agents/${agentId}/web/allow`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ websites }),
@@ -38,7 +70,7 @@ function WebAccessManager({ onWebsitesChange }) {
       .then(r => r.json())
       .then(d => console.log("✅ Websites synced:", d))
       .catch(e => console.error("Failed to sync websites:", e));
-  }, [websites]);
+  }, [websites, agentId]);
 
   const addWebsite = () => {
     if (!newUrl.trim()) return;
@@ -246,6 +278,16 @@ function App() {
   // WorldModelVisualizer is shown when we receive a world_model_update
   const [worldModelData,  setWorldModelData]  = useState(null);
   const [showMentalMatrix, setShowMentalMatrix] = useState(false);
+  // Resolved from /status on mount — see the constants block above for why
+  // this can't be a module-level literal. "demo" is just the pre-fetch value.
+  const [agentId, setAgentId] = useState("demo");
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/status`)
+      .then(r => r.json())
+      .then(data => { if (data && data.agent_id) setAgentId(data.agent_id); })
+      .catch(() => { /* keep the "demo" fallback if /status isn't up yet */ });
+  }, []);
 
   useEffect(() => {
     document.body.className = theme === "light" ? "light-theme" : "";
@@ -349,8 +391,9 @@ function App() {
       if (customText === null) setText("");
 
       const form = new FormData();
-      form.append("message",  msg);
-      form.append("agent_id", AGENT_ID);
+      form.append("message",    msg);
+      form.append("agent_id",   agentId);
+      form.append("speaker_id", VISITOR_ID);
 
       const activeUrls = allowedWebsites.filter(w => w.enabled).map(w => w.url);
       if (activeUrls.length > 0) form.append("allowed_websites", JSON.stringify(activeUrls));
@@ -376,7 +419,7 @@ function App() {
     try {
       const formData = new FormData();
       formData.append("file",     file);
-      formData.append("agent_id", AGENT_ID);
+      formData.append("agent_id", agentId);
       formData.append("filetype", type);
       // sync must be a Form field — agent.py reads it as Form(False), not a query param
       if (sync) formData.append("sync", "true");
@@ -452,7 +495,7 @@ function App() {
                     DIVINE WORLD <span className="text-indigo-500">v2.1</span>
                   </h1>
                   <p className="text-[10px] text-slate-500 font-mono tracking-tighter">
-                    CORE_INTERFACE_ADDR: {AGENT_ID}.local
+                    CORE_INTERFACE_ADDR: {agentId}.local
                   </p>
                 </div>
               </div>
@@ -670,7 +713,7 @@ function App() {
       <MentalMatrixModal
         isOpen={showMentalMatrix}
         onClose={() => setShowMentalMatrix(false)}
-        agentId={AGENT_ID}
+        agentId={agentId}
       />
     </div>
   );

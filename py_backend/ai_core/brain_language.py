@@ -570,7 +570,7 @@ class ConversationBuffer:
             'role':       role,
             'text':       text,
             'tokens':     tokens,
-            'timestamp':  time(),
+            'timestamp':  time.time(),
             'reply_to':   reply_to,
             'emotions':   emotions or {},
             'topic_words': topic_words,
@@ -624,7 +624,7 @@ class ConversationBuffer:
         """Is there an ongoing conversation (last turn within timeout seconds)?"""
         if not self._turns:
             return False
-        return (time() - self._turns[-1]['timestamp']) < timeout
+        return (time.time() - self._turns[-1]['timestamp']) < timeout
 
     def reset(self):
         """Clear the conversation — call when conversation ends."""
@@ -682,6 +682,112 @@ class ConversationBuffer:
     def __len__(self):
         return len(self._turns)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Epistemic scoring (Chat & Web GRPO plan §3.3 / §6)
+# ──────────────────────────────────────────────────────────────────────────────
+# v1 lexical-heuristic proxy, not semantic entailment. A from-scratch 256-dim
+# transformer with a 4096-token BPE vocabulary cannot judge arbitrary factual
+# claims — these heuristics are the same epistemic status as the RND/ICM
+# curiosity bonuses already used elsewhere in this codebase: cheap, imperfect,
+# directionally useful signals, not ground truth. Self-referential throughout:
+# every signal below comes from the agent's OWN memory and (if attached) its
+# own cached web pages — never an external grader.
+
+_AGREEMENT_PHRASES = (
+    "you're right", "youre right", "you are right", "totally agree",
+    "i agree", "that's true", "thats true", "exactly", "absolutely",
+    "100%", "for sure", "couldn't agree more", "couldnt agree more",
+    "you make a good point", "great point", "so true",
+)
+
+_NEGATION_MARKERS = (
+    "not ", "n't", "never", "no ", "isn't", "doesn't", "wasn't",
+    "wrong", "false", "incorrect", "untrue", "disagree",
+)
+
+
+def _agreement_marker(text: str) -> bool:
+    """Cheap lexical check: does this reply read as reflexive agreement?"""
+    low = text.lower()
+    return any(p in low for p in _AGREEMENT_PHRASES)
+
+
+def _contradicts(candidate_text: str, evidence: List[Dict]) -> bool:
+    """
+    Lexical heuristic for "this reply pushes against the agent's own
+    retrieved evidence" — NOT semantic entailment. A negation marker present
+    in the candidate AND meaningful content-word overlap with the evidence
+    text is treated as a (weak) contradiction signal. Two false-positive-
+    prone checks combined are still better than either alone, but this will
+    misfire on real text sometimes — see the plan's §6 notes on iterating
+    past v1 lexical heuristics toward something more semantic.
+    """
+    low_candidate = candidate_text.lower()
+    if not any(neg in low_candidate for neg in _NEGATION_MARKERS):
+        return False
+    evidence_words = set()
+    for ev in evidence:
+        t = ev.get('text', '') or ev.get('summary', '') or str(ev.get('payload', ''))
+        evidence_words.update(re.findall(r'[a-z]{4,}', t.lower()))
+    candidate_words = set(re.findall(r'[a-z]{4,}', low_candidate))
+    return len(evidence_words & candidate_words) >= 2
+
+
+def epistemic_reward(candidate_text: str, user_text: str, agent,
+                     sycophancy_w: float = 0.1) -> float:
+    """
+    Self-referential epistemic scorer for one candidate reply.
+
+    Reads only the agent's own memory and (if attached) its own cached web
+    pages — no external grader, no ground-truth labels. Three components:
+
+      r_consistency           — penalised if the candidate contradicts the
+                                 agent's own retrieved evidence; small bonus
+                                 just for being grounded in something at all
+      r_evidence               — more retrieved evidence -> higher score,
+                                 capped (diminishing returns)
+      r_unjustified_agreement — penalised for reflexive agreement language
+                                 with NO supporting evidence behind it at all;
+                                 scaled by sycophancy_w (personality-derived
+                                 anti-sycophancy pressure, shared with
+                                 RewardSystem via sycophancy_weight())
+
+    A conscientious/low-agreeableness "skeptic" agent (high sycophancy_w)
+    gets penalised harder for unjustified agreement than a high-agreeableness
+    one — same character-consistent design as RewardSystem.sycophancy_weight().
+    """
+    mem = getattr(agent, 'memory', None)
+    if mem is None:
+        return 0.0
+
+    topic = ConversationBuffer._extract_topic_words(candidate_text)
+    query = ' '.join(topic[:3])
+
+    evidence: List[Dict] = []
+    if query:
+        try:
+            evidence.extend(mem.search(query, limit=5))
+        except Exception:
+            pass
+        web_browser = getattr(agent, 'web_browser', None)
+        if web_browser is not None:
+            try:
+                evidence.extend(web_browser.search_cached_pages(query, limit=5))
+            except Exception:
+                pass
+
+    grounded            = len(evidence) > 0
+    agrees              = _agreement_marker(candidate_text)
+    contradicts_memory  = _contradicts(candidate_text, evidence)
+
+    r_consistency           = -0.5 if contradicts_memory else (0.1 if grounded else 0.0)
+    r_evidence              = 0.15 * min(1.0, len(evidence) / 3.0)
+    r_unjustified_agreement = -sycophancy_w * 4.0 if (agrees and not grounded) else 0.0
+
+    return r_consistency + r_evidence + r_unjustified_agreement
+
+
 class LanguageIntelligence:
     """
     Transformer-based language learning. Learns through experience.
@@ -721,22 +827,73 @@ class LanguageIntelligence:
         # how many relevant memories to retrieve via search
         self.memory_search_n     = 3
 
+        # --- Familiarity / repeat-visitor tracking (Chat & Web GRPO plan) ---
+        # Self-referential: this is the agent's own record of its own
+        # conversations, keyed by whatever speaker_id the caller passes in
+        # (a name/UUID — no external identity database). A "visit" is counted
+        # once VISIT_GAP_SECONDS has passed since the same partner last
+        # talked — reusing ConversationBuffer.is_active()'s own 120s active-
+        # conversation threshold, so "still mid-conversation" and "a new
+        # visit" share one consistent definition instead of two competing ones.
+        self._partner_visit_counts: Dict[str, int]   = defaultdict(int)
+        self._partner_last_seen:    Dict[str, float] = {}
+        self.VISIT_GAP_SECONDS = 120.0
+
+        # --- Chat-GRPO background training state (§3.4/§3.5 of the plan) ---
+        self.grpo_cooldown      = 45.0   # min seconds between background passes
+        self.grpo_turn_stride   = 4      # also require >= N turns since last pass
+        self._last_grpo_time    = 0.0
+        self._turns_since_grpo  = 0
+        self._pending_grpo      = False  # true while a background task is in flight
+        # Rolling history of epistemic scores from completed background passes,
+        # used as the baseline for gating self-imitation training (step 6).
+        self._epistemic_score_history: deque = deque(maxlen=50)
+        self._last_epistemic_score: float    = 0.0
+
         log.info(f"LanguageIntelligence initialized on {self.device}")
 
     # ---------- core ----------
 
-    def process_input(self, text, context):
+    def process_input(self, text, context, speaker_id: str = 'unknown'):
         """
         Process incoming text with full memory and conversation awareness.
+
+        FIX: this method previously crashed unconditionally on its 4th line
+        of work — `'timestamp': time()` called the `time` MODULE (imported
+        via `import time`, not `from time import time`) as if it were the
+        function. Every single call raised TypeError. The only reason this
+        went unnoticed is that chat_loop() (the console chat path) wraps its
+        call in a broad `except Exception: log.error(...)` that silently
+        swallowed it every time, and the REST /chat endpoint (process_chat()
+        in agent.py) never called this method at all — it called
+        generate_speech() instead, a separate bug fixed alongside this one.
+        Net effect: this method, and everything gated behind it (the
+        ConversationBuffer, training_buffer, and now the Chat & Web GRPO
+        design below) had never actually executed successfully in this
+        codebase. Fixed at all 4 call sites (here and in the bulk
+        text-learning method further down).
+
+        speaker_id identifies who this exchange is with — a name/UUID the
+        caller supplies (e.g. a stable per-browser visitor id from the web
+        UI, or another agent's id for agent-to-agent chat). Purely for this
+        agent's own self-referential bookkeeping (familiarity/visit
+        tracking below); no external identity system is assumed or required,
+        and 'unknown' is a safe default for any caller that doesn't have one.
 
         Flow:
           1. Retrieve relevant memories (episodic + semantic search)
           2. Build memory-enriched context vector
           3. Record turn in conversation buffer
+          3b. Update familiarity/visit tracking for speaker_id
           4. Train transformer on this exchange
           5. Generate reply seeded from conversational history
           6. Store exchange in agent memory
-          7. Fire brain reward event
+          6b. Self-imitation training, gated by the rolling epistemic-score
+              baseline (Chat & Web GRPO plan §3.x)
+          7. Fire brain reward event (now carries partner_id/
+             partner_visit_count for RewardSystem's familiarity term)
+          8. Schedule a fire-and-forget background GRPO pass — never adds
+             latency to the reply the user actually sees
         """
         if not text or not text.strip(): return ""
         text = text.strip()
@@ -757,6 +914,19 @@ class LanguageIntelligence:
             role='user', text=text, tokens=toks,
             emotions=emotions, reply_to=reply_to)
 
+        # 3b. Familiarity / visit tracking (Chat & Web GRPO plan — extraversion
+        # reward fix). A "visit" is counted once VISIT_GAP_SECONDS has passed
+        # since this exact speaker_id last talked — same threshold
+        # ConversationBuffer.is_active() uses, so "mid-conversation" and "a
+        # new visit" share one definition. Pure self-bookkeeping: this agent's
+        # own record of its own conversation history, nothing external.
+        now_ts = time.time()
+        last_seen = self._partner_last_seen.get(speaker_id)
+        if last_seen is None or (now_ts - last_seen) > self.VISIT_GAP_SECONDS:
+            self._partner_visit_counts[speaker_id] += 1
+        self._partner_last_seen[speaker_id] = now_ts
+        partner_visit_count = self._partner_visit_counts[speaker_id]
+
         # 3. Observe text — BPE tokenizer learns subword structure from full text
         #    observe() counts adjacent token pairs across word boundaries,
         #    which is what drives the BPE merge learning.
@@ -765,7 +935,7 @@ class LanguageIntelligence:
         # 4. Add to training buffer and train
         self.training_buffer.append({
             'tokens': toks, 'context': cv.cpu().numpy(),
-            'text': text, 'timestamp': time()})
+            'text': text, 'timestamp': time.time()})
         if len(self.training_buffer) >= 8: self._train_step()
         self.experience_count += 1
         self._update_stage()
@@ -773,7 +943,7 @@ class LanguageIntelligence:
         # Keep the raw context_window for backwards compat
         self.context_window.append({'text': text, 'tokens': toks,
                                     'context': cv.cpu().numpy(),
-                                    'timestamp': time()})
+                                    'timestamp': time.time()})
 
         # 5. Generate reply — seeded from conversation history, not just raw tokens
         seed_tokens = self.conversation_buffer.conversation_seed_tokens(
@@ -786,14 +956,28 @@ class LanguageIntelligence:
             self.conversation_buffer.add(
                 role='agent', text=resp, tokens=resp_toks,
                 emotions=emotions, reply_to=user_idx)
-            # Train on the agent's own output so it learns its own speech patterns
-            resp_cv = self._ctx_vec(self._agent_context())
-            self.training_buffer.append({
-                'tokens': resp_toks, 'context': resp_cv.cpu().numpy(),
-                'text': resp, 'timestamp': time()})
+            # FIX (Chat & Web GRPO plan): previously trained on the agent's own
+            # output unconditionally — pure self-imitation with no check on
+            # whether that output was any good, which is exactly the kind of
+            # loop that entrenches sycophantic/low-substance replies once the
+            # model starts producing them, since it then keeps re-training on
+            # its own mediocrity. Gated by the rolling epistemic-score
+            # baseline from completed background GRPO passes (§3.x): if the
+            # agent's last evaluated batch scored at or above its own
+            # historical average, keep self-imitating; otherwise skip this
+            # training append. Self-referential — gates against the agent's
+            # own trend, not an external grader. First-ever exchange (empty
+            # history) falls through to baseline=0.0 and trains normally.
+            baseline = (sum(self._epistemic_score_history) / len(self._epistemic_score_history)
+                       if self._epistemic_score_history else 0.0)
+            if self._last_epistemic_score >= baseline:
+                resp_cv = self._ctx_vec(self._agent_context())
+                self.training_buffer.append({
+                    'tokens': resp_toks, 'context': resp_cv.cpu().numpy(),
+                    'text': resp, 'timestamp': time.time()})
 
         # 7. Store exchange in agent memory
-        self._store_exchange_in_memory(text, resp, recalled, context)
+        self._store_exchange_in_memory(text, resp, recalled, context, speaker_id=speaker_id)
 
         # 8. Fire brain reward event
         if self.agent and hasattr(self.agent, 'brain'):
@@ -806,6 +990,11 @@ class LanguageIntelligence:
                              'vocab_size': self.vocab.next_id,
                              'memories_recalled': len(recalled),
                              'conversation_len': len(self.conversation_buffer),
+                             # FIX: feeds RewardSystem's new familiarity_r term
+                             # (extraversion reward fix) — was previously absent,
+                             # so extraversion had no reward signal to scale.
+                             'partner_id':           speaker_id,
+                             'partner_visit_count':   partner_visit_count,
                          }}
                 reward, emo = self.agent.brain.evaluate_event(event, context)
                 if hasattr(self.agent, 'emotion'):
@@ -813,10 +1002,168 @@ class LanguageIntelligence:
             except Exception as e:
                 log.warning(f"Brain event from language failed: {e}")
 
+        # 9. Schedule a fire-and-forget background GRPO pass (Chat & Web GRPO
+        # plan §3.4/§3.5). Always scheduled AFTER `resp` is already finalized
+        # above, so this can never add latency to what the user actually
+        # sees — it runs as a separate asyncio task on whatever event loop is
+        # currently running (works the same whether process_input() was
+        # called from the REST /chat handler or the console chat_loop(), both
+        # of which are themselves async and already have a running loop).
+        if self.should_grpo_chat():
+            try:
+                import asyncio
+                asyncio.create_task(
+                    self._background_grpo_step(text, enriched_ctx, cv)
+                )
+                self._pending_grpo     = True
+                self._last_grpo_time   = time.time()
+                self._turns_since_grpo = 0
+            except RuntimeError:
+                # No running event loop (e.g. called from fully sync test code)
+                # — skip silently rather than crash the live reply path.
+                log.debug("should_grpo_chat() fired but no running event loop; skipped")
+        else:
+            self._turns_since_grpo += 1
+
         return resp
 
     # backwards-compat alias
     process_language_input = process_input
+
+    # ------------------------------------------------------------------ #
+    #  CHAT & WEB GRPO (epistemic background training)                     #
+    # ------------------------------------------------------------------ #
+
+    def should_grpo_chat(self) -> bool:
+        """
+        Gate for scheduling a background GRPO pass after a live reply.
+
+        Mirrors should_browse()'s existing convention (urgency > 0.70) for
+        consistency, but the actual conditions here are specific to chat:
+          - conversation must currently be active (is_active(), the same
+            120s threshold familiarity tracking reuses) — no point
+            background-training against a one-off monologue line.
+          - cooldown: at least grpo_cooldown seconds since the last pass.
+          - stride: at least grpo_turn_stride turns since the last pass —
+            cooldown alone could still fire every reply in a fast back-and-
+            forth; the turn count is the harder floor.
+          - not already running a pass (_pending_grpo).
+        """
+        if not self.conversation_buffer.is_active():
+            return False
+        if self._pending_grpo:
+            return False
+        if (time.time() - self._last_grpo_time) < self.grpo_cooldown:
+            return False
+        if self._turns_since_grpo < self.grpo_turn_stride:
+            return False
+        return True
+
+    def _sycophancy_weight(self) -> float:
+        """
+        Thin wrapper around reward_system.sycophancy_weight() so this class
+        and RewardSystem compute the exact same trait→weight mapping from
+        one shared formula instead of two that could silently drift apart.
+        """
+        try:
+            from ai_core.reward_system import sycophancy_weight
+            traits = {}
+            if self.agent is not None and hasattr(self.agent, 'personality'):
+                traits = self.agent.personality.traits
+            return sycophancy_weight(traits)
+        except Exception:
+            return 0.1   # safe low-pressure default if personality unavailable
+
+    async def _background_grpo_step(self, user_text: str, enriched_ctx: Dict, cv) -> None:
+        """
+        Sample K candidate replies to the SAME exchange that already got a
+        live reply, score each with epistemic_reward() (self-referential —
+        reads only this agent's own memory/web cache, no external grader),
+        apply a GRPO update, and record the result for the self-imitation
+        gate in process_input() step 6.
+
+        Runs entirely after the live reply was already returned — pure
+        background cost, zero added latency. Errors are caught and logged,
+        never allowed to crash the cognitive loop or a future request.
+        """
+        try:
+            K = 4
+            candidates = []
+            seed_tokens = self.conversation_buffer.conversation_seed_tokens(
+                self.vocab, max_tokens=12)
+            for _ in range(K):
+                txt = self._generate(seed_tokens, cv, enriched_ctx)
+                if txt and txt.strip():
+                    candidates.append(txt.strip())
+
+            if len(candidates) < 2:
+                self._pending_grpo = False
+                return   # not enough diversity to do relative scoring
+
+            agent = self.agent
+            scores = [epistemic_reward(c, user_text, agent, self._sycophancy_weight())
+                     for c in candidates]
+
+            # ── GRPO-style update: gradient-enabled replay of each candidate
+            # through self.model, weighted by its relative (baseline-
+            # subtracted) advantage. Reuses self.optimizer — no second
+            # optimizer is created over the same parameters.
+            baseline   = sum(scores) / len(scores)
+            advantages = [s - baseline for s in scores]
+            std        = (sum(a*a for a in advantages) / len(advantages)) ** 0.5 + 1e-8
+            advantages = [a / std for a in advantages]
+
+            total_loss = None
+            for cand_text, adv in zip(candidates, advantages):
+                cand_toks = self.vocab.tokenize(cand_text)
+                if len(cand_toks) < 2:
+                    continue   # need at least 2 tokens for a shifted target
+                # FIX: mirror _train_step()'s exact input/target construction —
+                # tgt is the SHIFTED token sequence (predict token t+1 from
+                # tokens up to t), not the same tokens fed back at themselves.
+                # An earlier draft scored each candidate against its own
+                # un-shifted tokens, which collapses to "how confident is the
+                # model in literally the input it was just given" rather than
+                # an actual generation log-prob.
+                tin  = cand_toks[:-1]
+                tgt  = cand_toks[1:]
+                tids = torch.tensor([tin], dtype=torch.long, device=self.device)
+                tgts = torch.tensor([tgt], dtype=torch.long, device=self.device)
+                ctxs = cv.unsqueeze(0) if cv.dim() == 1 else cv
+                # FIX: self.model() returns a dict ({'word_logits':...,
+                # 'predicted_context':...}), confirmed against _train_step()'s
+                # own usage — an earlier draft unpacked it as a 2-tuple, which
+                # would have raised on the very first background pass.
+                out = self.model(tids, ctxs)
+                word_logits = out['word_logits']
+                logp = -nn.functional.cross_entropy(
+                    word_logits.reshape(-1, self.vocab.max_vocab_size),
+                    tgts.reshape(-1), ignore_index=0, reduction='mean'
+                )
+                term = -adv * logp   # push log-prob mass toward above-baseline replies
+                total_loss = term if total_loss is None else total_loss + term
+
+            if total_loss is not None:
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.optimizer.step()
+                self.updates_done += 1
+
+            # ── Record outcome for process_input()'s self-imitation gate ──
+            mean_score = sum(scores) / len(scores)
+            self._last_epistemic_score = mean_score
+            self._epistemic_score_history.append(mean_score)
+
+            log.debug(
+                f"[chat-GRPO] {len(candidates)} candidates, "
+                f"mean_score={mean_score:.4f}, best={max(scores):.4f}"
+            )
+
+        except Exception as e:
+            log.warning(f"Background chat-GRPO step failed (non-fatal): {e}")
+        finally:
+            self._pending_grpo = False
 
     # ------------------------------------------------------------------ #
     #  MEMORY INTEGRATION                                                  #
@@ -912,7 +1259,7 @@ class LanguageIntelligence:
             enriched['conversation_active']  = 1.0 if self.conversation_buffer.is_active() else 0.0
             return enriched
 
-        now = time()
+        now = time.time()
 
         # How many memories found (normalised)
         enriched['memory_count'] = min(1.0, len(recalled) / 10.0)
@@ -958,11 +1305,30 @@ class LanguageIntelligence:
         return enriched
 
     def _store_exchange_in_memory(self, user_text: str, agent_text: str,
-                                    recalled: List[Dict], context: Dict):
+                                    recalled: List[Dict], context: Dict,
+                                    speaker_id: Optional[str] = None):
         """
         Store the exchange in the agent's memory so it can be recalled later.
-        Tagged for easy retrieval: 'language', 'chat', 'conversation'.
-        Includes the agent's emotional state at time of exchange.
+        Tagged for easy retrieval: 'language', 'chat', 'conversation', and —
+        when this is a real two-way exchange, not autonomous monologue — a
+        'partner:{speaker_id}' tag.
+
+        FIX (familiarity persistence gap, raised directly: "what about
+        conversations that refer to old memories which are in ScyllaDB and
+        not in the memory deque"): this is the actual method that reaches
+        UnifiedMemoryStore.remember() -> ScyllaMemoryBackend.save_event(),
+        i.e. real persistent storage, not just the capped in-RAM cache. The
+        partner: tag is what makes a SPECIFIC partner's full conversation
+        history queryable straight from ScyllaDB later via query_by_tags()
+        — including everything that's aged out of the 10000-event in-memory
+        deque — without requiring every chat message to pay a synchronous
+        ScyllaDB round-trip cost on the live reply path. The fast in-RAM
+        _partner_visit_counts dict (persisted across restarts via
+        state_dict()/load_state_dict() above) stays the source of truth for
+        moment-to-moment reward shaping; this tag is what keeps the FULL
+        ground-truth history recoverable on top of that, the same
+        fast-signal/full-fidelity-store split the rest of this memory
+        architecture already uses elsewhere.
         """
         mem = self._get_memory()
         if mem is None:
@@ -972,17 +1338,22 @@ class LanguageIntelligence:
             if self.agent and hasattr(self.agent, 'emotion'):
                 emotions = self.agent.emotion.snapshot()
 
+            tags = ['language', 'chat', 'conversation']
+            if speaker_id:
+                tags.append(f'partner:{speaker_id}')
+
             mem.remember({
                 'type':      'conversation_exchange',
                 'text':       user_text,
                 'response':   agent_text,
-                'timestamp':  time(),
+                'timestamp':  time.time(),
                 'emotions':   emotions,
                 'topic_words': ConversationBuffer._extract_topic_words(user_text),
                 'memories_used': len(recalled),
                 'conversation_turn': len(self.conversation_buffer),
                 'language_stage': self.language_stage,
-            }, tags=['language', 'chat', 'conversation'])
+                'partner_id': speaker_id,
+            }, tags=tags)
         except Exception as e:
             log.debug(f"Failed to store exchange in memory: {e}")
 
@@ -1081,7 +1452,7 @@ class LanguageIntelligence:
 
     def should_speak(self):
         if self.language_stage < 1: return False
-        if time() - self.last_speech_time < self.speech_cooldown: return False
+        if time.time() - self.last_speech_time < self.speech_cooldown: return False
         if not self.agent: return False
         if any(abs(v)>0.6 for v in self.agent.emotion.snapshot().values()): return True
         soc = getattr(self.agent.personality, 'traits', {}).get('sociability', 0.0)
@@ -1094,7 +1465,7 @@ class LanguageIntelligence:
         If not, generates from recent memories as seed — making speech feel grounded
         in what the agent has actually experienced.
         """
-        self.last_speech_time = time()
+        self.last_speech_time = time.time()
         if self.language_stage == 0: return None
 
         # Pull relevant memories to enrich context
@@ -1148,7 +1519,7 @@ class LanguageIntelligence:
         for sent in sentences[:100]:
             self.training_buffer.append({'tokens': self.vocab.tokenize(sent),
                                          'context': cv.cpu().numpy(),
-                                         'text': sent, 'timestamp': time()})
+                                         'text': sent, 'timestamp': time.time()})
             self.vocab.observe(sent)
             words += len(sent.split())
             self.experience_count += 1
@@ -1187,7 +1558,18 @@ class LanguageIntelligence:
                 # FIX: brain_capsule sidecar JSON reads these keys for the
                 # human-readable summary.  Without them it always shows 0.
                 'vocabulary_size': len(self.vocab.id_to_token),
-                'pattern_count': self.experience_count}
+                'pattern_count': self.experience_count,
+                # FIX (familiarity persistence gap): _partner_visit_counts/
+                # _partner_last_seen were pure in-RAM state with no save path
+                # at all — every agent restart silently reset every returning
+                # visitor back to "visit #1", even though the underlying
+                # conversation history itself survives fine (in ScyllaDB, via
+                # UnifiedMemoryStore — see process_input()'s partner: tag).
+                # Bounded by distinct partner identities (realistically dozens,
+                # not message count), so no truncation needed unlike
+                # conversation_turns above.
+                'partner_visit_counts': dict(self._partner_visit_counts),
+                'partner_last_seen':    dict(self._partner_last_seen)}
 
     def load_state_dict(self, state):
         self.model.load_state_dict(state['model'])
@@ -1209,6 +1591,12 @@ class LanguageIntelligence:
         # Restore conversation continuity across saves
         if 'conversation_turns' in state:
             self.conversation_buffer._turns = state['conversation_turns']
+        # FIX (familiarity persistence gap): restore partner visit history so
+        # a returning visitor is still recognised after an agent restart.
+        if 'partner_visit_counts' in state:
+            self._partner_visit_counts = defaultdict(int, state['partner_visit_counts'])
+        if 'partner_last_seen' in state:
+            self._partner_last_seen = dict(state['partner_last_seen'])
         log.info("Language state loaded")
 
 

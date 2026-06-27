@@ -320,14 +320,18 @@ class BrainCore:
         self.pattern_recognizer = PatternRecognizer()
 
         # ── Language ────────────────────────────────────────────────────
-        # Initialised by add_language_to_brain() in agent.__init__
-        # Importing here would create a circular dependency in some setups
+        # Initialised by add_language_to_brain() in NPCAgent._init_language(),
+        # called right after BrainCore() is constructed.
+        # FIX: this used to ALSO eagerly construct a LanguageIntelligence
+        # here, contradicting its own comment — every agent spawn built two
+        # full instances (duplicate transformer, tokenizer, AdamW optimizer)
+        # since add_language_to_brain() unconditionally overwrites
+        # self.language with a second one moments later in __init__ and the
+        # first was simply discarded, wasted construction cost on every
+        # single agent. Left as None here; add_language_to_brain() is the
+        # sole, authoritative construction path, matching what the comment
+        # already said it should be.
         self.language: Any = None
-        try:
-            from ai_core.brain_language import LanguageIntelligence
-            self.language = LanguageIntelligence(agent_ref=agent_ref)
-        except Exception as e:
-            log.warning(f"LanguageIntelligence not available at init: {e}")
 
         # ── Continual learning buffer ────────────────────────────────────
         self.continual_buffer: deque = deque(maxlen=10_000)
@@ -871,13 +875,19 @@ class BrainCore:
 
     def process_language_input(self,
                                text: str,
-                               context: Optional[Dict] = None) -> str:
+                               context: Optional[Dict] = None,
+                               speaker_id: str = 'unknown') -> str:
         """Route text through LanguageIntelligence."""
         if self.language is None:
             log.warning("BrainCore: no LanguageIntelligence attached.")
             return ""
         try:
-            return self.language.process_input(text, context or {})
+            # FIX: was missing speaker_id entirely — any caller passing it
+            # through this wrapper (e.g. chat_loop()'s console path) would
+            # have hit a TypeError, since process_input() on the underlying
+            # LanguageIntelligence now requires it for familiarity/visit
+            # tracking (Chat & Web GRPO plan — extraversion reward fix).
+            return self.language.process_input(text, context or {}, speaker_id=speaker_id)
         except Exception as e:
             log.error(f"BrainCore.process_language_input: {e}")
             return ""

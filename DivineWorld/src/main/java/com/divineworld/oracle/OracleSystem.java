@@ -24,6 +24,7 @@ import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 import com.divineworld.events.ProximityChatHandler;
+import com.divineworld.integration.PythonBackendClient;
 import com.divineworld.utils.AgentConfigLoader;
 import java.io.*;
 import java.lang.reflect.Type;
@@ -33,7 +34,7 @@ import java.util.*;
 /**
  * Oracle System — UPDATED
  *
- * All original features preserved. Two new additions:
+ * All original features preserved, plus:
  *
  *  1. ORACLE LOOK-AT FIX
  *     The original one-shot lookAt() call in spawnOracle() is kept for the
@@ -48,10 +49,33 @@ import java.util.*;
  *     its current position — giving visual feedback that the Oracle is aware
  *     of the Genesis / Reset event.
  *
+ *  3. AGENT-EXCLUSION FIX (onOracleInteract)
+ *     onPlayerJoin() already excluded AI agents from getting their own
+ *     oracle spawned; onOracleInteract() had no equivalent check, so an
+ *     agent could wander up to and right-click a human's already-spawned
+ *     oracle and still receive the tutorial books. Fixed — same
+ *     AgentConfigLoader.getAgentTypeForName() check, now at the top of both
+ *     methods.
+ *
+ *  4. ORACLE TEACH / STOP_TEACH (NEW)
+ *     /oracle teach sends a player's already-spawned oracle wandering among
+ *     live AI agents to deliver content from ~/Documents/DivineWorld/
+ *     teaching_materials/ — gated on the owner's own tutorial being
+ *     complete and the shared LLMOracleBrain not being mid-generation
+ *     elsewhere (LLMOracleBrain.isBusy(), now tracked automatically inside
+ *     queryAsync()/query() rather than by each caller). Delivery goes
+ *     through the target agent's perception as an ordinary chat_heard event
+ *     (PythonBackendClient.notifyChatHeard()) — indistinguishable from a
+ *     real player speaking nearby, by design. Rotates to a different agent
+ *     every 20 real-world minutes (System.currentTimeMillis()-based, not
+ *     tick-based). /oracle stop_teach clears all of this and returns the
+ *     oracle to idle. See processTeachingTick() below, called from the
+ *     existing onServerTick() handler.
+ *
  * Everything else — spawnOracle(), despawnOracle(), onPlayerJoin(),
- * onPlayerChat(), onOracleInteract(), runTutorial(), saveMemory(),
- * loadAllMemory(), getSafeSpawnPosition(), setOracleBrain(),
- * getOracleBrain() — is identical to the original.
+ * onPlayerChat(), runTutorial(), saveMemory(), loadAllMemory(),
+ * getSafeSpawnPosition(), setOracleBrain(), getOracleBrain() — is identical
+ * to the original.
  *
  * NOTE: This class is NOT annotated @Mod.EventBusSubscriber because it is
  * registered as an instance (MinecraftForge.EVENT_BUS.register(oracleSystem))
@@ -87,6 +111,54 @@ public class OracleSystem {
     private ServerLevel reactionLevel        = null;
     private BlockPos    reactionCenter       = null;
     private boolean     reactionIsReset      = false;
+
+    // -------------------------------------------------------------------------
+    // NEW: Oracle teach / stop_teach state (plan-creaking-geckolib-and-
+    // oracle-teach.md, Part 4)
+    // -------------------------------------------------------------------------
+    // All maps below are keyed by the OWNER's UUID (the player whose
+    // activeOracles entry is being used to teach) — mirrors activeOracles'
+    // own keying exactly, since "teach" operates on a specific player's
+    // already-spawned oracle, not a separate global entity.
+
+    /** Owners who have run /oracle teach and not yet /oracle stop_teach. */
+    private final Set<UUID> teachingRequested = ConcurrentHashMap.newKeySet();
+
+    /** Name of the AI agent this owner's oracle is currently engaged with, if any. */
+    private final Map<UUID, String> teachingTargetAgent = new HashMap<>();
+
+    /** Real-world ms timestamp the current engagement began (for the 20-min rotation). */
+    private final Map<UUID, Long> teachingEngagementStart = new HashMap<>();
+
+    /** Name of the agent most recently taught — excluded from the next discovery round. */
+    private final Map<UUID, String> lastTaughtAgent = new HashMap<>();
+
+    /** Index into the cached teaching-material lines, per owner (cycles, doesn't reset on rotation). */
+    private final Map<UUID, Integer> teachingMaterialIndex = new HashMap<>();
+
+    /** Real-world ms timestamp of the last teaching line delivered, per owner. */
+    private final Map<UUID, Long> lastTeachingSpeechTime = new HashMap<>();
+
+    /** 20 REAL-WORLD minutes per agent, per the plan — not game-tick-based. */
+    private static final long TEACHING_ROTATION_MS = 20L * 60L * 1000L;
+
+    /**
+     * How often the oracle delivers one teaching line while engaged. Not
+     * specified by the plan beyond the 20-minute per-agent ROTATION figure —
+     * this is a reasonable default (one line every 20s gives ~60 lines of
+     * material per engagement) chosen since some cadence has to exist for
+     * "begin teaching" to mean anything tick-to-tick; tune freely.
+     */
+    private static final long TEACHING_SPEECH_INTERVAL_MS = 20_000L;
+
+    /** How often the teaching_materials folder is re-scanned for new files
+     *  while the server keeps running (so a player can add material live). */
+    private static final long TEACHING_MATERIALS_REFRESH_MS = 5L * 60L * 1000L;
+
+    private List<String> cachedTeachingLines    = null;
+    private long         teachingMaterialsLoadedAt = 0L;
+
+    private static final Random TEACH_RNG = new Random();
 
     // -------------------------------------------------------------------------
     // Constructor (identical to original)
@@ -237,6 +309,12 @@ public class OracleSystem {
             }
             reactionCircleTick++;
         }
+
+        // (c) NEW: Oracle teach engagement/rotation (Part 4) — eligibility
+        // checking, agent discovery, teleport-engage, and the 20-real-
+        // world-minute rotation all happen here, in the same per-tick
+        // handler forceLookAtPlayer() already runs from, per the plan.
+        processTeachingTick();
     }
 
     // -------------------------------------------------------------------------
@@ -297,6 +375,11 @@ public class OracleSystem {
             prompt.append(memory.conversation.get(i)).append("\n");
         prompt.append("Oracle:");
 
+        // NOTE (Part 4 busy flag): brain.queryAsync() below now manages its
+        // own busy state internally (LLMOracleBrain.java) — no wrapping
+        // needed at this call site. This is what stops processTeachingTick()
+        // from starting a teaching engagement while a direct chat answer
+        // like this one is mid-generation, and vice versa.
         brain.queryAsync(DWMod.getInstance().getServer(), prompt.toString(), answer -> {
             if (answer == null || answer.isBlank())
                 answer = "§7[The Oracle remains silent, pondering the mysteries of existence...]";
@@ -317,6 +400,17 @@ public class OracleSystem {
     public void onOracleInteract(PlayerInteractEvent.EntityInteract event) {
         if (!(event.getEntity() instanceof ServerPlayer)) return;
         ServerPlayer player = (ServerPlayer) event.getEntity();
+
+        // FIX (plan.md §8.2 / plan-creaking-geckolib-and-oracle-teach.md):
+        // onPlayerJoin() already excludes AI agents from getting their OWN
+        // oracle spawned, but nothing stopped an agent from wandering up to
+        // and right-clicking a HUMAN's already-spawned oracle — the tutorial
+        // books would still be granted, since this method only ever checked
+        // whether the target entity was tagged "is_oracle", never who was
+        // doing the interacting. Same check onPlayerJoin() already uses.
+        if (AgentConfigLoader.getAgentTypeForName(player.getName().getString()) != null) {
+            return;
+        }
 
         if (!(event.getTarget() instanceof Mob)) return;
         Mob oracle = (Mob) event.getTarget();
@@ -408,6 +502,254 @@ public class OracleSystem {
             }
         }
         return nearest;
+    }
+
+    // -------------------------------------------------------------------------
+    // NEW: Oracle teach / stop_teach (plan-creaking-geckolib-and-oracle-
+    // teach.md, Part 4)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Called by /oracle teach. Sets "teaching requested" intent only —
+     * engagement itself waits for both gating flags (tutorialCompleted +
+     * !brain.isBusy()) on the next server tick, per the plan.
+     */
+    public void requestTeaching(UUID ownerUUID) {
+        teachingRequested.add(ownerUUID);
+        DWMod.LOGGER.info("[Oracle] Teaching requested by owner {}", ownerUUID);
+    }
+
+    /**
+     * Called by /oracle stop_teach. Clears teaching-requested intent, any
+     * active engagement, and per-tick follow — the oracle returns to its
+     * normal owner-following idle behaviour (already handled by the
+     * existing onServerTick() look-at block once teachingTargetAgent is
+     * cleared for this owner).
+     */
+    public void stopTeaching(UUID ownerUUID) {
+        teachingRequested.remove(ownerUUID);
+        teachingTargetAgent.remove(ownerUUID);
+        teachingEngagementStart.remove(ownerUUID);
+        lastTeachingSpeechTime.remove(ownerUUID);
+        DWMod.LOGGER.info("[Oracle] Teaching stopped by owner {}", ownerUUID);
+    }
+
+    public boolean isTeaching(UUID ownerUUID) {
+        return teachingRequested.contains(ownerUUID);
+    }
+
+    /**
+     * Per-tick dispatch for every owner currently requesting teaching.
+     * Called from onServerTick() above, alongside the existing look-at and
+     * reaction-circle work it already does each tick.
+     */
+    private void processTeachingTick() {
+        if (teachingRequested.isEmpty()) return;
+
+        for (UUID ownerUUID : new ArrayList<>(teachingRequested)) {
+            // Gating flag 1 (already existed): owner must have completed
+            // their own tutorial before their oracle is available to teach.
+            if (!tutorialCompleted.contains(ownerUUID)) continue;
+
+            // Gating flag 2 (NEW): the shared Ollama backend must not be
+            // mid-generation for a direct chat answer (or vice versa — this
+            // same check is what stops teaching from starting a generation
+            // that would collide with a live /oracle ask).
+            if (brain.isBusy()) continue;
+
+            Mob oracle = activeOracles.get(ownerUUID);
+            if (oracle == null || oracle.isRemoved()) continue;
+            if (!(oracle.level() instanceof ServerLevel serverLevel)) continue;
+
+            String  currentTarget = teachingTargetAgent.get(ownerUUID);
+            long    now           = System.currentTimeMillis();
+
+            if (currentTarget == null) {
+                String chosen = discoverTeachableAgent(serverLevel, ownerUUID);
+                if (chosen == null) continue;   // no eligible agent this tick — retry next tick
+                engageAgent(serverLevel, oracle, ownerUUID, chosen, now);
+                continue;
+            }
+
+            long startedAt = teachingEngagementStart.getOrDefault(ownerUUID, now);
+            if (now - startedAt >= TEACHING_ROTATION_MS) {
+                // 20 real-world minutes elapsed — rotate to a different agent.
+                lastTaughtAgent.put(ownerUUID, currentTarget);
+                teachingTargetAgent.remove(ownerUUID);
+                teachingEngagementStart.remove(ownerUUID);
+                DWMod.LOGGER.info("[Oracle] Teaching rotation: owner={} finished agent={}",
+                        ownerUUID, currentTarget);
+                continue;   // next tick discovers + engages a new target
+            }
+
+            deliverTeachingTick(serverLevel, oracle, ownerUUID, currentTarget, now);
+        }
+    }
+
+    /**
+     * Agent discovery: iterate live players, classify via
+     * AgentConfigLoader.getAgentTypeForName() (same method onPlayerJoin()
+     * already uses), excluding whoever this owner's oracle just finished
+     * teaching.
+     */
+    private String discoverTeachableAgent(ServerLevel level, UUID ownerUUID) {
+        String exclude = lastTaughtAgent.get(ownerUUID);
+        List<ServerPlayer> candidates = new ArrayList<>();
+        for (ServerPlayer sp : level.getServer().getPlayerList().getPlayers()) {
+            String name = sp.getName().getString();
+            if (AgentConfigLoader.getAgentTypeForName(name) == null) continue;  // real player, not an agent
+            if (name.equals(exclude)) continue;
+            candidates.add(sp);
+        }
+        if (candidates.isEmpty()) return null;
+        return candidates.get(TEACH_RNG.nextInt(candidates.size())).getName().getString();
+    }
+
+    /**
+     * Engagement: teleport the oracle within 3 blocks of the chosen agent
+     * and mark the engagement as begun.
+     */
+    private void engageAgent(ServerLevel level, Mob oracle, UUID ownerUUID,
+                              String agentName, long now) {
+        ServerPlayer target = level.getServer().getPlayerList().getPlayerByName(agentName);
+        if (target == null) return;
+
+        Vec3     agentPos = target.position();
+        // Fixed 2-block offset along +X, then snapped to a safe standable
+        // block — simple and deterministic; within the plan's "within 3
+        // blocks" requirement without needing pathfinding.
+        BlockPos near = new BlockPos((int) Math.floor(agentPos.x) + 2,
+                                      (int) Math.floor(agentPos.y),
+                                      (int) Math.floor(agentPos.z));
+        BlockPos safe = getSafeSpawnPosition(level, near);
+        oracle.teleportTo(safe.getX() + 0.5, safe.getY(), safe.getZ() + 0.5);
+
+        teachingTargetAgent.put(ownerUUID, agentName);
+        teachingEngagementStart.put(ownerUUID, now);
+        teachingMaterialIndex.putIfAbsent(ownerUUID, 0);
+        lastTeachingSpeechTime.remove(ownerUUID);   // deliver the first line immediately next tick
+
+        DWMod.LOGGER.info("[Oracle] Teaching engagement started: owner={} agent={}", ownerUUID, agentName);
+    }
+
+    /**
+     * While engaged: keep the oracle facing the agent every tick (reuses
+     * the existing forceLookAtPlayer() helper), and periodically deliver
+     * one teaching line.
+     *
+     * FIX (plan-creaking-geckolib-and-oracle-teach.md, Part 4 — the core
+     * requirement of this whole feature): teaching content is delivered
+     * through the agent's PERCEPTION as an ordinary chat_heard event
+     * (PythonBackendClient.notifyChatHeard() — the exact same call
+     * ProximityChatHandler already uses for real proximity speech), NOT
+     * through any human-facing chat frontend, and with NO special event
+     * type or "is_teaching" flag anywhere in the payload. The agent's
+     * obs_builder.py memory-recency block sees this exactly as it would see
+     * any other nearby player talking — the agent has no way to know it is
+     * "being taught" rather than just being spoken to.
+     */
+    private void deliverTeachingTick(ServerLevel level, Mob oracle, UUID ownerUUID,
+                                       String agentName, long now) {
+        ServerPlayer target = level.getServer().getPlayerList().getPlayerByName(agentName);
+        if (target == null) {
+            // Agent logged off mid-engagement — rotate immediately rather
+            // than waiting out the rest of the 20-minute window.
+            lastTaughtAgent.put(ownerUUID, agentName);
+            teachingTargetAgent.remove(ownerUUID);
+            teachingEngagementStart.remove(ownerUUID);
+            return;
+        }
+
+        forceLookAtPlayer(oracle, target);
+
+        Long lastSpeech = lastTeachingSpeechTime.get(ownerUUID);
+        if (lastSpeech != null && (now - lastSpeech) < TEACHING_SPEECH_INTERVAL_MS) return;
+
+        List<String> lines = getTeachingMaterialLines();
+        if (lines.isEmpty()) return;   // no teaching_materials present yet — nothing to deliver
+
+        int idx  = teachingMaterialIndex.getOrDefault(ownerUUID, 0) % lines.size();
+        String line = lines.get(idx);
+        teachingMaterialIndex.put(ownerUUID, idx + 1);
+        lastTeachingSpeechTime.put(ownerUUID, now);
+
+        PythonBackendClient.notifyChatHeard(agentName, "Oracle", line);
+    }
+
+    /**
+     * Teaching-materials folder resolution.
+     *
+     * FIX (plan-creaking-geckolib-and-oracle-teach.md, Part 4): mirrors
+     * mc_uuid.py's AgentNameManager._find_config_path() fallback chain
+     * exactly (Documents -> Desktop -> OneDrive/Documents -> OneDrive/
+     * Desktop, falling back to Documents and auto-creating it if none
+     * exist) rather than a naive single System.getProperty("user.home") +
+     * "Documents" lookup — the same Windows-OneDrive-redirected-Documents
+     * case that fix already handles applies here too.
+     */
+    private static Path findTeachingMaterialsDir() {
+        String home = System.getProperty("user.home");
+        Path[] candidates = {
+            Paths.get(home, "Documents", "DivineWorld", "teaching_materials"),
+            Paths.get(home, "Desktop",   "DivineWorld", "teaching_materials"),
+            Paths.get(home, "OneDrive", "Documents", "DivineWorld", "teaching_materials"),
+            Paths.get(home, "OneDrive", "Desktop",   "DivineWorld", "teaching_materials"),
+        };
+        for (Path p : candidates) {
+            if (Files.exists(p)) return p;
+        }
+        Path fallback = candidates[0];
+        try {
+            Files.createDirectories(fallback);
+        } catch (IOException e) {
+            DWMod.LOGGER.error("[Oracle] Failed to create teaching_materials dir: {}", fallback, e);
+        }
+        return fallback;
+    }
+
+    /**
+     * Loads every *.txt file in the teaching-materials folder, sorted by
+     * filename for determinism, into a flat list of trimmed non-empty
+     * lines — one line delivered per teaching "speech tick". Cached for
+     * TEACHING_MATERIALS_REFRESH_MS so a player can add more files while
+     * the server is running without needing a restart, without re-scanning
+     * the directory on every single tick.
+     *
+     * File format/structure isn't specified by the plan beyond "read from"
+     * the folder — plain .txt files, one teaching line per line, is the
+     * simplest thing a non-technical player can author directly.
+     */
+    private List<String> getTeachingMaterialLines() {
+        long now = System.currentTimeMillis();
+        if (cachedTeachingLines != null &&
+                (now - teachingMaterialsLoadedAt) < TEACHING_MATERIALS_REFRESH_MS) {
+            return cachedTeachingLines;
+        }
+
+        List<String> lines = new ArrayList<>();
+        try {
+            Path dir = findTeachingMaterialsDir();
+            if (Files.isDirectory(dir)) {
+                List<Path> files = new ArrayList<>();
+                try (var stream = Files.list(dir)) {
+                    stream.filter(f -> f.toString().toLowerCase(Locale.ROOT).endsWith(".txt"))
+                          .sorted()
+                          .forEach(files::add);
+                }
+                for (Path f : files) {
+                    for (String raw : Files.readAllLines(f)) {
+                        String trimmed = raw.trim();
+                        if (!trimmed.isEmpty()) lines.add(trimmed);
+                    }
+                }
+            }
+        } catch (IOException e) {
+            DWMod.LOGGER.error("[Oracle] Failed to read teaching_materials", e);
+        }
+
+        cachedTeachingLines      = lines;
+        teachingMaterialsLoadedAt = now;
+        return lines;
     }
 
     // -------------------------------------------------------------------------

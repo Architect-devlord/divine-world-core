@@ -942,22 +942,53 @@ class NPCAgent:
     def _init_world_model(self):
         try:
             from ai_core.world_model import (
-                WorldModel, WorldModelConfig,
+                WorldModel, WorldModelConfig, EnsembleWorldModel,
                 WorldModelReplayBuffer, WorldModelTrainer,
             )
-            config        = WorldModelConfig(
+            config = WorldModelConfig(
                 device='cuda' if torch.cuda.is_available() else 'cpu'
             )
-            wm            = WorldModel(config)
-            replay_buffer = WorldModelReplayBuffer(
-                capacity=50_000, sequence_length=64
-            )
+            # FIX (report: "EnsembleWorldModel is built but never instantiated"):
+            # WorldModelConfig.use_ensemble defaults to True, EnsembleWorldModel
+            # exists with 5 members and computes next_state_mean + next_state_std,
+            # but EnsembleWorldModel(...) was never called anywhere in the entire
+            # codebase — confirmed via direct grep. Every agent got a plain single
+            # WorldModel instead, and deliberation's scoring had no access to
+            # epistemic uncertainty at all.
+            #
+            # Why this matters (from the analysis above): GRPO trains entirely
+            # against imagined rollout scores — without uncertainty, the policy
+            # learns to find states where the WorldModel makes confident-sounding
+            # but wrong predictions, which is exactly the model-gaming failure
+            # mode PETS/MBPO-style architectures are designed to prevent.
+            #
+            # SelfSupervisedTrainer and WorldModelTrainer both expect .train_step()
+            # to accept a batch dict — EnsembleWorldModel.train_step() returns a
+            # list of per-member dicts, so WorldModelTrainer gets the primary model
+            # (ensemble.models[0]) for its own reference; the ensemble handles
+            # training all 5 members internally.
+            if config.use_ensemble:
+                ensemble = EnsembleWorldModel(config, n_models=5)
+                # expose the first member as the primary model for anything that
+                # still needs a plain WorldModel (trainer, SST internals)
+                wm = ensemble.models[0]
+                self.world_model_ensemble = ensemble
+                log.info(f"[{self.agent_id}] EnsembleWorldModel(5) constructed — "
+                         "uncertainty-penalized deliberation now active")
+            else:
+                wm = WorldModel(config)
+                self.world_model_ensemble = None
+                log.info(f"[{self.agent_id}] Single WorldModel constructed (use_ensemble=False)")
+
+            replay_buffer = WorldModelReplayBuffer(capacity=50_000, sequence_length=64)
             trainer       = WorldModelTrainer(wm, replay_buffer, batch_size=16)
 
             self.world_model         = wm
             self.world_model_buffer  = replay_buffer
             self.world_model_trainer = trainer
             self.brain.set_world_model(wm)
+            # Also attach the ensemble to brain so deliberate() can read std
+            self.brain.world_model_ensemble = getattr(self, 'world_model_ensemble', None)
 
             log.info(f"[{self.agent_id}] WorldModel attached to BrainCore")
         except Exception as e:

@@ -142,6 +142,75 @@ class RewardSignal:
         return f"RewardSignal(total={self.total:.3f}, curiosity={self.curiosity:.3f}, survival={self.survival:.3f})"
 
 
+class ChannelNormalizer:
+    """
+    Per-channel online running-std normalization for reward channels.
+
+    This is the fix for "No cross-channel reward normalization": without it,
+    whichever channel happens to have the largest natural magnitude dominates
+    the combined signal regardless of which one is actually most important
+    right now, and that dominance can shift unpredictably (curiosity spikes
+    when something novel appears, silently drowning out social/familiarity).
+
+    Design rationale (comparing to human reward processing):
+    Humans don't experience hunger and curiosity on the same intrinsic
+    scale — each operates on its own baseline. What makes an episode of
+    eating "satisfying" is measured against how hungry you were, not against
+    how curious you felt. The normalization here captures exactly that:
+    each channel is expressed in "surprise units" relative to its own
+    recent history, making its trait-weighted contribution meaningful rather
+    than dominated by raw magnitude.
+
+    Why std-only (not mean-subtracted z-score):
+    Mean-subtracted normalization would produce NEGATIVE normalized rewards
+    for objectively-positive events that are merely below the channel's
+    recent mean. An agent shouldn't be penalized for a good social exchange
+    just because it recently had an even better one. Dividing by std alone
+    preserves the absolute sign while equalizing scale across channels —
+    the trait weights then determine relative importance, as intended.
+
+    The warm_up period (default 50 events per channel) prevents early
+    noise from incorrect std estimates from distorting the first few dozen
+    reward signals. During warm-up a channel's value is passed through
+    unchanged (safe passthrough, not zeroed).
+    """
+    CHANNELS = ('curiosity', 'exploration', 'survival', 'task',
+                 'social', 'familiarity', 'evidence', 'aesthetic')
+
+    def __init__(self, window: int = 500, warm_up: int = 50):
+        self._window:  int  = window
+        self._warm_up: int  = warm_up
+        self._history: Dict[str, deque] = {
+            ch: deque(maxlen=window) for ch in self.CHANNELS
+        }
+        # std clamp: below this we consider the channel "stuck" (always the
+        # same value) and passthrough unchanged rather than divide near-zero.
+        self._eps = 1e-4
+
+    def normalize(self, channel: str, value: float) -> float:
+        """Return value normalized by the channel's running std, or value
+        unchanged during warm-up / when std is near zero."""
+        hist = self._history.get(channel)
+        if hist is None:
+            return value   # unknown channel — passthrough
+        hist.append(value)
+        if len(hist) < self._warm_up:
+            return value   # warm-up passthrough
+        std = float(np.std(hist))
+        if std < self._eps:
+            return value   # channel not varying — passthrough
+        return float(np.clip(value / std, -5.0, 5.0))
+
+    def normalize_all(self, channels: Dict[str, float]) -> Dict[str, float]:
+        """Normalize a dict of {channel_name: raw_value} in one call."""
+        return {ch: self.normalize(ch, v) for ch, v in channels.items()}
+
+    def get_stds(self) -> Dict[str, float]:
+        """Debug helper: return current running std per channel."""
+        return {ch: float(np.std(h)) if len(h) >= 2 else 0.0
+                for ch, h in self._history.items()}
+
+
 class RewardSystem:
     """
     Personality-aware reward system — nervous system connecting all subsystems.
@@ -218,6 +287,13 @@ class RewardSystem:
         self._recent_domains: deque = deque(maxlen=20)
         self._pressure: Dict[str, float] = defaultdict(float)
         self._since_drift = 0
+        # FIX (report: "No cross-channel reward normalization"): per-channel
+        # running-std normalizer so trait weights are the actual arbiter of
+        # channel importance, rather than whichever channel happens to have the
+        # largest natural magnitude. See ChannelNormalizer above for full design
+        # rationale. 500-event window matches reward_history; 50-event warm-up
+        # prevents early noise from distorting the first few dozen signals.
+        self._channel_normalizer = ChannelNormalizer(window=500, warm_up=50)
         log.info(f"RewardSystem ready on {self.device}")
 
     # ------------------------------------------------------------------
@@ -342,21 +418,48 @@ class RewardSystem:
             op = max(0.0, traits.get('openness', 0.0))
             evidence_r = (0.1 * diversity + 0.2 * abs(grounding)) * (0.5 + 0.5 * op)
 
-        # 7. EMOTION MODULATION (current feelings bias reward perception)
+        # 7. PER-CHANNEL NORMALIZATION (new) — normalize each channel by its
+        # own running std so trait weights are the actual arbiter of channel
+        # importance, not raw magnitude. Applied before emotion modulation so
+        # the joy/fear boosts scale already-normalized values uniformly.
+        # survival_r is NOT normalized — it has a meaningful absolute scale
+        # (negative values = actual damage taken) and normalizing it would
+        # make "50% health" look the same as "90% health" after enough events.
+        raw_channels = {
+            'curiosity':    curiosity_r,
+            'exploration':  entropy_r,
+            'task':         task_r,
+            'social':       social_r,
+            'familiarity':  familiarity_r,
+            'evidence':     evidence_r,
+            'aesthetic':    aesthetic_r,
+        }
+        norm = self._channel_normalizer.normalize_all(raw_channels)
+        curiosity_r_n   = norm['curiosity']
+        entropy_r_n     = norm['exploration']
+        task_r_n        = norm['task']
+        social_r_n      = norm['social']
+        familiarity_r_n = norm['familiarity']
+        evidence_r_n    = norm['evidence']
+        aesthetic_r_n   = norm['aesthetic']
+
+        # 8. EMOTION MODULATION (current feelings bias reward perception)
         joy_boost  = 1.0 + 0.2 * emotions.get('joy',  0.0)
         fear_boost = 1.0 + 0.2 * emotions.get('fear', 0.0)
-        pos = (curiosity_r + entropy_r + task_r + social_r + familiarity_r
-               + evidence_r + aesthetic_r) * joy_boost
+        pos = (curiosity_r_n + entropy_r_n + task_r_n + social_r_n + familiarity_r_n
+               + evidence_r_n + aesthetic_r_n) * joy_boost
         neg = min(0.0, survival_r) * fear_boost
         survival_r = max(0.0, survival_r) + neg
         total = pos + survival_r
 
-        # 8. EMOTION DELTAS
+        # 9. EMOTION DELTAS — raw values, not normalized: emotion system responds
+        # to what physically happened (real damage, real social exchange), not
+        # normalized representations of it.
         ed = self._emotion_deltas(total, curiosity_r, survival_r,
                                    social_r, familiarity_r, aesthetic_r,
                                    is_dead, payload, traits)
 
-        # 9. PERSONALITY PRESSURE (per-event nudge — applied in apply_signal)
+        # 10. PERSONALITY PRESSURE (per-event nudge — applied in apply_signal)
         pp = self._personality_pressure(total, ed, traits)
 
         signal = RewardSignal(

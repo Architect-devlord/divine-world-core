@@ -721,9 +721,48 @@ class BrainCore:
         action_dim  = wm.config.action_dim
         device      = wm.device
 
+        # FIX: read the ensemble attached by NPCAgent._init_world_model().
+        # None = no ensemble (use_ensemble=False or construction failed) —
+        # deliberation proceeds without uncertainty penalty in that case.
+        ensemble = getattr(self, 'world_model_ensemble', None)
+
+        # Personality-derived uncertainty aversion (λ in score - λ*std).
+        # Bold agents take uncertain bets (low λ); neurotic ones penalize
+        # uncertainty heavily (high λ). Range ≈ 0.05 – 0.45.
+        # Using the difference because boldness and neuroticism genuinely
+        # pull opposite directions — an agent can be both; net disposition
+        # toward risk is what matters.
+        traits = {}
+        if (self.agent is not None and
+                hasattr(self.agent, 'personality') and
+                self.agent.personality is not None):
+            traits = self.agent.personality.traits
+        boldness    = float(traits.get('boldness',    0.0))
+        neuroticism = float(traits.get('neuroticism', 0.0))
+        uncertainty_lambda = max(0.05, 0.25 - 0.2 * boldness + 0.2 * neuroticism)
+
         ranked:     List[Tuple[float, Dict]]       = []
         summaries:  List[Dict]                     = []
         all_scored: List[Tuple[float, np.ndarray]] = []   # FIX Step 2c
+
+        # Pre-compute the ensemble's uncertainty for the CURRENT state once,
+        # shared across all candidates — the query is about "how well does
+        # the model know this state", not about the specific action taken,
+        # so per-action queries would return essentially the same value while
+        # costing 5x more compute. Each candidate's uncertainty penalty is
+        # then scaled by the candidate's own novelty (novel actions in
+        # uncertain states = highest penalty).
+        ens_uncertainty = 0.0
+        if ensemble is not None:
+            try:
+                with torch.no_grad():
+                    ens_pred = ensemble.forward(
+                        {k: v[:, :1, ...] for k, v in initial_obs.items()}
+                    )
+                if 'next_state_std' in ens_pred:
+                    ens_uncertainty = float(ens_pred['next_state_std'].mean().cpu())
+            except Exception as _ue:
+                log.debug(f"Ensemble uncertainty query failed: {_ue}")
 
         for candidate in candidates:
             best_trial_score = -1e9
@@ -764,6 +803,22 @@ class BrainCore:
 
                     # Novelty bonus for rarely-tried actions
                     score += self._action_novelty_bonus(candidate) * 0.15
+
+                    # FIX: uncertainty penalty — penalize candidates where the
+                    # model's epistemic uncertainty is high. Without this the
+                    # policy learns to find states where the model makes
+                    # confident-sounding but wrong predictions (model-gaming).
+                    # Scaled by candidate novelty so familiar actions in uncertain
+                    # states are penalized less than novel ones — mirrors how
+                    # humans use known-good strategies as a hedge when their
+                    # mental model is least reliable. Personality scaling via
+                    # uncertainty_lambda handles bold/neurotic character differences.
+                    if ens_uncertainty > 0.0:
+                        candidate_novelty = self._action_novelty_bonus(candidate)
+                        # 1 + novelty so familiar actions (novelty≈0) still get
+                        # some penalty, not zero — the model might be wrong about
+                        # familiar territory too, just slightly less so on average.
+                        score -= uncertainty_lambda * ens_uncertainty * (1.0 + candidate_novelty)
 
                     if score > best_trial_score:
                         best_trial_score = score

@@ -2384,8 +2384,7 @@ if __name__ == "__main__":
     if args.gui:
         print(f"\n🌐 Starting GUI server on http://{args.host}:{args.port}")
         print(f"   Opening control centre → http://localhost:{args.port}/gui\n")
-        # Try to open browser after a short delay
-        import threading
+        # threading is imported at module level (line 32) — no local re-import needed
         def _open():
             time.sleep(2.5)
             import webbrowser

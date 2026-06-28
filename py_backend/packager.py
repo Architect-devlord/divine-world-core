@@ -1017,9 +1017,18 @@ if __name__ == "__main__":
         if has_frontend and (agent_dir / "frontend").exists():
             data.append((agent_dir / "frontend", 'frontend'))
 
-        # Source trees bundled into the exe
+        # Source trees bundled into the exe.
+        # FIX (flagged multiple rounds, now actually removed): ai_core_path is
+        # Config.AI_CORE_DIR = PY_BACKEND_DIR / "ai_core" — a direct subdirectory
+        # of py_backend_path. Bundling py_backend_path at 'py_backend' already
+        # includes py_backend/ai_core/ verbatim. The extra
+        #   data.append((ai_core_path, 'ai_core'))
+        # that previously followed created a SECOND copy at the bundle root
+        # ('ai_core/' alongside 'py_backend/'), adding dead weight (identical
+        # files twice) without any benefit — imports work fine through the
+        # 'py_backend/ai_core' copy since the launcher's sys.path already
+        # adds py_backend/ before ai_core/ is ever resolved as a bare module.
         data.append((py_backend_path, 'py_backend'))
-        data.append((ai_core_path,    'ai_core'))
         if rl_path.exists():
             data.append((rl_path,     'rl'))
         if utils_path.exists():

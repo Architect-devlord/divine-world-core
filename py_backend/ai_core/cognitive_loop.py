@@ -656,7 +656,22 @@ class CognitiveLoop:
                         cl = getattr(self.agent, 'continual_learner', None)
                         if cl is not None and hasattr(cl, 'switch_task'):
                             try:
-                                cl.switch_task(abs(hash(focus)) % 1000)
+                                # FIX (new report item 2): was abs(hash(focus)) % 1000.
+                                # Python's built-in hash() is deliberately randomized per
+                                # process since Python 3.3 (PYTHONHASHSEED) — so "combat"
+                                # could map to a different integer after a crash/restart,
+                                # causing Avalanche to treat a long-trained task as brand
+                                # new and discard its replay buffer / EWC Fisher snapshot.
+                                # Replaced with hashlib.md5 which is stable across restarts
+                                # regardless of PYTHONHASHSEED. The % 1000 bound is kept
+                                # (Avalanche only needs a unique-enough int per task label,
+                                # not a cryptographic guarantee).
+                                import hashlib as _hl
+                                task_id = int(
+                                    _hl.md5(focus.encode(), usedforsecurity=False)
+                                        .hexdigest()[:4], 16
+                                ) % 1000
+                                cl.switch_task(task_id)
                             except Exception as _te:
                                 log.debug(f"switch_task({focus}) failed: {_te}")
             else:

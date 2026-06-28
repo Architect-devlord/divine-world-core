@@ -644,10 +644,34 @@ class CognitiveLoop:
                         self.agent.active_focus_task = focus
                         bridge.set_learning_mode(True, focus)
                         self._curiosity_surprise_streak = 0  # reset after trigger
+                        # FIX (report: "ContinualLearner.switch_task() is never called"):
+                        # active_focus_task was set and bridge learning mode was
+                        # enabled, but Avalanche's continual learner was never told a
+                        # task boundary had occurred — meaning Replay/EWC-style
+                        # strategies ran as one undifferentiated stream rather than
+                        # managing per-task replay buffers and Fisher snapshots.
+                        # switch_task() takes an int; get_weakest_task() returns a str
+                        # label. hash() % 1000 gives a stable, bounded int that
+                        # round-trips deterministically without extra state.
+                        cl = getattr(self.agent, 'continual_learner', None)
+                        if cl is not None and hasattr(cl, 'switch_task'):
+                            try:
+                                cl.switch_task(abs(hash(focus)) % 1000)
+                            except Exception as _te:
+                                log.debug(f"switch_task({focus}) failed: {_te}")
             else:
                 if bridge.is_in_learning_mode():
                     bridge.set_learning_mode(False)
                     self.agent.active_focus_task = None
+                    # FIX: notify ContinualLearner that the focused task ended.
+                    # Task id 0 is a conventional "idle/no-task" sentinel —
+                    # the same value used below in the frustration-exit path.
+                    cl = getattr(self.agent, 'continual_learner', None)
+                    if cl is not None and hasattr(cl, 'switch_task'):
+                        try:
+                            cl.switch_task(0)
+                        except Exception as _te:
+                            log.debug(f"switch_task(0) failed: {_te}")
 
         return thoughts
 
@@ -994,6 +1018,13 @@ class CognitiveLoop:
                 bridge = getattr(agent, 'policy_bridge', None)
                 if bridge is not None:
                     bridge.set_learning_mode(False)
+                # FIX: notify ContinualLearner at this exit path too.
+                cl = getattr(agent, 'continual_learner', None)
+                if cl is not None and hasattr(cl, 'switch_task'):
+                    try:
+                        cl.switch_task(0)
+                    except Exception as _te:
+                        log.debug(f"switch_task(0) failed: {_te}")
                 self._curiosity_surprise_streak = 0
 
     def _execute_planned_action(self,

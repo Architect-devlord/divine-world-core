@@ -195,7 +195,32 @@ def grpo_update(
 
     scored_actions : list of (score, action_array) from deliberation
     obs            : observation at the point of deliberation
-    model          : the SB3 PPO model (contains .policy)
+    model          : TransformerPolicy or GodTransformerPolicy instance
+                     (or a wrapper that exposes .policy for SB3 compatibility)
+
+    FIX (regression): this function previously called policy.evaluate_actions()
+    — the SB3 base-class method. Neither TransformerPolicy nor
+    GodTransformerPolicy defines evaluate_actions(), so the inherited base
+    implementation would run instead. That base method internally calls
+    self.mlp_extractor(features) and self._get_action_dist_from_latent() —
+    SB3's own internal architecture — but both custom policies replace those
+    by overriding _build_mlp_extractor() to set self.features_extractor and
+    self.action_net (non-standard names) while bypassing
+    _get_action_dist_from_latent() entirely in their custom forward()/_predict().
+    The base evaluate_actions() would therefore either crash (mlp_extractor
+    shape mismatch) or return log-probs computed through a completely different
+    computational path than the actual forward pass — neither useful for GRPO.
+
+    The fix computes log-probs through the ACTUAL forward path these policies
+    use: features_extractor → action_net → log_std → Normal distribution.
+    GodTransformerPolicy uses log_std_base (13-dim) for the base dims and
+    log_std_params (3-dim) for the ability continuous params — padded to the
+    full action_dim to match act_tensor's shape.
+
+    This is the same approach that was correctly implemented earlier in
+    communication_protocol.py's _grpo_policy_update() and that was confirmed
+    verified at that time — reproduced here since the rewrite of this file
+    used an older reference copy that hadn't received that fix yet.
     """
     if len(scored_actions) < 4:
         return   # need diversity for relative scoring
@@ -213,11 +238,46 @@ def grpo_update(
     adv_tensor = torch.FloatTensor(advantages)
 
     try:
-        # SB3 evaluate_actions lives on model.policy
         policy = model.policy if hasattr(model, 'policy') else model
-        _, log_probs, _ = policy.evaluate_actions(obs_tensor, act_tensor)
 
-        # GRPO loss: push toward above-baseline actions
+        # ── Step 1: run the actual forward pass ──────────────────────────
+        # TransformerPolicy.forward() returns (action_mean, values).
+        # GodTransformerPolicy.forward() also returns (action_mean, values)
+        # with action_mean shape (B, 18) — base 13 dims + ability 5 dims.
+        # Neither returns log_probs; we derive them below from the policy's
+        # own log_std parameters.
+        action_mean, _ = policy.forward(obs_tensor)
+
+        # ── Step 2: assemble std matching the actual forward-pass paths ──
+        # TransformerPolicy: one nn.Parameter log_std of shape (action_dim,)
+        # GodTransformerPolicy: log_std_base (13,) + log_std_params (3,),
+        #   padded to action_dim (18) with zeros for the discrete ability dims.
+        if hasattr(policy, 'log_std'):
+            log_std_vec = policy.log_std
+        elif hasattr(policy, 'log_std_base'):
+            action_dim = action_mean.shape[-1]
+            # log_std_base (13,) covers the base movement dims.
+            # log_std_params (3,) covers the continuous ability params (dims 13-15).
+            # Dims 16-17 are discrete (trigger, ability index) — zero std.
+            base    = policy.log_std_base                    # (13,)
+            params  = getattr(policy, 'log_std_params',
+                              torch.zeros(3, device=base.device))  # (3,)
+            pad_len = action_dim - base.shape[0] - params.shape[0]
+            pad     = torch.zeros(max(0, pad_len), device=base.device)
+            log_std_vec = torch.cat([base, params, pad])[:action_dim]
+        else:
+            # Unknown policy type — fall back to unit std (no gradient through std)
+            log_std_vec = torch.zeros(action_mean.shape[-1])
+
+        std_vec = torch.exp(log_std_vec).clamp(min=1e-6)
+
+        # ── Step 3: compute log-prob of each scored action ───────────────
+        # Normal distribution parameterized by the policy's own forward output.
+        # act_tensor rows are the sampled action arrays from deliberation.
+        dist     = torch.distributions.Normal(action_mean, std_vec)
+        log_probs = dist.log_prob(act_tensor).sum(dim=-1)  # (N,)
+
+        # ── Step 4: GRPO gradient step ───────────────────────────────────
         loss = -(adv_tensor * log_probs).mean()
 
         if not hasattr(model, '_grpo_opt'):

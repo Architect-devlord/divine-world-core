@@ -1342,18 +1342,56 @@ class LanguageIntelligence:
             if speaker_id:
                 tags.append(f'partner:{speaker_id}')
 
+            topic_words = ConversationBuffer._extract_topic_words(user_text)
+
             mem.remember({
                 'type':      'conversation_exchange',
                 'text':       user_text,
                 'response':   agent_text,
                 'timestamp':  time.time(),
                 'emotions':   emotions,
-                'topic_words': ConversationBuffer._extract_topic_words(user_text),
+                'topic_words': topic_words,
                 'memories_used': len(recalled),
                 'conversation_turn': len(self.conversation_buffer),
                 'language_stage': self.language_stage,
                 'partner_id': speaker_id,
             }, tags=tags)
+
+            # FIX (report: "vision.py's ground_token() is never called"):
+            # The grounding mechanism existed as infrastructure — visual tokens
+            # were clustered and named "visual_7" etc., but the language
+            # system never attached human words to them, so names never
+            # accumulated. The co-present moment to ground is here: when the
+            # agent is exchanging language, the topic words in that exchange
+            # and the current visual token in its field of view are BOTH
+            # available — "correlation hypothesis" grounding, exactly as
+            # ground_token()'s own docstring describes.
+            #
+            # This is deliberately noisy and accumulative: saying "tree" once
+            # while looking at a forest cluster is a weak signal. The vocabulary
+            # system (OnlineVisualVocabulary.assign_name) overwrites with the
+            # most recent call, so tokens end up named for the word they
+            # co-occur with most consistently over time — the same principle
+            # as distributional semantics.
+            #
+            # Gated by stage >= 1 so this doesn't fire during the early
+            # babbling stage before the agent has stable vocabulary at all.
+            if (self.language_stage >= 1
+                    and topic_words
+                    and self.agent is not None
+                    and hasattr(self.agent, 'vision')
+                    and self.agent.vision is not None):
+                try:
+                    vision = self.agent.vision
+                    lf = getattr(vision, 'latest_frame', None)
+                    if lf is not None and lf.visual_token >= 0:
+                        # Use the most content-bearing word from this exchange
+                        # as the grounding candidate for the current visual token.
+                        best_word = topic_words[0]
+                        vision.ground_token(lf.visual_token, best_word)
+                except Exception as _ge:
+                    log.debug(f"ground_token() failed (non-fatal): {_ge}")
+
         except Exception as e:
             log.debug(f"Failed to store exchange in memory: {e}")
 

@@ -75,7 +75,7 @@ from ai_core.cognitive_loop import CognitiveLoop
 from ai_core.communication_protocol import handle_agent_websocket, run_tcp_action_loop
 from ai_core.config       import Config
 
-from fastapi import FastAPI, Form, UploadFile, File, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, Form, UploadFile, File, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -1739,10 +1739,42 @@ class NPCAgent:
             log.info(f"[{self.agent_id}] TransformerPolicy initialised (13-dim)")
 
     def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
+        """
+        Convert a 128-dim observation vector into an action vector.
+
+        FIX (report: "PolicyBridge.predict_action() is never called"):
+        _decide() in cognitive_loop is a high-level dispatcher (speak/act/
+        learn/web_browse) — it never produced action vectors. The actual action
+        vector ALWAYS came from policy._predict() here, bypassing PolicyBridge
+        completely regardless of whether the N=5 streak counter had flipped
+        learning mode on. That meant cl_head was built, soft-synced, and
+        toggled, but never actually ran a real decision.
+
+        The fix routes through policy_bridge.predict_action() when available
+        and learning mode is active. Both _execute_planned_action() and
+        _action_worker() in cognitive_loop call this method — making this the
+        single correct insertion point: no call site changes needed, and no
+        duplication.
+        """
+        # Learning-mode path: route through PolicyBridge so cl_head actually
+        # runs when the N=5 curiosity streak has activated learning mode.
+        bridge = getattr(self, 'policy_bridge', None)
+        if bridge is not None and bridge.is_in_learning_mode():
+            try:
+                return bridge.predict_action(
+                    obs,
+                    task_label=getattr(self, 'active_focus_task', None),
+                    deterministic=deterministic,
+                )
+            except Exception as _e:
+                log.debug(f"[{self.agent_id}] PolicyBridge.predict_action failed, "
+                          f"falling back to direct policy: {_e}")
+
+        # Normal path (also the fallback if PolicyBridge isn't attached)
         if self.policy is None:
             # FIX: was 11-dim random — must match BASE_DIM=13 for NPCs, 18 for gods
             base = np.clip(np.random.randn(13) * 0.3, -1.0, 1.0)
-            return np.concatenate([base, np.zeros(5)]) if self.god_type else base  # 18-dim god fallback
+            return np.concatenate([base, np.zeros(5)]) if self.god_type else base
         with torch.no_grad():
             obs_t  = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
             action = self.policy._predict(obs_t, deterministic=deterministic)

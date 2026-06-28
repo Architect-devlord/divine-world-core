@@ -936,6 +936,14 @@ if __name__ == "__main__":
         log.info(f"🔨 Building executable for {agent_id}…")
         exe_name = agent_id   # no DW_ prefix — matches main.py exe_path lookup
 
+        # FIX (crash-level bug): ai_core_path/py_backend_path were used 20 lines
+        # before they were assigned, throwing UnboundLocalError on every single
+        # packaging attempt before PyInstaller even ran.  Move the assignments
+        # first so every reference below has a value.
+        root            = Config.BASE_DIR
+        py_backend_path = Config.PY_BACKEND_DIR
+        ai_core_path    = Config.AI_CORE_DIR       # PY_BACKEND_DIR / "ai_core"
+
         # ── Pre-flight validation ─────────────────────────────────────────
         # Catch misconfiguration early rather than letting PyInstaller produce
         # an exe that silently crashes at runtime due to missing imports.
@@ -959,16 +967,6 @@ if __name__ == "__main__":
             )
         for warn in preflight_warnings:
             log.warning(f"⚠️  Pre-flight: {warn}")
-
-        # Use Config-derived paths — stable regardless of working directory
-        root            = Config.BASE_DIR
-        py_backend_path = Config.PY_BACKEND_DIR
-        ai_core_path    = Config.AI_CORE_DIR       # PY_BACKEND_DIR / "ai_core"
-
-        if not ai_core_path.exists():
-            raise FileNotFoundError(f"ai_core not found: {ai_core_path}")
-        if not py_backend_path.exists():
-            raise FileNotFoundError(f"py_backend not found: {py_backend_path}")
 
         # USER FIX: rl is inside py_backend, not at the project root
         rl_path    = py_backend_path / "rl"

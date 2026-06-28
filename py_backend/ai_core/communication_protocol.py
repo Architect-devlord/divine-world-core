@@ -1041,7 +1041,19 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
                 if audio_proc is not None:
                     try:
                         sample_rate = perception.audio_sample_rate or 16000
-                        # Decode raw PCM int16 bytes → numpy float array
+                        # Decode raw PCM int16 bytes → normalized float32 ±1.0.
+                        # FIX (variable-shadow bug): audio_np was computed here
+                        # correctly but then NEVER used — all three downstream
+                        # call sites re-decoded perception.audio_data from raw
+                        # bytes, receiving int16-range values (±32767) instead
+                        # of the ±1.0 float range they expected:
+                        #   - audio_buffer.append() passed int16 to AudioCapture,
+                        #     which feeds process_audio_chunk() → transcribe()
+                        #     (transcribe() does * 32767, so int16 input → ×32767² overflow)
+                        #   - extract_features() volume check compared int16-range
+                        #     mean against 0.05, so 'volume > 0.05' was always True
+                        #   - transcribe() got int16 range and re-scaled it, corrupting output
+                        # All three now use audio_np consistently.
                         audio_np = np.frombuffer(
                             perception.audio_data, dtype=np.int16
                         ).astype(np.float32) / 32767.0
@@ -1051,10 +1063,7 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
                         # We bypass start_recording() — data comes from
                         # Minecraft, not the local mic.
                         if audio_proc.capture is not None:
-                            audio_proc.capture.audio_buffer.append(
-                                np.frombuffer(perception.audio_data,
-                                              dtype=np.int16)
-                            )
+                            audio_proc.capture.audio_buffer.append(audio_np)
                             audio_proc.capture.sample_rate = sample_rate
                             # Mark as listening so process_audio_chunk() runs
                             if not audio_proc.is_listening:
@@ -1063,7 +1072,7 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
                         else:
                             # No AudioCapture (pyaudio absent) — process directly
                             features = audio_proc.feature_extractor.extract_features(
-                                np.frombuffer(perception.audio_data, dtype=np.int16),
+                                audio_np,
                                 sample_rate,
                             )
                             emotion_label = audio_proc.feature_extractor.detect_emotion(
@@ -1073,8 +1082,7 @@ async def handle_agent_websocket(websocket, agent_id: str, agent):
                             if (features.get('volume', 0.0) > 0.05 and
                                     audio_proc.recognizer is not None):
                                 transcription = audio_proc.recognizer.transcribe(
-                                    np.frombuffer(perception.audio_data,
-                                                  dtype=np.int16),
+                                    audio_np,
                                     sample_rate,
                                 )
 

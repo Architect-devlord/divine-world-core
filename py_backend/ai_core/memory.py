@@ -15,7 +15,7 @@ Integration notes:
     the optimised table schema from unified_memory.py.
 """
 
-import time
+from time import time
 import uuid
 import json
 import logging

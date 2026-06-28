@@ -156,7 +156,7 @@ class SimulatedObject:
     color: int = 0x4CAF50
     physics: PhysicsBody = field(default_factory=PhysicsBody)
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(datetime.UTC).isoformat())
 
     def to_dict(self):
         return {
@@ -182,7 +182,7 @@ class SimulatedObject:
             color=data.get("color", 0x4CAF50),
             physics=PhysicsBody.from_dict(data.get("physics", {})),
             metadata=data.get("metadata", {}),
-            created_at=data.get("created_at", datetime.utcnow().isoformat()),
+            created_at=data.get("created_at", datetime.now(datetime.UTC).isoformat()),
         )
 
 
@@ -337,7 +337,7 @@ class MentalMatrixSimulation:
                 callback({
                     "type": event_type,
                     "agent_id": self.agent_id,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(datetime.UTC).isoformat(),
                     "data": data,
                 })
             except Exception as e:

@@ -1942,7 +1942,8 @@ async def run_standalone_agent(
     initial_path.parent.mkdir(parents=True, exist_ok=True)
     agent.save(str(initial_path))
 
-    server_task = asyncio.create_task(run_server(port=port))
+    # No current runtime issue. Consider retaining task reference explicitly to prevent future refactor regressions.
+    agent._server_task = asyncio.create_task(run_server(port=port))
 
     if load_brain and Path(load_brain).exists():
         try:

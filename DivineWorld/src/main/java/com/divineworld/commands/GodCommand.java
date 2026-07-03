@@ -18,49 +18,42 @@ import net.minecraft.server.level.ServerPlayer;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * God Commands — disguise toggle for god entities.
+ * God Commands — form cycle and disguise toggle for god entities.
  *
- * COMMAND SYNTAX (single dispatcher.register call, no duplicates):
+ * COMMAND SYNTAX (single dispatcher.register call):
  *
  *   /godtoggle
- *     God toggles their own disguise.
- *     • If already disguised → reverts to original god form.
- *     • If not disguised     → applies last-used disguise type, or
- *                               "villager" if never transformed before.
+ *     Cycle the caller's OWN form one step around the ring:
+ *       god form  →  humanoid form  →  disguise (Steve/Alex)  →  god form  →  …
+ *     Only god agents may use the no-arg form.
  *
- *   /godtoggle <mob>
- *     God transforms into the specified mob type.
- *     "revert" or "original" as the mob value reverts to god form.
- *     Full mob suggestion list matches /god_transform.
+ *   /godtoggle <god_name>
+ *     Admin cycles a SPECIFIC god agent's form one step (same ring as above).
+ *     Requires permission level 2.  <god_name> is the in-game name of the god
+ *     puppet player (autocomplete suggests online god agents).
  *
  *   /godtoggle <agent_id> <mob>
- *     Admin transforms a specific god agent into the specified mob.
- *     "revert" restores their original form.
+ *     Admin transforms a specific god agent into the given mob type, or
+ *     "revert"/"original" to restore their original form.
+ *     Unchanged from the previous version — still calls GodDisguiseHandler.
  *
- * RELATIONSHIP WITH /god_transform (DivineCommands):
- *   /god_transform is the scripted / Python-initiated transform command
- *   used by operators and the AI action-frame channel.
- *   /godtoggle is the quick in-game toggle for gods and ops —
- *   no conflict; both ultimately call GodDisguiseHandler.
+ * FORMS (managed by GodDisguiseHandler.cycleGodForm / applyGodForm):
+ *   god      — real vanilla boss body visible, player puppet invisible
+ *   humanoid — player puppet visible, rendered via GodHumanoidGeoRenderer
+ *              using god_<type>.geo.json / .png / .animation.json
+ *   disguise — player puppet visible, rendered as Steve or Alex at 1.0×
+ *              no boss body, indistinguishable from a vanilla player
  *
- * PREVIOUS BUGS FIXED:
- *   FIX 1 — Duplicate registration: The old code called
- *     dispatcher.register("godtoggle") twice (once with no args,
- *     once with <agent_id>). Brigadier merged them, but the two
- *     separate calls cluttered the command tree and logged "registered"
- *     twice. Now a single dispatcher.register() node covers all forms.
- *
- *   FIX 2 — Hardcoded "villager": The old toggle always passed
- *     "villager" to applyTransform() making every god look like a
- *     villager regardless of intent. Now:
- *       • /godtoggle with no mob arg reads "dw_last_disguise" from NBT
- *         so repeated toggles remember the previous form.
- *       • /godtoggle <mob> accepts any mob from the full suggestion list.
+ * Creaking note: in "god" form, the Creaking uses ai_creaking.* assets via
+ * CreakingGeoRenderer.  In "humanoid" form it uses god_creaking.* like
+ * every other god type.  The ai_creaking / god_creaking asset split is
+ * handled transparently by GodHumanoidGeoModel.getModelResource() which
+ * always asks for "god_" + godType regardless of which god type it is.
  */
 public class GodCommand {
 
     // =========================================================================
-    // Mob suggestion list  (mirrors DivineCommands.suggestMobTypes)
+    // Mob suggestion list (for the 2-arg <agent_id> <mob> form)
     // =========================================================================
 
     private static final String[] COMMON_MOBS = {
@@ -77,13 +70,12 @@ public class GodCommand {
             "allay", "vex"
     };
 
-    // Sentinel values that mean "revert to original form"
     private static boolean isRevertValue(String mob) {
         return "revert".equalsIgnoreCase(mob) || "original".equalsIgnoreCase(mob);
     }
 
     // =========================================================================
-    // Registration  (single register call — no duplicates)
+    // Registration
     // =========================================================================
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
@@ -91,29 +83,26 @@ public class GodCommand {
         dispatcher.register(Commands.literal("godtoggle")
                 .requires(src -> src.hasPermission(2))
 
-                // /godtoggle  (no args — toggle using remembered or default mob)
-                .executes(GodCommand::toggleSelf)
+                // /godtoggle  — cycle OWN form (god only)
+                .executes(GodCommand::cycleSelfForm)
 
-                // /godtoggle <mob>  (self transform / revert)
-                .then(Commands.argument("mob", StringArgumentType.string())
-                                .suggests((ctx, builder) -> {
-                                    builder.suggest("revert");
-                                    for (String g : AgentConfigLoader.getGodTypes()) builder.suggest(g);
-                                    for (String m : COMMON_MOBS) builder.suggest(m);
-                                    return builder.buildFuture();
-                                })
-                                .executes(GodCommand::toggleSelfWithMob)
+                // /godtoggle <name_or_mob>  — one argument:
+                //   • if the string matches an online god agent name → cycle THAT god's form
+                //   • otherwise → kept for backward compatibility as "transform self into mob"
+                //     (this use-case is rare and usually scripted via /god_transform; left
+                //     as a convenience but the primary single-arg use is now the agent name)
+                .then(Commands.argument("name_or_mob", StringArgumentType.string())
+                        .suggests((ctx, builder) -> {
+                            // Suggest god names first, then mob types
+                            for (String g : AgentConfigLoader.getGodTypes()) builder.suggest(g);
+                            builder.suggest("revert");
+                            for (String m : COMMON_MOBS) builder.suggest(m);
+                            return builder.buildFuture();
+                        })
+                        .executes(GodCommand::cycleTargetOrTransformSelf)
 
-                        // /godtoggle <agent_id> <mob>  (admin targets another god)
-                        // Re-using the "mob" arg slot as agent_id first, then a second "mob" arg.
-                        // Brigadier resolves ambiguity by trying both branches: if the first
-                        // string matches an online agent-id and a second arg is provided, we
-                        // treat it as <agent_id> <mob>; otherwise it falls through to the
-                        // single-arg <mob> branch.
-                )
-
-                // /godtoggle <agent_id> <mob>  (explicit two-arg form)
-                .then(Commands.argument("agent_id", StringArgumentType.string())
+                        // /godtoggle <agent_id> <mob>  — 2-arg: admin targets a specific god
+                        // for a mob-specific transform (unchanged behaviour)
                         .then(Commands.argument("target_mob", StringArgumentType.string())
                                 .suggests((ctx, builder) -> {
                                     builder.suggest("revert");
@@ -121,99 +110,98 @@ public class GodCommand {
                                     for (String m : COMMON_MOBS) builder.suggest(m);
                                     return builder.buildFuture();
                                 })
-                                .executes(GodCommand::toggleTarget)
+                                .executes(GodCommand::transformTarget)
                         )
                 )
         );
 
-        DWMod.LOGGER.info("[GodCommand] Registered /godtoggle (no-arg | <mob> | <agent_id> <mob>)");
+        DWMod.LOGGER.info("[GodCommand] Registered /godtoggle  "
+                + "(no-arg: cycle own form | <god_name>: cycle target | <agent_id> <mob>: mob transform)");
     }
 
     // =========================================================================
-    // /godtoggle  — toggle own disguise using remembered mob or "villager"
+    // /godtoggle  — cycle caller's own form one step
     // =========================================================================
 
-    private static int toggleSelf(CommandContext<CommandSourceStack> ctx) {
+    private static int cycleSelfForm(CommandContext<CommandSourceStack> ctx) {
         try {
             ServerPlayer player = ctx.getSource().getPlayerOrException();
 
             if (!DWNPCManager.isGodPlayer(player)) {
                 player.sendSystemMessage(Component.literal(
-                        "§c[God Toggle] Only gods may use this command!"));
+                        "§c[God Toggle] Only god agents may cycle forms with this command."));
                 return 0;
             }
 
-            ServerLevel level             = ctx.getSource().getLevel();
-            boolean     currentlyDisguised = GodDisguiseHandler.isTransformed(player);
-
-            if (currentlyDisguised) {
-                GodDisguiseHandler.removeTransform(player);
-                DWMod.LOGGER.info("[godtoggle] {} reverted to original form",
-                        DWNPCManager.getAgentId(player));
-            } else {
-                // Remember the last disguise used; fall back to "villager"
-                String lastMob = player.getPersistentData().getString("dw_last_disguise");
-                if (lastMob == null || lastMob.isEmpty()) lastMob = "villager";
-                GodDisguiseHandler.applyTransform(player, lastMob, level);
-                DWMod.LOGGER.info("[godtoggle] {} → {}", DWNPCManager.getAgentId(player), lastMob);
-            }
+            String before = GodDisguiseHandler.getGodForm(player);
+            GodDisguiseHandler.cycleGodForm(player);
+            String after  = GodDisguiseHandler.getGodForm(player);
+            DWMod.LOGGER.info("[godtoggle] {} cycled form: {} → {}",
+                    DWNPCManager.getAgentId(player), before, after);
             return 1;
 
         } catch (Exception e) {
-            DWMod.LOGGER.error("[godtoggle] self toggle failed", e);
+            DWMod.LOGGER.error("[godtoggle] cycle-self failed", e);
             ctx.getSource().sendFailure(Component.literal("§c[God Toggle] " + e.getMessage()));
             return 0;
         }
     }
 
     // =========================================================================
-    // /godtoggle <mob>  — transform self into specific mob (or revert)
+    // /godtoggle <name_or_mob>  — disambiguates: cycle a named god OR mob-transform self
     // =========================================================================
 
-    private static int toggleSelfWithMob(CommandContext<CommandSourceStack> ctx) {
+    private static int cycleTargetOrTransformSelf(CommandContext<CommandSourceStack> ctx) {
         try {
-            ServerPlayer player = ctx.getSource().getPlayerOrException();
-            String       mob    = StringArgumentType.getString(ctx, "mob");
+            ServerPlayer executor = ctx.getSource().getPlayerOrException();
+            String arg = StringArgumentType.getString(ctx, "name_or_mob");
 
-            if (!DWNPCManager.isGodPlayer(player)
-                    && !ctx.getSource().hasPermission(4)) {
-                player.sendSystemMessage(Component.literal(
-                        "§c[God Toggle] Only gods or operators (level 4) may use this."));
-                return 0;
-            }
-
-            ServerLevel level = ctx.getSource().getLevel();
-
-            if (isRevertValue(mob)) {
-                GodDisguiseHandler.removeTransform(player);
-                DWMod.LOGGER.info("[godtoggle] {} reverted", player.getName().getString());
+            // Try to find a god agent with this name first
+            ServerPlayer targetGod = findGodByName(ctx.getSource().getLevel(), arg);
+            if (targetGod != null) {
+                // Single arg is a god name → cycle that god's form
+                String before = GodDisguiseHandler.getGodForm(targetGod);
+                GodDisguiseHandler.cycleGodForm(targetGod);
+                String after  = GodDisguiseHandler.getGodForm(targetGod);
+                executor.sendSystemMessage(Component.literal(
+                        "§d[God Toggle] " + arg + ": form " + before + " → " + after));
+                DWMod.LOGGER.info("[godtoggle] {} cycled {}: {} → {}",
+                        executor.getName().getString(), arg, before, after);
                 return 1;
             }
 
-            boolean ok = GodDisguiseHandler.applyTransform(player, mob, level);
-            if (ok) {
-                // Remember for next no-arg toggle
-                player.getPersistentData().putString("dw_last_disguise", mob.toLowerCase());
-                DWMod.LOGGER.info("[godtoggle] {} → {}", player.getName().getString(), mob);
+            // Not a god name — treat as mob type for self-transform (backward compat)
+            if (!DWNPCManager.isGodPlayer(executor) && !ctx.getSource().hasPermission(4)) {
+                executor.sendSystemMessage(Component.literal(
+                        "§c[God Toggle] Only gods or operators (level 4) may transform."));
+                return 0;
             }
+
+            if (isRevertValue(arg)) {
+                GodDisguiseHandler.removeTransform(executor);
+                return 1;
+            }
+
+            boolean ok = GodDisguiseHandler.applyTransform(executor, arg, ctx.getSource().getLevel());
+            if (ok) executor.getPersistentData().putString("dw_last_disguise", arg.toLowerCase());
             return ok ? 1 : 0;
 
         } catch (Exception e) {
-            DWMod.LOGGER.error("[godtoggle] self-with-mob failed", e);
+            DWMod.LOGGER.error("[godtoggle] cycle-target-or-transform failed", e);
             ctx.getSource().sendFailure(Component.literal("§c[God Toggle] " + e.getMessage()));
             return 0;
         }
     }
 
     // =========================================================================
-    // /godtoggle <agent_id> <mob>  — admin transforms a specific god agent
+    // /godtoggle <agent_id> <mob>  — 2-arg admin mob-transform (unchanged)
     // =========================================================================
 
-    private static int toggleTarget(CommandContext<CommandSourceStack> ctx) {
+    private static int transformTarget(CommandContext<CommandSourceStack> ctx) {
         try {
-            ServerPlayer executor    = ctx.getSource().getPlayerOrException();
-            String       agentId     = StringArgumentType.getString(ctx, "agent_id");
-            String       mob         = StringArgumentType.getString(ctx, "target_mob");
+            ServerPlayer executor = ctx.getSource().getPlayerOrException();
+            String agentId  = StringArgumentType.getString(ctx, "name_or_mob");
+            String mob      = StringArgumentType.getString(ctx, "target_mob");
 
             ServerPlayer targetGod = DWNPCManager.findPlayerByAgentId(
                     ctx.getSource().getLevel(), agentId);
@@ -223,7 +211,6 @@ public class GodCommand {
                         "§c[God Toggle] Agent not found: " + agentId));
                 return 0;
             }
-
             if (!DWNPCManager.isGodPlayer(targetGod)) {
                 executor.sendSystemMessage(Component.literal(
                         "§c[God Toggle] " + agentId + " is not a god."));
@@ -234,24 +221,36 @@ public class GodCommand {
                 GodDisguiseHandler.removeTransform(targetGod);
                 executor.sendSystemMessage(Component.literal(
                         "§d[God Toggle] " + agentId + " returned to divine form."));
-                DWMod.LOGGER.info("[godtoggle] admin {} reverted {}", executor.getName().getString(), agentId);
                 return 1;
             }
 
-            boolean ok = GodDisguiseHandler.applyTransform(targetGod, mob, targetGod.serverLevel());
+            boolean ok = GodDisguiseHandler.applyTransform(
+                    targetGod, mob, targetGod.serverLevel());
             if (ok) {
                 targetGod.getPersistentData().putString("dw_last_disguise", mob.toLowerCase());
                 executor.sendSystemMessage(Component.literal(
-                        "§a[God Toggle] " + agentId + " is now: §b" + mob));
-                DWMod.LOGGER.info("[godtoggle] admin {} → {} as {}",
-                        agentId, mob, executor.getName().getString());
+                        "§a[God Toggle] " + agentId + " → §b" + mob));
             }
             return ok ? 1 : 0;
 
         } catch (Exception e) {
-            DWMod.LOGGER.error("[godtoggle] target toggle failed", e);
+            DWMod.LOGGER.error("[godtoggle] 2-arg transform failed", e);
             ctx.getSource().sendFailure(Component.literal("§c[God Toggle] " + e.getMessage()));
             return 0;
         }
+    }
+
+    // =========================================================================
+    // Helper — find an online god agent by display name
+    // =========================================================================
+
+    private static ServerPlayer findGodByName(ServerLevel level, String name) {
+        for (ServerPlayer p : level.getServer().getPlayerList().getPlayers()) {
+            if (DWNPCManager.isGodPlayer(p) &&
+                    p.getName().getString().equalsIgnoreCase(name)) {
+                return p;
+            }
+        }
+        return null;
     }
 }

@@ -1,4 +1,4 @@
-package com.divineworld.client.util;
+package com.divineworld.client.utils;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;

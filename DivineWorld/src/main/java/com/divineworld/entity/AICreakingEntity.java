@@ -36,17 +36,17 @@ import software.bernie.geckolib.util.GeckoLibUtil;
  * Looping (base_controller):
  *   walk               — slow ground movement
  *   run                — fast ground movement (speed > 0.25 m/tick)
- *   tentacles_run      — movement with tentacles deployed
+ *   tentacle_run      — movement with tentacles deployed
  *   tentacles_wall_climb — ceiling/wall movement mode
  *   tentacles_out      — idle hold while tentacles are deployed
  *
  * One-shot (ability_controller, triggered via triggerAnim):
  *   attack             — ServerGodAbilityExecutor: "tentacle_whip" (no tentacles)
- *   tentacles_attack   — ServerGodAbilityExecutor: "tentacle_whip" (tentacles out)
+ *   tentacle_attack   — ServerGodAbilityExecutor: "tentacle_whip" (tentacles out)
  *   grab_eat           — ServerGodAbilityExecutor: "life_steal"
  *   tentacles_out      — ServerGodAbilityExecutor: "deploy_tentacles"
  *   tentacles_retract  — ServerGodAbilityExecutor: when tentacles retract
- *   tentacles_jump     — ServerGodAbilityExecutor: "toggle_ceiling" entry leap
+ *   tentacle_jump     — ServerGodAbilityExecutor: "toggle_ceiling" entry leap
  *   burrow             — ServerGodAbilityExecutor: "burrow"
  *   dig_out            — ServerGodAbilityExecutor: "emerge"
  *
@@ -75,8 +75,8 @@ public class AICreakingEntity extends Monster implements GeoEntity {
             RawAnimation.begin().thenLoop("walk");
     private static final RawAnimation RUN_ANIM =
             RawAnimation.begin().thenLoop("run");
-    private static final RawAnimation TENTACLES_RUN_ANIM =
-            RawAnimation.begin().thenLoop("tentacles_run");
+    private static final RawAnimation tentacle_run_ANIM =
+            RawAnimation.begin().thenLoop("tentacle_run");
     private static final RawAnimation TENTACLES_HOLD_ANIM =
             RawAnimation.begin().thenLoop("tentacles_out");
     private static final RawAnimation TENTACLES_WALL_CLIMB_ANIM =
@@ -85,16 +85,16 @@ public class AICreakingEntity extends Monster implements GeoEntity {
     // One-shot ability animations
     private static final RawAnimation ATTACK_ANIM =
             RawAnimation.begin().then("attack",            Animation.LoopType.PLAY_ONCE);
-    private static final RawAnimation TENTACLES_ATTACK_ANIM =
-            RawAnimation.begin().then("tentacles_attack",  Animation.LoopType.PLAY_ONCE);
+    private static final RawAnimation tentacle_attack_ANIM =
+            RawAnimation.begin().then("tentacle_attack",  Animation.LoopType.PLAY_ONCE);
     private static final RawAnimation GRAB_EAT_ANIM =
             RawAnimation.begin().then("grab_eat",          Animation.LoopType.PLAY_ONCE);
     private static final RawAnimation TENTACLES_OUT_TRIGGER_ANIM =
             RawAnimation.begin().then("tentacles_out",     Animation.LoopType.PLAY_ONCE);
     private static final RawAnimation TENTACLES_RETRACT_ANIM =
             RawAnimation.begin().then("tentacles_retract", Animation.LoopType.PLAY_ONCE);
-    private static final RawAnimation TENTACLES_JUMP_ANIM =
-            RawAnimation.begin().then("tentacles_jump",    Animation.LoopType.PLAY_ONCE);
+    private static final RawAnimation tentacle_jump_ANIM =
+            RawAnimation.begin().then("tentacle_jump",    Animation.LoopType.PLAY_ONCE);
     private static final RawAnimation BURROW_ANIM =
             RawAnimation.begin().then("burrow",            Animation.LoopType.PLAY_ONCE);
     private static final RawAnimation DIG_OUT_ANIM =
@@ -162,11 +162,11 @@ public class AICreakingEntity extends Monster implements GeoEntity {
         controllers.add(new AnimationController<>(
                 this, "ability_controller", 0, state -> PlayState.CONTINUE)
                 .triggerableAnim("attack",             ATTACK_ANIM)
-                .triggerableAnim("tentacles_attack",   TENTACLES_ATTACK_ANIM)
+                .triggerableAnim("tentacle_attack",   tentacle_attack_ANIM)
                 .triggerableAnim("grab_eat",           GRAB_EAT_ANIM)
                 .triggerableAnim("tentacles_out",      TENTACLES_OUT_TRIGGER_ANIM)
                 .triggerableAnim("tentacles_retract",  TENTACLES_RETRACT_ANIM)
-                .triggerableAnim("tentacles_jump",     TENTACLES_JUMP_ANIM)
+                .triggerableAnim("tentacle_jump",     tentacle_jump_ANIM)
                 .triggerableAnim("burrow",             BURROW_ANIM)
                 .triggerableAnim("dig_out",            DIG_OUT_ANIM)
         );
@@ -190,7 +190,7 @@ public class AICreakingEntity extends Monster implements GeoEntity {
         if (tentacles) {
             // Moving with tentacles out
             if (state.isMoving()) {
-                return state.setAndContinue(TENTACLES_RUN_ANIM);
+                return state.setAndContinue(tentacle_run_ANIM);
             }
             // Stationary with tentacles deployed → hold pose
             return state.setAndContinue(TENTACLES_HOLD_ANIM);

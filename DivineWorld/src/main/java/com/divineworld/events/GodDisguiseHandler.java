@@ -206,6 +206,114 @@ public class GodDisguiseHandler {
     }
 
     // =========================================================================
+    // Three-way form cycle — GOD → HUMANOID → DISGUISE → GOD
+    // Managed separately from the mob-transform system (dw_disguised / replaceGodBody).
+    // dw_form NBT key: "god" | "humanoid" | "disguise"
+    // =========================================================================
+
+    /** Form constants — match what GodEntityRenderer (DWClientBot) reads from dw_form. */
+    private static final String FORM_GOD      = "god";
+    private static final String FORM_HUMANOID = "humanoid";
+    private static final String FORM_DISGUISE = "disguise";
+
+    /**
+     * Returns the current form for a god player, defaulting to "god" when the
+     * NBT key is absent (i.e. on first join before any toggle has been issued).
+     */
+    public static String getGodForm(ServerPlayer player) {
+        String form = player.getPersistentData().getString("dw_form");
+        return (form == null || form.isEmpty()) ? FORM_GOD : form;
+    }
+
+    /**
+     * Advance the god's form one step around the cycle:
+     *   god  →  humanoid  →  disguise  →  god  →  …
+     *
+     * Server-side effects per form:
+     *   god      — boss body VISIBLE,  player puppet INVISIBLE (existing behaviour)
+     *   humanoid — boss body INVISIBLE, player puppet VISIBLE  (GeckoLib model)
+     *   disguise — boss body INVISIBLE, player puppet VISIBLE  (Steve/Alex skin)
+     *
+     * The client-side renderer (GodEntityRenderer) picks up the form from the
+     * dw_form NBT key which is synced via the existing MorphSyncPacket channel
+     * — we send broadcastMorph() with the form name as the "mobType" payload so
+     * TransformationHandler on the client can fire any form-change particles.
+     * The NBT is synced to all nearby clients automatically by Forge's normal
+     * entity data sync (player.getPersistentData() on a ServerPlayer is part of
+     * the player's tracked data block that vanilla broadcasts on change).
+     */
+    public static void cycleGodForm(ServerPlayer player) {
+        if (!DWNPCManager.isGodPlayer(player)) {
+            player.sendSystemMessage(Component.literal(
+                    "§c[Form Toggle] Only god agents can cycle forms."));
+            return;
+        }
+        String current = getGodForm(player);
+        String next = switch (current) {
+            case FORM_GOD      -> FORM_HUMANOID;
+            case FORM_HUMANOID -> FORM_DISGUISE;
+            default            -> FORM_GOD;   // DISGUISE → GOD, and any unknown state
+        };
+        applyGodForm(player, next);
+    }
+
+    /**
+     * Set a god player's form directly (also used by cycleGodForm and by
+     * external callers like GodCommand.toggleCycleTarget()).
+     */
+    public static void applyGodForm(ServerPlayer player, String form) {
+        ServerLevel level = player.serverLevel();
+
+        // Toggle boss-body and puppet visibility based on target form
+        Entity bossBody = GodSpawnHandler.getGodEntity(player.getUUID());
+
+        switch (form) {
+            case FORM_GOD -> {
+                // Boss body is the visible representation — puppet hides
+                if (bossBody != null) bossBody.setInvisible(false);
+                player.setInvisible(true);
+            }
+            case FORM_HUMANOID -> {
+                // Puppet renders using GeckoLib humanoid model — boss body hides
+                if (bossBody != null) bossBody.setInvisible(true);
+                player.setInvisible(false);
+            }
+            case FORM_DISGUISE -> {
+                // Puppet renders as Steve or Alex — boss body hides
+                if (bossBody != null) bossBody.setInvisible(true);
+                player.setInvisible(false);
+                // Pick Steve or Alex randomly and remember it for the renderer.
+                // Stored as a boolean: true = Steve (classic/wide), false = Alex (slim).
+                boolean isSteve = level.random.nextBoolean();
+                player.getPersistentData().putBoolean("dw_is_steve", isSteve);
+            }
+        }
+
+        // Persist form state — synced to all clients via Forge's player NBT sync
+        player.getPersistentData().putString("dw_form", form);
+
+        // Broadcast via the existing MorphSyncPacket channel so TransformationHandler
+        // on DWClientBot can fire per-form particles and log the event.
+        // We pass the form name as mobType — TransformationHandler already handles
+        // unknown mobType strings gracefully (falls through to PORTAL particles).
+        NetworkHandler.broadcastMorph(player, level, "form:" + form);
+
+        spawnMorphParticles(player, level,
+                player.getPersistentData().getString("dw_original_god_type"));
+
+        player.sendSystemMessage(Component.literal(switch (form) {
+            case FORM_GOD      -> "§5You reveal your §l§5divine form§r§5.";
+            case FORM_HUMANOID -> "§dYou take on your §l§dhumanoid form§r§d.";
+            case FORM_DISGUISE -> "§7You blend in as a §l§7mortal§r§7.";
+            default            -> "§dForm changed to: " + form;
+        }));
+
+        DWMod.LOGGER.info("[GodForm] {} → form:{}", DWNPCManager.getAgentId(player), form);
+    }
+
+
+
+    // =========================================================================
     // Tick sync — real-player morph bodies
     // =========================================================================
 

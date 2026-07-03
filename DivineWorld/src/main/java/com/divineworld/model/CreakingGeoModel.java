@@ -24,8 +24,8 @@ import software.bernie.geckolib.model.GeoModel;
  *
  * Animation names in the .animation.json MUST exactly match:
  *   walk, run, attack, tentacles_out, tentacles_retract,
- *   grab_eat, tentacles_wall_climb, tentacles_jump, burrow,
- *   tentacles_run, tentacles_attack, dig_out
+ *   grab_eat, tentacles_wall_climb, tentacle_jump, burrow,
+ *   tentacle_run, tentacle_attack, dig_out
  */
 @OnlyIn(Dist.CLIENT)
 public class CreakingGeoModel extends GeoModel<AICreakingEntity> {

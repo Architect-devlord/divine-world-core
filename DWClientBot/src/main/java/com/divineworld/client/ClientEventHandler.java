@@ -3,7 +3,7 @@ package com.divineworld.client;
 import com.divineworld.client.entity.GodEntityManager;
 import com.divineworld.client.network.TCPServer;
 import com.divineworld.client.network.WebSocketManager;
-import com.divineworld.client.util.AgentsJsonReader;
+import com.divineworld.client.utils.AgentsJsonReader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraftforge.event.TickEvent;

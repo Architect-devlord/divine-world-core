@@ -588,9 +588,9 @@ public class ServerGodAbilityExecutor {
                         player.getX(), player.getY() + 1, player.getZ(),
                         50, 2, 0.5, 2, 0.03);
                 // FIX CF-1: trigger animation on body entity
-                // Use tentacles_attack when tentacles are deployed, attack otherwise
+                // Use tentacle_attack when tentacles are deployed, attack otherwise
                 GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller",
-                        tentaclesOut ? "tentacles_attack" : "attack");
+                        tentaclesOut ? "tentacle_attack" : "attack");
                 setCooldown(player, "tentacle_whip", 40);
             }
 
@@ -673,7 +673,7 @@ public class ServerGodAbilityExecutor {
                     player.addEffect(new MobEffectInstance(MobEffects.LEVITATION, 60, 3));
                     player.noPhysics = true;
                     setBodyOnCeiling(uuid, true);
-                    GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller", "tentacles_jump");
+                    GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller", "tentacle_jump");
                 } else {
                     player.removeEffect(MobEffects.LEVITATION);
                     player.noPhysics = false;

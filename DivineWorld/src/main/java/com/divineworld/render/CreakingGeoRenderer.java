@@ -46,15 +46,19 @@ public class CreakingGeoRenderer extends GeoEntityRenderer<AICreakingEntity> {
      * divine-tier power. Override this to adjust per-entity if needed.
      */
     @Override
-    protected void scaleModelForRender(float widthScale, float heightScale,
-                                       PoseStack poseStack,
-                                       AICreakingEntity animatable,
-                                       net.minecraft.client.model.geom.ModelPart rootPart,
-                                       boolean isReRender, float partialTick,
-                                       int packedLight, int packedOverlay) {
+    public void scaleModelForRender(
+            float widthScale,
+            float heightScale,
+            PoseStack poseStack,
+            AICreakingEntity animatable,
+            software.bernie.geckolib.cache.object.BakedGeoModel model,
+            boolean isReRender,
+            float partialTick,
+            int packedLight,
+            int packedOverlay) {
+
         poseStack.scale(1.5f, 1.5f, 1.5f);
     }
-
     @Override
     public void render(AICreakingEntity entity, float entityYaw, float partialTick,
                        PoseStack poseStack, MultiBufferSource bufferSource, int packedLight) {

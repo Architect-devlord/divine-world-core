@@ -186,8 +186,13 @@ public class BreedingEventHandler {
      * Incompatible:
      *   male   × male    ❌
      *   female × female  ❌
+     *
+     * FIX (widened to public): single source of truth for gender-compatibility,
+     * now also reused by BreedCommand.java's /breed command for its upfront
+     * "can these two even breed" check — avoids a second, possibly-drifting
+     * copy of this exact predicate.
      */
-    private static boolean areGendersCompatible(String a, String b) {
+    public static boolean areGendersCompatible(String a, String b) {
         if ("dual".equals(a) || "dual".equals(b)) return true;
         return ("male".equals(a) && "female".equals(b))
                 || ("female".equals(a) && "male".equals(b));

@@ -3,10 +3,6 @@
 package com.divineworld;
 
 import com.divineworld.commands.CommandRegistrar;
-import com.divineworld.commands.DivineCommands;
-import com.divineworld.commands.GodCommand;
-import com.divineworld.commands.NPCCommand;
-import com.divineworld.commands.OracleCommandRegistrar;
 import com.divineworld.entity.ModEntities;
 import com.divineworld.events.BreedingEventHandler;
 import com.divineworld.events.ProximityChatHandler;
@@ -195,22 +191,14 @@ public class DWMod {
                 (oracleSystem != null ? "✅" : "❌"),
                 (oracleBrain != null ? "✅" : "❌"));
 
-        // Register Divine Commands (genesis, divine_reset, spawn_god, god_ability, god_transform, list_agents)
-        DivineCommands.register(event.getDispatcher());
-        LOGGER.info("[DivineWorld] ✅ Divine commands registered");
-
-        // FIX SGS-1: NPCCommand and GodCommand were missing — CommandRegistrar.register()
-        // was removed from setup() (FIX M-05) to prevent duplicates, but the replacement
-        // calls were never added here. Both are now registered directly.
-        NPCCommand.register(event.getDispatcher());
-        LOGGER.info("[DivineWorld] ✅ NPC commands registered (/dw npc spawn|list|remove|info)");
-
-        GodCommand.register(event.getDispatcher());
-        LOGGER.info("[DivineWorld] ✅ God commands registered (/godtoggle)");
-
-        // Register Oracle Commands
-        OracleCommandRegistrar.registerCommands(event.getDispatcher(), oracleSystem, oracleBrain);
-        LOGGER.info("[DivineWorld] ✅ Oracle commands registered");
+        // FIX (command-registrar consolidation): CommandRegistrar.java existed
+        // but was dead code — every command group was registered directly
+        // from here instead. All five groups (Divine, NPC, God, Oracle, Breed)
+        // are now registered from CommandRegistrar.register() in one place;
+        // adding a new command group going forward only needs a line added
+        // there, not here.
+        CommandRegistrar.register(event, oracleSystem, oracleBrain);
+        LOGGER.info("[DivineWorld] ✅ All commands registered via CommandRegistrar");
     }
 
     @SubscribeEvent
@@ -224,9 +212,12 @@ public class DWMod {
         // Initialize network handler
         NetworkHandler.register();
 
-        // FIX M-05: CommandRegistrar.register() was called here AND handled by
-        // onRegisterCommands(), causing every command to be registered twice.
-        // Brigadier throws on duplicate registrations. Removed — onRegisterCommands owns this.
+        // Commands are NOT registered here. CommandRegistrar.register() needs
+        // the live OracleSystem/LLMOracleBrain instances and the
+        // RegisterCommandsEvent's dispatcher, neither of which exist at this
+        // point in the mod lifecycle — both are only available inside
+        // onRegisterCommands() below, which is this mod's sole command
+        // registration point.
 
         LOGGER.info("[DivineWorld] Common setup complete");
     }

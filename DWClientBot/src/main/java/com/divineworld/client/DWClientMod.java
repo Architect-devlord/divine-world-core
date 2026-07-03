@@ -4,7 +4,7 @@ package com.divineworld.client;
 import com.divineworld.client.entity.ModEntities;
 import com.divineworld.client.network.ClientNetworkHandler;
 import com.divineworld.client.network.TCPServer;
-import com.divineworld.client.util.AgentsJsonReader;
+import com.divineworld.client.utils.AgentsJsonReader;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.IEventBus;

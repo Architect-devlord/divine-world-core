@@ -95,7 +95,7 @@ public class GodSpawnHandler {
             // FIX CF-2: HOVERING phase calls getDragonFight() which returns null
             // in non-End dimensions → NullPointerException on first phase tick.
             // SITTING_FLAPPING_WINGS is safe in all dimensions and looks natural.
-            dragon.getPhaseManager().setPhase(EnderDragonPhase.SITTING_FLAPPING_WINGS);
+            dragon.getPhaseManager().setPhase(EnderDragonPhase.SITTING_SCANNING);
         } else if (godEntity instanceof net.minecraft.world.entity.Mob mob) {
             mob.setNoAi(true);
         }

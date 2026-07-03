@@ -94,7 +94,7 @@ public class NetworkHandler {
                 // above) mean any player who completes the login handshake
                 // at all already has the channel, so this is a narrow edge
                 // case — but a cheap, correct guard regardless of how narrow.
-                if (INSTANCE.isRemotePresent(nearby.connection.getConnection())) {
+                if (INSTANCE.isRemotePresent(nearby.connection.connection)) {
                     INSTANCE.send(PacketDistributor.PLAYER.with(() -> nearby), pkt);
                 }
             }

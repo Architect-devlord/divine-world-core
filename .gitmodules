@@ -1,0 +1,6 @@
+[submodule "Blockbench_models/Serious-Player-Animations-Template-Resource-Pack"]
+	path = Blockbench_models/Serious-Player-Animations-Template-Resource-Pack
+	url = https://github.com/McVader34/Serious-Player-Animations-Template-Resource-Pack
+[submodule "Blockbench_models/bedrock-samples"]
+	path = Blockbench_models/bedrock-samples
+	url = https://github.com/Mojang/bedrock-samples/

@@ -38,14 +38,35 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
+import software.bernie.geckolib.animatable.GeoEntity;
+import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.*;
+import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.util.GeckoLibUtil;
+
 import java.util.UUID;
 
 /**
  * Base God Entity - FULLY FIXED VERSION
  * Extends Player to get ALL player mechanics including inventory
  * Uses Player's Inventory class instead of SimpleContainer
+ *
+ * FIX (humanoid form / GodHumanoidGeoRenderer): implements GeoEntity so
+ * GodHumanoidGeoRenderer<T extends BaseGodEntity> (which extends
+ * GeoEntityRenderer<T extends LivingEntity & GeoAnimatable>) can accept
+ * any concrete god subclass as its type parameter.  GeoAnimatable is
+ * satisfied via GeoEntity.  The registerControllers() override below covers
+ * all shared animation names (walk/run/idle/swim/sneak/hit/mount from the
+ * standard player movement set, PLUS god ability names: attack, burrow,
+ * tentacles_out …) so the same trigger calls work for the boss body AND
+ * the humanoid puppet; god_*.animation.json provides humanoid keyframes
+ * for each of those same names.
  */
-public abstract class BaseGodEntity extends Player implements IGodEntity {
+public abstract class BaseGodEntity extends Player implements IGodEntity, GeoEntity {
+
+    // GeckoLib — one cache per ENTITY INSTANCE, not per class
+    private final AnimatableInstanceCache geoCache = GeckoLibUtil.createInstanceCache(this);
 
     // Use Player's standard Inventory - has getDestroySpeed()
     private final Inventory godInventory;
@@ -1064,6 +1085,90 @@ public abstract class BaseGodEntity extends Player implements IGodEntity {
 
     @Override
     public abstract void toggleFlight(boolean enable);
+
+    // ==================== GECKOLIB — GeoEntity (humanoid form) ====================
+
+    /**
+     * Shared animation controllers for the humanoid form.
+     *
+     * Two controllers — same split as AICreakingEntity / AICreakingEntity (DWClientBot):
+     *
+     *   base_controller    (5-tick blend)  — looping movement state machine.
+     *     The standard player movement set: walk, run, idle, swim, sneak, hit, mount.
+     *     GodEntityRenderer's existing PlayerModel path handles these for the player
+     *     puppet natively; these controllers only run when GodHumanoidGeoRenderer
+     *     is active (dw_form = "humanoid").
+     *
+     *   ability_controller (0-tick snap)   — one-shot triggered ability animations.
+     *     All god ability names are registered here so useAbility() calls in the
+     *     Python backend fire the same animation regardless of which form is active.
+     *     Subclasses can add additional god-specific triggers by overriding
+     *     registerExtraAbilityTriggers() below.
+     *
+     * Animation names in god_*.animation.json MUST match these keys exactly,
+     * including the standard movement set — GeckoLib drives geometry from scratch
+     * here (unlike the PlayerModel path in god form), so idle/walk/run must be
+     * explicit keyframes in each god's humanoid animation.json.
+     */
+    @Override
+    public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "base_controller", 5,
+                this::baseHumanoidAnimController));
+
+        AnimationController<BaseGodEntity> abilityController =
+                new AnimationController<>(this, "ability_controller", 0,
+                        state -> PlayState.CONTINUE)
+                .triggerableAnim("attack",         RawAnimation.begin().then("attack",         Animation.LoopType.PLAY_ONCE))
+                .triggerableAnim("hit",            RawAnimation.begin().then("hit",            Animation.LoopType.PLAY_ONCE))
+                .triggerableAnim("mount",          RawAnimation.begin().then("mount",          Animation.LoopType.PLAY_ONCE));
+        registerExtraAbilityTriggers(abilityController);
+        controllers.add(abilityController);
+    }
+
+    /**
+     * Base movement state machine — walk / run / idle / swim / sneak.
+     * Subclasses override for any god-specific motion states (e.g. Creaking
+     * ceiling-crawl, Warden sniff, EnderDragon hovering glide).
+     */
+    protected <E extends BaseGodEntity> PlayState baseHumanoidAnimController(
+            AnimationState<E> state) {
+        if (isUnderWater()) {
+            return state.setAndContinue(
+                    RawAnimation.begin().thenLoop("swim"));
+        }
+        if (isCrouching()) {
+            return state.setAndContinue(
+                    RawAnimation.begin().thenLoop("sneak"));
+        }
+        if (state.isMoving()) {
+            double hSpeed = getDeltaMovement().horizontalDistance();
+            return state.setAndContinue(hSpeed > 0.22
+                    ? RawAnimation.begin().thenLoop("run")
+                    : RawAnimation.begin().thenLoop("walk"));
+        }
+        return state.setAndContinue(RawAnimation.begin().thenLoop("idle"));
+    }
+
+    /**
+     * Extension point for god-specific ability triggers on the ability_controller.
+     * Called during registerControllers() so subclasses don't need to override
+     * the full registerControllers() method just to add extra triggerable anims.
+     *
+     * Example:
+     *   {@code controller.triggerableAnim("tentacles_out",
+     *       RawAnimation.begin().then("tentacles_out", LoopType.PLAY_ONCE)); }
+     */
+    protected void registerExtraAbilityTriggers(
+            AnimationController<BaseGodEntity> controller) {
+        // Default: no extra triggers — concrete god classes override as needed
+    }
+
+    @Override
+    public AnimatableInstanceCache getAnimatableInstanceCache() {
+        return geoCache;
+    }
+
+
 
     /**
      * Get custom scale for this god entity

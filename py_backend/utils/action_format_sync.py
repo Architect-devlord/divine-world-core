@@ -81,6 +81,26 @@ GOD_ABILITY_NAMES: Dict[str, List[str]] = {
         "healing_wave",             # 3
         "knowledge_beam",           # 4
         "fly",                      # 5  — FIX JC-01: Java AIOracle dispatches "fly"
+        # FIX: oracle's boss body is EntityType.EVOKER (GodSpawnHandler.java), but
+        # every Mob god body gets setNoAi(true) unconditionally — so vanilla
+        # Evoker's own SummonSpellGoal/EvokerAttackSpell (the AI Goals that would
+        # normally cast these automatically in combat) never run; a Goal-based
+        # behavior requires the goalSelector to tick, which setNoAi(true) stops
+        # entirely. ServerGodAbilityExecutor.executeOracleAbility() already has
+        # real, working "summon_vexes"/"summon_fangs" cases — this is the ONLY
+        # path that can ever trigger them, and until now this list (the only
+        # thing that determines what index the trained ability_idx output head
+        # can even select) had no entry for either, so the policy could never
+        # reach them regardless of what it output.
+        #
+        # Appended at the END, not inserted alongside the semantically-similar
+        # abilities above — inserting mid-list would silently reassign the
+        # index of every ability after the insertion point (e.g. "fly" would
+        # stop being index 5), scrambling the learned index↔ability mapping
+        # for any already-trained oracle policy. Appending preserves every
+        # existing index exactly; only the two new slots (6, 7) are new.
+        "summon_vexes",             # 6  — 10 s CD (matches ServerGodAbilityExecutor)
+        "summon_fangs",             # 7  — 4 s CD  (matches ServerGodAbilityExecutor)
     ],
     "creaking": [
         "toggle_underground",       # 0
@@ -88,6 +108,26 @@ GOD_ABILITY_NAMES: Dict[str, List[str]] = {
         "deploy_tentacles",         # 2
         "life_steal",               # 3
         "tentacle_whip",            # 4  — 8-block range
+        # FIX (same audit category as oracle's summon_vexes/summon_fangs above):
+        # ServerGodAbilityExecutor.executeCreakingAbility() has real, working
+        # "retract_tentacles" and "emerge" cases — genuinely separate,
+        # one-directional actions, NOT toggles: deploy_tentacles only ever
+        # turns tentacles ON, retract_tentacles is the only thing that turns
+        # them OFF; likewise "toggle_underground"/"burrow" only ever goes
+        # DOWN — the Java code's own comments say "AI controls emerge" / "AI
+        # sends this when ready to surface", confirming emerge was always
+        # meant to be a deliberate, separate agent decision. Neither name
+        # was in this list, so the trained ability_idx output could never
+        # select either — worse than the oracle gap, since a Creaking agent
+        # that burrows has NO way to voluntarily surface again: it would
+        # stay underground and invulnerable indefinitely, since nothing else
+        # in the pipeline calls "emerge" on its behalf.
+        # Appended at the end for the same index-preservation reason as
+        # oracle's fix above — see that entry's comment for the full rationale.
+        "retract_tentacles",        # 5  — 2 s CD (matches ServerGodAbilityExecutor)
+        "emerge",                   # 6  — no artificial CD; gated by the
+                                     #      dw_burrowed state flag itself,
+                                     #      same convention as "fly" (0.0 CD)
     ],
 }
 

@@ -28,17 +28,31 @@ import java.util.UUID;
  * and tears it down when they disconnect.
  *
  * Entity type mapping (UPDATED):
- *   oracle   → EVOKER   (robed mage look; can summon Vexes/fangs as god powers)
- *   creaking → WARDEN   (no autonomous side-effects under setNoAi, replaces old EVOKER placeholder)
+ *   oracle   → EVOKER       (robed mage look; can summon Vexes/fangs as god powers)
+ *   creaking → AI_CREAKING  (custom GeckoLib entity — see getGodEntityType() below;
+ *                            real Creaking doesn't exist until MC 1.21.4, this
+ *                            project targets 1.20.1. FIX: this line previously
+ *                            said "→ WARDEN", stale from before the custom
+ *                            entity existed — the actual switch body has been
+ *                            correct for a while, only this comment was wrong)
  *   warden   → WARDEN
  *   wither   → WITHER
  *   dragon   → ENDER_DRAGON
  *   elder_guardian → ELDER_GUARDIAN
  *
  * Burrow behaviour (UPDATED):
- *   The Warden god agent controls when to emerge — no auto-emerge timer.
+ *   Both Warden (executeWardenAbility's own "burrow"/"emerge" cases) and
+ *   Creaking (executeCreakingAbility's "toggle_underground"/"emerge" cases)
+ *   share this same dw_burrowed-flag mechanic independently — each god
+ *   agent controls when to emerge itself, no auto-emerge timer for either.
  *   While burrowed, the god puppet is invulnerable and invisible.
  *   dw_burrowed NBT flag is cleared on logout for safety.
+ *
+ *   CORRECTION: this comment previously said only "The Warden god agent
+ *   controls when to emerge" — accurate for Warden alone, but incomplete
+ *   once Creaking's own independent "emerge" case (previously unreachable
+ *   from Python's ability lists, now fixed — see action_format_sync.py's
+ *   GOD_ABILITY_NAMES["creaking"]) is actually selectable by the agent too.
  */
 @Mod.EventBusSubscriber(modid = DWMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class GodSpawnHandler {
@@ -95,7 +109,7 @@ public class GodSpawnHandler {
             // FIX CF-2: HOVERING phase calls getDragonFight() which returns null
             // in non-End dimensions → NullPointerException on first phase tick.
             // SITTING_FLAPPING_WINGS is safe in all dimensions and looks natural.
-            dragon.getPhaseManager().setPhase(EnderDragonPhase.SITTING_SCANNING);
+            dragon.getPhaseManager().setPhase(EnderDragonPhase.SITTING_FLAPPING_WINGS);
         } else if (godEntity instanceof net.minecraft.world.entity.Mob mob) {
             mob.setNoAi(true);
         }
@@ -223,8 +237,15 @@ public class GodSpawnHandler {
     /**
      * Map god type keys to vanilla entity types.
      *
-     * oracle   → EVOKER  (robed mage; Vex/fang summons are Oracle's god powers)
-     * creaking → WARDEN  (safe placeholder: setNoAi stops all behaviour, no random summons)
+     * oracle   → EVOKER       (robed mage; Vex/fang summons are Oracle's god powers)
+     * creaking → AI_CREAKING  (custom GeckoLib entity — real Creaking doesn't exist
+     *                          until MC 1.21.4, this project targets 1.20.1)
+     *
+     * FIX: this comment previously said "creaking → WARDEN (safe placeholder...)",
+     * left over from before the custom AI_CREAKING entity existed. The switch
+     * body below has correctly returned ModEntities.AI_CREAKING.get() for a
+     * while now — only this comment was stale. Fixed for accuracy; no
+     * behavior change.
      */
     private static EntityType<?> getGodEntityType(String godType) {
         return switch (godType) {

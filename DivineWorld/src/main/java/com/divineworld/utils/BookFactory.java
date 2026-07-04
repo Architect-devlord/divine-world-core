@@ -120,7 +120,8 @@ public class BookFactory {
                         "Examples:\n" +
                         "• dragon_breath\n" +
                         "• wither_skull\n" +
-                        "• sonic_boom"
+                        "• sonic_boom\n" +
+                        "• summon_vexes"
         ))));
 
         pages.add(StringTag.valueOf(Component.Serializer.toJson(Component.literal(

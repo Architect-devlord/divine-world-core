@@ -84,14 +84,24 @@ public class DivineCommands {
                 .then(Commands.argument("agent_id", StringArgumentType.string())
                         .then(Commands.argument("ability", StringArgumentType.string())
                                 .suggests((ctx, builder) -> {
-                                    // Suggest common ability names across all god types
+                                    // Suggest common ability names across all god types.
+                                    // FIX: summon_vexes/summon_fangs added — oracle's boss
+                                    // body is now EntityType.EVOKER (GodSpawnHandler.java).
+                                    // NOTE: this list is autocomplete convenience only —
+                                    // executeGodAbility() below passes the ability string
+                                    // straight through to ServerGodAbilityExecutor.execute()
+                                    // with no whitelist of its own, so both abilities already
+                                    // worked correctly if an operator typed them manually
+                                    // before this fix; only tab-completion was missing them.
                                     String[] abilities = {
                                         "sonic_boom","darkness","sniff","burrow","emerge",
                                         "wither_skull","explosion","summon_wither_skeletons","dash",
                                         "dragon_breath","fireball","perch",
                                         "mining_fatigue","laser_beam","guardian_spikes","thorn_attack",
                                         "wisdom_aura","teleport","healing_wave","knowledge_beam",
-                                        "tentacle_whip","life_steal","toggle_underground","toggle_ceiling"
+                                        "summon_vexes","summon_fangs",
+                                        "tentacle_whip","life_steal","toggle_underground","toggle_ceiling",
+                                        "retract_tentacles","emerge"
                                     };
                                     for (String a : abilities) builder.suggest(a);
                                     return builder.buildFuture();

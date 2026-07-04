@@ -110,6 +110,39 @@ class GodControlSystem:
             "fly":            GodAbility("fly",            cooldown=0.0),
             "transform":      GodAbility("transform",      cooldown=5.0),
             "revert":         GodAbility("revert",         cooldown=1.0),
+            # FIX: oracle's boss body is EntityType.EVOKER, but setNoAi(true)
+            # (applied unconditionally to every Mob god body — see
+            # GodSpawnHandler.spawnGodBody()) stops vanilla Evoker's own
+            # goalSelector-driven spell casting from ever running on its own.
+            # ServerGodAbilityExecutor.executeOracleAbility() already has real
+            # "summon_vexes"/"summon_fangs" cases — the only path that can ever
+            # trigger them — but this dict is what gates two separate things
+            # that were both silently blocking it before this fix:
+            #   1. try_use()'s cooldown/existence check — without an entry
+            #      here, try_use("summon_vexes") would log "Unknown ability"
+            #      and refuse to even attempt it, regardless of what
+            #      ServerGodAbilityExecutor.java supports.
+            #   2. integrate_god_controls()'s agent.planner.add_template() loop
+            #      (below), which is what makes the PLANNER consider an
+            #      ability as a candidate during deliberation at all — an
+            #      ability missing from this dict is invisible to planning,
+            #      not just uncallable.
+            # Appended at the end (after transform/revert, not grouped with
+            # the other "god powers" above) for the same reason as
+            # action_format_sync.py's GOD_ABILITY_NAMES["oracle"]: this dict's
+            # insertion order is also this SAME class's own ability_names()
+            # index space (used by encode_ability_to_action()/decode_action()
+            # below) — inserting mid-dict would shift "transform"/"revert"
+            # to new indices for oracle specifically, scrambling any already-
+            # trained oracle policy's learned index↔ability mapping.
+            # Cooldowns (10.0s / 4.0s) match ServerGodAbilityExecutor.java's
+            # setCooldown(player, "summon_vexes", 200) / (..., "summon_fangs", 80)
+            # exactly (200/80 ticks ÷ 20 ticks-per-second) — Python and Java
+            # track cooldowns independently (dataclass timestamp vs. NBT tick
+            # counter), so keeping the numbers matched is what keeps the two
+            # sides from disagreeing about whether an ability is ready.
+            "summon_vexes":   GodAbility("summon_vexes",   cooldown=10.0),
+            "summon_fangs":   GodAbility("summon_fangs",   cooldown=4.0),
         },
         "elder_guardian": {
             "mining_fatigue":   GodAbility("mining_fatigue",   cooldown=60.0),
@@ -130,6 +163,27 @@ class GodControlSystem:
             "tentacle_whip":      GodAbility("tentacle_whip",      cooldown=0.8),
             "transform":          GodAbility("transform",          cooldown=5.0),
             "revert":             GodAbility("revert",             cooldown=1.0),
+            # FIX: same audit category as oracle's summon_vexes/summon_fangs —
+            # ServerGodAbilityExecutor.executeCreakingAbility() has real,
+            # working "retract_tentacles"/"emerge" cases that were reachable
+            # from neither this dict nor action_format_sync.py's
+            # GOD_ABILITY_NAMES["creaking"]. Missing "emerge" in particular
+            # meant a burrowed Creaking agent had no voluntary way to
+            # surface again — see action_format_sync.py's matching comment
+            # for the full explanation. Appended after transform/revert (not
+            # grouped with the other tentacle/underground abilities above)
+            # for the same index-preservation reason as every other addition
+            # in this dict: this class's own ability_names() insertion order
+            # is also this SAME class's encode_ability_to_action()/
+            # decode_action() index space.
+            # Cooldowns match ServerGodAbilityExecutor.java exactly:
+            # retract_tentacles = 40 ticks ÷ 20 = 2.0s. emerge has NO
+            # setCooldown() call in Java at all — it's gated entirely by the
+            # dw_burrowed state flag, so 0.0s here matches that (same
+            # convention as "fly" elsewhere in this file: state/permission-
+            # gated abilities get cooldown=0.0, not an arbitrary timer).
+            "retract_tentacles":  GodAbility("retract_tentacles",  cooldown=2.0),
+            "emerge":             GodAbility("emerge",             cooldown=0.0),
         },
     }
 

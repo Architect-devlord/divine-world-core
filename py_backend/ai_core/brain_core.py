@@ -46,6 +46,30 @@ import numpy as np
 log = logging.getLogger("brain_core")
 
 
+def _action_to_vector(action: Dict[str, Any], action_dim: int) -> np.ndarray:
+    """
+    Encode a candidate action dict as a vector for the world model / GRPO.
+
+    Discovered skills (from EmergentSkillPool) carry their own centroid
+    in 'action_vector' — a real point in action space, not restricted to
+    a one-hot basis direction. Hand-authored templates (DEFAULT_TEMPLATES,
+    god abilities) have no 'action_vector' and fall back to the original
+    ACTION_TYPE_INDEX one-hot encoding, unchanged from before this fix.
+    """
+    raw = action.get('action_vector')
+    if raw is not None:
+        vec = np.asarray(raw, dtype=np.float32).reshape(-1)[:action_dim]
+        if vec.shape[0] < action_dim:
+            vec = np.pad(vec, (0, action_dim - vec.shape[0]))
+        return vec
+
+    from ai_core.planner import ACTION_TYPE_INDEX
+    vec = np.zeros(action_dim, dtype=np.float32)
+    idx = ACTION_TYPE_INDEX.get(action.get('type', ''), 0) % action_dim
+    vec[idx] = 1.0
+    return vec
+
+
 # ============================================================================
 # PatternRecognizer
 # ============================================================================
@@ -632,8 +656,20 @@ class BrainCore:
         # Resolve candidate actions
         if candidate_actions is None:
             try:
-                from ai_core.planner import DEFAULT_TEMPLATES
-                candidate_actions = DEFAULT_TEMPLATES
+                # FIX (template-ceiling): read the agent's *live* planner
+                # template list — the same list add_template() already
+                # grows for god abilities, and that EmergentSkillPool now
+                # also grows from lived experience — instead of
+                # re-importing the frozen DEFAULT_TEMPLATES constant.
+                # Previously any template added at runtime never reached
+                # deliberate(), so it never reached GRPO: this was the
+                # actual ceiling on what the training signal could learn.
+                planner = getattr(self.agent, 'planner', None) if self.agent else None
+                if planner is not None and getattr(planner, 'templates', None):
+                    candidate_actions = planner.templates
+                else:
+                    from ai_core.planner import DEFAULT_TEMPLATES
+                    candidate_actions = DEFAULT_TEMPLATES
             except Exception:
                 candidate_actions = [
                     {'type': 'explore'}, {'type': 'flee'},
@@ -711,7 +747,7 @@ class BrainCore:
             scoring_fn = lambda r: r.total_reward  # noqa: E731
 
         try:
-            from ai_core.planner import ImagineResult, ACTION_TYPE_INDEX
+            from ai_core.planner import ImagineResult
             from ai_core.world_model import _build_observation_from_context
             import torch
         except ImportError as e:
@@ -768,12 +804,14 @@ class BrainCore:
             best_trial_score = -1e9
             best_summary     = None
 
-            # FIX Step 2c: the candidate is always seq[0], so its one-hot
-            # vector is identical across every trial — compute it once here
+            # FIX Step 2c: the candidate is always seq[0], so its vector
+            # is identical across every trial — compute it once here
             # rather than re-deriving it from inside the trial loop.
-            cand_vec = np.zeros(action_dim, dtype=np.float32)
-            cand_idx = ACTION_TYPE_INDEX.get(candidate.get('type', ''), 0) % action_dim
-            cand_vec[cand_idx] = 1.0
+            # FIX (template-ceiling): _action_to_vector uses the candidate's
+            # own 'action_vector' when present (discovered skills), so a
+            # discovered skill is imagined as the real direction it was
+            # executed in, not collapsed onto a one-hot template basis.
+            cand_vec = _action_to_vector(candidate, action_dim)
 
             for _ in range(n_trials):
                 # Build a short sequence starting with this candidate
@@ -783,8 +821,7 @@ class BrainCore:
 
                 action_matrix = np.zeros((1, horizon, action_dim), dtype=np.float32)
                 for t, act in enumerate(seq):
-                    idx = ACTION_TYPE_INDEX.get(act.get('type', ''), 0) % action_dim
-                    action_matrix[0, t, idx] = 1.0
+                    action_matrix[0, t, :] = _action_to_vector(act, action_dim)
 
                 actions_t = torch.tensor(action_matrix,
                                          dtype=torch.float32, device=device)
@@ -843,14 +880,10 @@ class BrainCore:
         """
         Score candidates using the learned value table only.
 
-        FIX Step 2c: also returns all_scored_actions (one-hot vectors) so
+        FIX Step 2c: also returns all_scored_actions (vectors) so
         GRPO/SkillTracker still get correctly-typed data even when the
         WorldModel is unavailable and deliberation falls back to this path.
         """
-        try:
-            from ai_core.planner import ACTION_TYPE_INDEX
-        except ImportError:
-            ACTION_TYPE_INDEX = {}
 
         # No WorldModel here by definition, so action_dim can't come from
         # wm.config — use the agent's own action space (set in NPCAgent.__init__,
@@ -862,11 +895,7 @@ class BrainCore:
         for c in candidates:
             score = self.predict_value_of_action(c, context)
             ranked.append((score, c))
-
-            vec = np.zeros(action_dim, dtype=np.float32)
-            idx = ACTION_TYPE_INDEX.get(c.get('type', ''), 0) % action_dim
-            vec[idx] = 1.0
-            all_scored.append((score, vec))
+            all_scored.append((score, _action_to_vector(c, action_dim)))
 
         return ranked, all_scored
 
@@ -907,14 +936,11 @@ class BrainCore:
                                   context: Dict) -> float:
         import torch
         from ai_core.world_model import _build_observation_from_context
-        from ai_core.planner import ACTION_TYPE_INDEX
 
         wm  = self.world_model
         obs = _build_observation_from_context(self.agent, context)
 
-        vec = np.zeros(wm.config.action_dim, dtype=np.float32)
-        idx = ACTION_TYPE_INDEX.get(action.get('type', ''), 0) % wm.config.action_dim
-        vec[idx] = 1.0
+        vec = _action_to_vector(action, wm.config.action_dim)
 
         obs['action'] = torch.tensor(
             vec, dtype=torch.float32, device=wm.device

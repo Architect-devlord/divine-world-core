@@ -63,6 +63,7 @@ MANIFEST
 .venv
 venv/
 dw_env/
+dwenv/
 ENV/
 env/
 .env
@@ -106,4 +107,3 @@ PAKORA.md
 *.tex
 PAKORA_preprint_v1.docx
 PAKORA_preprint_v1.pdf
-Divine_Notes/*

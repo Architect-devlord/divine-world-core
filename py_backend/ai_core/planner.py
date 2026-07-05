@@ -276,12 +276,18 @@ class CognitivePlanner:
 
         try:
             from ai_core.world_model import _build_observation_from_context
+            from ai_core.brain_core import _action_to_vector
             initial_obs = _build_observation_from_context(self.brain.agent, context)
 
+            # FIX (template-ceiling): discovered skills carry their own
+            # 'action_vector' (a real point in action space) rather than a
+            # 'type' string in ACTION_TYPE_INDEX. _action_to_vector uses it
+            # when present and falls back to the original one-hot encoding
+            # for hand-authored templates, so this is a no-op for anything
+            # that isn't a discovered skill.
             action_matrix = np.zeros((1, horizon, action_dim), dtype=np.float32)
             for t, action in enumerate(sequence):
-                idx = ACTION_TYPE_INDEX.get(action.get('type', ''), 0) % action_dim
-                action_matrix[0, t, idx] = 1.0
+                action_matrix[0, t, :] = _action_to_vector(action, action_dim)
 
             actions_tensor = torch.tensor(action_matrix, dtype=torch.float32, device=device)
 

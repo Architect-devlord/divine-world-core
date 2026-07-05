@@ -123,6 +123,14 @@ class ContinualLearner:
         # Experience buffer for Avalanche
         self.experience_buffer: List[Tuple] = []
 
+        # FIX (template-ceiling): discovers new candidate templates from
+        # real (action, reward) experience, the same way vision.py's
+        # OnlineVisualVocabulary discovers visual categories — see
+        # emergent_templates.py. Graduated skills are pushed into
+        # agent.planner.templates via the existing add_template() hook.
+        from ai_core.emergent_templates import EmergentSkillPool
+        self.skill_pool = EmergentSkillPool(action_dim=self.action_dim)
+
         # Statistics
         self.stats = {
             'tasks_learned': 0,
@@ -330,6 +338,25 @@ class ContinualLearner:
         self._sync_weights_from_live_policy()  # FIX RL-05: add distillation target
         if not self.collect_experiences():
             return {'status': 'insufficient_data'}
+
+        # ── FIX (template-ceiling): emergent skill discovery ────────────
+        # Fold this batch's real (action, reward) pairs into the skill
+        # pool, then push any newly-graduated skills into the live planner
+        # template list via add_template() — the same hook god_controls.py
+        # already uses for god abilities. Runs before training so a failure
+        # here never blocks the actual learning step below.
+        try:
+            for _obs, _action, _reward, *_rest in self.experience_buffer:
+                act_np = (_action.detach().cpu().numpy()
+                          if hasattr(_action, 'detach') else np.asarray(_action))
+                self.skill_pool.observe(act_np, float(_reward))
+
+            planner = getattr(self.agent, 'planner', None)
+            if planner is not None:
+                for tmpl in self.skill_pool.drain_newly_graduated():
+                    planner.add_template(tmpl)
+        except Exception as _sp_e:
+            log.debug(f"Skill pool update skipped: {_sp_e}")
 
         try:
             # Convert buffer to Avalanche dataset

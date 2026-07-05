@@ -4,3 +4,6 @@
 [submodule "Blockbench_models/bedrock-samples"]
 	path = Blockbench_models/bedrock-samples
 	url = https://github.com/Mojang/bedrock-samples/
+[submodule "divine-notes"]
+	path = divine-notes
+	url = https://github.com/Architect-devlord/divine-notes

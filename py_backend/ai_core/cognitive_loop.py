@@ -133,6 +133,16 @@ class CognitiveLoop:
     - Vision tokens from VisionAdapter injected into perception dict
     """
 
+    # FIX (plan-following): how strongly _execute_planned_action() nudges the
+    # policy's real output toward the plan step it's supposed to be executing.
+    # 0.0 = old behaviour (the plan is purely a log line, agent.decide() alone
+    # decides). 1.0 = the plan fully overrides the policy's own output, which
+    # would reimpose exactly the template-restriction this project deliberately
+    # keeps out of real-time behaviour (planner.py: "the agent chooses freely").
+    # A nudge, not a replacement — deliberate() gets a real say without taking
+    # the raw policy's freedom to explore away from it.
+    PLAN_BLEND = 0.25
+
     def __init__(self, agent, loop_interval: float = 0.5):
         self.agent         = agent
         self.loop_interval = loop_interval
@@ -1005,14 +1015,18 @@ class CognitiveLoop:
             return
 
         try:
-            from ai_core.planner import ACTION_TYPE_INDEX
+            from ai_core.brain_core import _action_to_vector
         except ImportError:
-            ACTION_TYPE_INDEX = {}
+            _action_to_vector = None
 
-        action_dim   = getattr(agent, 'action_dim', 13)
-        action_taken = np.zeros(action_dim, dtype=np.float32)
-        idx = ACTION_TYPE_INDEX.get(step.get('type', ''), 0) % action_dim
-        action_taken[idx] = 1.0
+        action_dim = getattr(agent, 'action_dim', 13)
+        if _action_to_vector is not None:
+            action_taken = _action_to_vector(step, action_dim)
+        else:
+            from ai_core.planner import ACTION_TYPE_INDEX
+            action_taken = np.zeros(action_dim, dtype=np.float32)
+            idx = ACTION_TYPE_INDEX.get(step.get('type', ''), 0) % action_dim
+            action_taken[idx] = 1.0
 
         result = agent.skill_tracker.record_attempt(
             task_label      = agent.active_focus_task,
@@ -1064,6 +1078,24 @@ class CognitiveLoop:
         try:
             obs        = self.agent.perceive(context)
             action_arr = self.agent.decide(obs, deterministic=False)
+
+            # FIX (plan-following): `action` (this plan step) used to be
+            # discarded entirely below except for the log line — decide()
+            # computes action_arr from obs alone, so whatever sequence
+            # deliberate() picked for this tick never touched what actually
+            # got sent to Minecraft. This nudges action_arr toward the
+            # planned step's own vector (PLAN_BLEND, see class docstring)
+            # instead of replacing it outright, so the plan gets a real say
+            # without taking away the policy's freedom to explore elsewhere —
+            # matching the same bias-not-restriction fix already applied to
+            # deliberate()'s candidate pool.
+            try:
+                from ai_core.brain_core import _action_to_vector
+                planned_vec = _action_to_vector(action, len(action_arr))
+                action_arr = (1.0 - self.PLAN_BLEND) * action_arr + self.PLAN_BLEND * planned_vec
+                action_arr = np.clip(action_arr, -1.0, 1.0).astype(action_arr.dtype)
+            except Exception as _blend_e:
+                log.debug(f"Plan-blend skipped, using raw policy output: {_blend_e}")
 
             # Route: god agents use act_god (18-dim) to include ability dims;
             # NPC agents use act (13-dim).

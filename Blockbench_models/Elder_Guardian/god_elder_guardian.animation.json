@@ -834,7 +834,7 @@
 				}
 			}
 		},
-		"bow_idle": {
+		"bow": {
 			"loop": "hold_on_last_frame",
 			"animation_length": 1.25,
 			"bones": {
@@ -870,6 +870,32 @@
 				"body": {
 					"rotation": {
 						"vector": [0, 0, 0]
+					}
+				}
+			}
+		},
+		"crossbow": {
+			"animation_length": 1.25,
+			"bones": {
+				"leftArm": {
+					"rotation": {
+						"0.0": {
+							"vector": [-90, 25, 0]
+						},
+						"1.25": {
+							"vector": [-72.8033, 48.8213, 35.112]
+						}
+					},
+					"position": {
+						"vector": [-1, 0, -2]
+					}
+				},
+				"rightArm": {
+					"rotation": {
+						"vector": [-60, -25, 0]
+					},
+					"position": {
+						"vector": [1, 0, -2]
 					}
 				}
 			}

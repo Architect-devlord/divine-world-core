@@ -133,8 +133,10 @@ class CognitiveLoop:
     - Vision tokens from VisionAdapter injected into perception dict
     """
 
-    # FIX (plan-following): how strongly _execute_planned_action() nudges the
-    # policy's real output toward the plan step it's supposed to be executing.
+    # FIX (plan-following): the CEILING on how strongly _execute_planned_action()
+    # nudges the policy's real output toward the plan step it's supposed to be
+    # executing — see _plan_follow_weight() for the actual per-agent, per-moment
+    # weight (personality + emotion scale this down; it never scales up past it).
     # 0.0 = old behaviour (the plan is purely a log line, agent.decide() alone
     # decides). 1.0 = the plan fully overrides the policy's own output, which
     # would reimpose exactly the template-restriction this project deliberately
@@ -1056,6 +1058,54 @@ class CognitiveLoop:
                         log.debug(f"switch_task(0) failed: {_te}")
                 self._curiosity_surprise_streak = 0
 
+    def _plan_follow_weight(self, context: Dict[str, Any]) -> float:
+        """
+        How strongly this agent, right now, lets the plan steer versus
+        trusting its immediate policy output — PLAN_BLEND (class constant)
+        is the ceiling, not a flat rate every agent uses identically.
+
+        Grounded in the same real-life split the rest of this system already
+        reaches for: personality sets a baseline disposition, emotion can
+        override it moment to moment.
+
+        - conscientiousness (Big Five trait, real per-agent variation):
+          planful, disciplined people commit to a chosen course of action;
+          impulsive people lean on instinct even when nothing is wrong.
+          This is the trait actually associated with planfulness — NOT
+          'persistence', which _record_skill_attempt() reads via
+          personality.traits.get('persistence', 0.5): 'persistence' was
+          never added to Personality.TRAITS, so that call always silently
+          returns the hardcoded default. Worth a look separately from this
+          fix; not touched here since it's pre-existing and unrelated to
+          plan execution.
+        - fear / urgency (real per-tick emotion + the existing danger
+          signal that already blends health with emotional intensity):
+          acute fear suppresses planning in favour of fast reflexes, the
+          same fight-or-flight response that bypasses deliberate thought
+          in humans — a highly conscientious agent still panics. This is
+          deliberately the opposite of "scared agents cling to the plan
+          harder": under genuine acute danger, real nervous systems lean
+          on reflex, not on the slower deliberate system.
+        """
+        agent = self.agent
+
+        conscientiousness = 0.0
+        personality = getattr(agent, 'personality', None)
+        if personality is not None:
+            conscientiousness = personality.traits.get('conscientiousness', 0.0)
+        trait_factor = 0.5 + 0.5 * conscientiousness  # -1..1 -> 0..1
+
+        fear = 0.0
+        if hasattr(agent, 'emotion'):
+            try:
+                fear = agent.emotion.snapshot().get('fear', 0.0)
+            except Exception:
+                fear = 0.0
+        panic_factor = 1.0 - max(fear, context.get('urgency', 0.0))
+
+        weight = self.PLAN_BLEND * trait_factor * panic_factor
+        return float(np.clip(weight, 0.0, self.PLAN_BLEND))
+
     def _execute_planned_action(self,
                                  action: Dict[str, Any],
                                  context: Dict[str, Any]):
@@ -1079,23 +1129,28 @@ class CognitiveLoop:
             obs        = self.agent.perceive(context)
             action_arr = self.agent.decide(obs, deterministic=False)
 
-            # FIX (plan-following): `action` (this plan step) used to be
-            # discarded entirely below except for the log line — decide()
-            # computes action_arr from obs alone, so whatever sequence
-            # deliberate() picked for this tick never touched what actually
-            # got sent to Minecraft. This nudges action_arr toward the
-            # planned step's own vector (PLAN_BLEND, see class docstring)
-            # instead of replacing it outright, so the plan gets a real say
-            # without taking away the policy's freedom to explore elsewhere —
-            # matching the same bias-not-restriction fix already applied to
-            # deliberate()'s candidate pool.
-            try:
-                from ai_core.brain_core import _action_to_vector
-                planned_vec = _action_to_vector(action, len(action_arr))
-                action_arr = (1.0 - self.PLAN_BLEND) * action_arr + self.PLAN_BLEND * planned_vec
-                action_arr = np.clip(action_arr, -1.0, 1.0).astype(action_arr.dtype)
-            except Exception as _blend_e:
-                log.debug(f"Plan-blend skipped, using raw policy output: {_blend_e}")
+            # FIX (coordinate-collision bug): confirmed by direct simulation
+            # against the real act() decode — ACTION_TYPE_INDEX's indices are
+            # arbitrary bookkeeping slots for GRPO's one-hot targets, NOT the
+            # real per-dimension semantics act()/act_god() decode. E.g. dim 3
+            # is 'sneak', but ACTION_TYPE_INDEX['flee']=3, so blending toward
+            # that one-hot pushed the agent to sneak while fleeing — every one
+            # of the ten hand-authored templates collides with an unrelated
+            # real control the same way, and god abilities (type='god_ability',
+            # not in ACTION_TYPE_INDEX) all silently collapsed onto index 0
+            # (move_forward). Only 'action_vector' candidates (discovered
+            # skills — real, executed vectors, correct by construction) are
+            # safe to blend. Everything else skips the nudge entirely rather
+            # than blend toward a vector that doesn't mean what it says.
+            if action.get('action_vector') is not None:
+                try:
+                    from ai_core.brain_core import _action_to_vector
+                    w = self._plan_follow_weight(context)
+                    planned_vec = _action_to_vector(action, len(action_arr))
+                    action_arr = (1.0 - w) * action_arr + w * planned_vec
+                    action_arr = np.clip(action_arr, -1.0, 1.0).astype(action_arr.dtype)
+                except Exception as _blend_e:
+                    log.debug(f"Plan-blend skipped, using raw policy output: {_blend_e}")
 
             # Route: god agents use act_god (18-dim) to include ability dims;
             # NPC agents use act (13-dim).

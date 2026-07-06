@@ -698,9 +698,31 @@ class BrainCore:
 
         # Sort descending by score — keep ranked_actions and all_scored_actions
         # in the same relative order so best_action_vector[0] matches best_action.
-        order = sorted(range(len(ranked)), key=lambda i: ranked[i][0], reverse=True)
-        ranked     = [ranked[i]     for i in order]
-        all_scored = [all_scored[i] for i in order] if len(all_scored) == len(order) else all_scored
+        #
+        # FIX (alignment bug): _deliberate_with_world_model()/_deliberate_with_table()
+        # now always append one all_scored entry per ranked entry (None for
+        # symbolic candidates — see FIX comments there), so the two lists are
+        # guaranteed the same length and the same permutation reorders both
+        # correctly regardless of how many candidates are symbolic. Filtering
+        # None out BEFORE this reorder (an earlier version of the no-hardcoded-
+        # motor-content fix) silently broke this: it made all_scored shorter
+        # than ranked the moment any symbolic template and any discovered skill
+        # coexisted — which is permanent, since seed templates are never
+        # removed — so the `len(all_scored) == len(order)` guard below always
+        # failed and all_scored was left in raw, unsorted iteration order.
+        # best_action_vector (all_scored[0][1]) was then an arbitrary
+        # vector-carrying candidate, not the best one — corrupting
+        # _record_skill_attempt()'s improving/frustration/task-switching logic
+        # every tick a skill has ever graduated. The None-filter now happens
+        # AFTER the reorder, once alignment no longer matters.
+        order      = sorted(range(len(ranked)), key=lambda i: ranked[i][0], reverse=True)
+        ranked     = [ranked[i] for i in order]
+        all_scored = (
+            [all_scored[i] for i in order] if len(all_scored) == len(order)
+            else [None] * len(ranked)  # safe fallback: no scored actions this
+                                        # tick rather than a misaligned guess
+        )
+        all_scored = [entry for entry in all_scored if entry is not None]
 
         self._last_deliberation_ts = time()
 
@@ -868,7 +890,38 @@ class BrainCore:
             if best_summary is not None:
                 ranked.append((best_trial_score, candidate))
                 summaries.append(best_summary)
-                all_scored.append((best_trial_score, cand_vec))   # FIX Step 2c
+                # FIX (no hardcoded motor content): only candidates with a
+                # real action_vector (discovered skills — centroids of
+                # actually-executed actions) are valid GRPO regression
+                # targets. Hand-authored templates only ever get a symbolic
+                # one-hot via ACTION_TYPE_INDEX, which shares no coordinate
+                # system with the real action space (confirmed: it collides
+                # with unrelated real controls). The honest fix isn't to
+                # hand-author a 'correct' replacement vector — that's still
+                # injecting human motor knowledge the rest of this system
+                # deliberately avoids — it's to give GRPO nothing for these
+                # candidates rather than something wrong. They still rank
+                # and drive plan selection above; they just don't train the
+                # policy directly until EmergentSkillPool has something real
+                # to offer in their place.
+                #
+                # FIX (alignment bug): append exactly one entry here EVERY
+                # time — None for symbolic candidates, the real pair
+                # otherwise — so all_scored stays the same length and
+                # index-aligned with ranked no matter how many candidates
+                # are symbolic. Filtering None out was the bug: it made
+                # all_scored shorter than ranked, which silently defeated
+                # deliberate()'s reorder-by-score step below (it only
+                # reorders all_scored when the lengths still match), leaving
+                # all_scored in raw iteration order — so best_action_vector
+                # (all_scored[0]) stopped corresponding to the actual best
+                # candidate the moment any symbolic template and any
+                # discovered skill coexisted, which is the permanent state
+                # of this system from the first graduated skill onward.
+                all_scored.append(
+                    (best_trial_score, cand_vec)
+                    if candidate.get('action_vector') is not None else None
+                )
 
         return ranked, summaries, all_scored
 
@@ -895,7 +948,20 @@ class BrainCore:
         for c in candidates:
             score = self.predict_value_of_action(c, context)
             ranked.append((score, c))
-            all_scored.append((score, _action_to_vector(c, action_dim)))
+            # FIX (no hardcoded motor content): same exclusion as the
+            # world-model path above — symbolic templates rank here via the
+            # value table (which is symbol-native, keyed by type/outcome,
+            # and doesn't have this problem), but don't get fabricated a
+            # vector to feed GRPO with.
+            #
+            # FIX (alignment bug): append None here rather than skipping,
+            # for the same reason as the world-model path — all_scored must
+            # stay index-aligned with ranked (same length, same order) so
+            # deliberate()'s post-sort reorder applies to both correctly.
+            all_scored.append(
+                (score, _action_to_vector(c, action_dim))
+                if c.get('action_vector') is not None else None
+            )
 
         return ranked, all_scored
 

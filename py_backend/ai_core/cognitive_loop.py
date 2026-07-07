@@ -1042,7 +1042,18 @@ class CognitiveLoop:
             agent.emotion.add('curiosity', 0.10)
         else:
             agent.emotion.add('frustration', 0.10)
-            persistence = agent.personality.traits.get('persistence', 0.5)
+            # FIX (phantom trait, second instance): this used to read
+            # personality.traits.get('persistence', 0.5) — 'persistence' was
+            # never added to Personality.TRAITS (see _plan_follow_weight),
+            # so this always silently evaluated to the hardcoded 0.5 default
+            # for every agent, never actually personality-dependent. Same
+            # fix as there: conscientiousness is the real, populated trait
+            # associated with follow-through, mapped -1..1 -> 0..1 the same
+            # way, so a neutral agent (conscientiousness=0) reproduces the
+            # exact old threshold (0.5) and only agents who actually differ
+            # from neutral get a different one.
+            conscientiousness = agent.personality.traits.get('conscientiousness', 0.0)
+            persistence = 0.5 + 0.5 * conscientiousness
             frustration = agent.emotion.snapshot().get('frustration', 0.0)
             if frustration > 0.7 * persistence:
                 agent.active_focus_task = None

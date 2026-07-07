@@ -48,7 +48,11 @@ class SkillTracker:
             self.agent.emotion.add('curiosity', 0.10)
         else:
             self.agent.emotion.add('frustration', 0.10)
-            persistence = self.agent.personality.traits.get('persistence', 0.5)
+            # NOTE: conscientiousness, not 'persistence' -- 'persistence' is
+            # not a real Personality.TRAITS entry (see cognitive_loop.py's
+            # _record_skill_attempt / _plan_follow_weight for the same fix).
+            conscientiousness = self.agent.personality.traits.get('conscientiousness', 0.0)
+            persistence = 0.5 + 0.5 * conscientiousness
             if (self.agent.emotion.snapshot().get('frustration', 0)
                     > 0.7 * persistence):
                 self.agent.active_focus_task = None

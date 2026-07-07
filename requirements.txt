@@ -60,6 +60,21 @@ librosa>=0.10.0
 soundfile>=0.12.1
 lz4>=4.3.2
 python-snappy>=0.6.1
+
+#isaac sim stuff for later
+# only core packages 
+# pip install isaacsim --index-url https://pypi.nvidia.com
+# every thing of isaacsim
+# pip install isaacsim[all] --index-url https://pypi.nvidia.com
+# caching extras with everything 
+# pip install isaacsim[all,extscache] --index-url https://pypi.nvidia.com
+# after either 3 of them 
+# Locate your installation directory
+# pip show isaacsim
+# Run the target compatibility checker app
+# isaacsim isaacsim.exp.compatibility_check
+
+# python 3.11 for isaac sim 5 and python 3.12 for isaac sim 6
 """
 # For scylla in linux do these before running the main.py
 # Check if it's installed

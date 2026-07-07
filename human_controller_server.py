@@ -28,6 +28,7 @@ import asyncio
 import base64
 import json
 import logging
+import secrets
 import socket
 import struct
 import time
@@ -39,6 +40,8 @@ import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+
+from py_backend.utils.mc_uuid import AgentNameManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,6 +63,7 @@ class _St:
     god_type:   Optional[str] = None
     tcp_port:   int           = 0
     ws_port:    int           = 0
+    is_dummy:   bool          = False   # Mode 1: pipeline-test identity, not a real named agent
 
     tcp_sock: Optional[socket.socket] = None
     mc_ws:    Optional[Any]           = None
@@ -72,6 +76,13 @@ class _St:
     _tcp_retry_task:  Optional[asyncio.Task]   = None
 
 st = _St()
+
+# FIX (Mode 1 — dummy agent): reuse the exact same registry real agents use
+# (AgentNameManager.register_npc/register_god) rather than hand-writing
+# agents.json ourselves — a dummy agent then "registers itself properly" by
+# construction: same schema, same port-allocation rule (_next_port, so it
+# can never collide with a real agent's port), same file.
+_name_mgr = AgentNameManager()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -378,6 +389,7 @@ async def api_connect(body: dict):
     st.god_type   = agent.get("god_type")
     st.tcp_port   = agent["tcp_port"]
     st.ws_port    = agent["ws_port"]
+    st.is_dummy   = False
 
     await _start_agent_ws_server(st.ws_port)
     asyncio.create_task(_connect_tcp())
@@ -389,7 +401,108 @@ async def api_connect(body: dict):
         "god_type": st.god_type,
         "tcp_port": st.tcp_port,
         "ws_port":  st.ws_port,
+        "is_dummy": st.is_dummy,
     }
+
+
+@app.get("/api/dummy-options")
+async def api_dummy_options():
+    """
+    Mode 1 support: what the 'create a test agent' picker in the browser
+    can offer, sourced from the same place real registration draws from
+    (AgentNameManager) rather than a second hardcoded copy of the list.
+    """
+    return {
+        "genders":  ["male", "female"],
+        "god_types": AgentNameManager.SPAWNABLE_GOD_TYPES,
+    }
+
+
+@app.post("/api/create-dummy")
+async def api_create_dummy(body: dict):
+    """
+    Mode 1 — pipeline-check identity.
+
+    Registers a brand-new agent through the *same* AgentNameManager real
+    agents use (register_npc / register_god): same agents.json, same
+    schema, same globally-incrementing port allocator — so it can never
+    collide with, or be mistaken for, a real named agent's port. This is
+    the isolated identity Devlord's notes call for, instead of piloting
+    means claiming a real agent's ports.
+
+    Body: {"kind": "npc"|"god", "gender"?: "male"|"female",
+           "god_type"?: str, "name"?: str}
+    Name defaults to an auto-generated, unmistakably-a-test name if omitted.
+    """
+    kind     = body.get("kind", "npc")
+    name     = (body.get("name") or "").strip()
+    if not name:
+        name = f"DummyTest_{secrets.token_hex(3)}"
+
+    if kind == "god":
+        god_type = body.get("god_type") or _name_mgr.get_random_god_type()
+        if god_type not in AgentNameManager.SPAWNABLE_GOD_TYPES:
+            raise HTTPException(400, f"Unknown god_type '{god_type}'")
+        ok = _name_mgr.register_god(name, god_type)
+        agent_type = "god"
+    else:
+        gender = body.get("gender", "male")
+        if gender not in ("male", "female"):
+            raise HTTPException(400, f"gender must be 'male' or 'female', got {gender!r}")
+        ok = _name_mgr.register_npc(name, gender)
+        agent_type, god_type = "npc", None
+
+    if not ok:
+        raise HTTPException(500, f"Failed to register dummy agent '{name}'")
+
+    port = _name_mgr.get_port(name)
+    if port is None:
+        raise HTTPException(500, f"Registered '{name}' but could not resolve its port")
+
+    st.agent_name = name
+    st.agent_type = agent_type
+    st.god_type   = god_type
+    st.tcp_port   = port
+    st.ws_port    = port + WS_PORT_OFFSET
+    st.is_dummy   = True
+
+    log.info(f"🧪 Dummy agent created: {name} ({agent_type}"
+             f"{'/' + st.god_type if st.god_type else ''}) on port {port}")
+
+    await _start_agent_ws_server(st.ws_port)
+    asyncio.create_task(_connect_tcp())
+
+    return {
+        "status":   "connecting",
+        "agent":    st.agent_name,
+        "type":     st.agent_type,
+        "god_type": st.god_type,
+        "tcp_port": st.tcp_port,
+        "ws_port":  st.ws_port,
+        "is_dummy": True,
+    }
+
+
+@app.post("/api/cleanup-dummy")
+async def api_cleanup_dummy(body: dict):
+    """
+    Remove a previously-created test identity from agents.json once done
+    with it, so pipeline-check runs don't permanently accumulate entries.
+    Refuses to touch anything that isn't flagged as a dummy in the current
+    session, so this can't accidentally deregister a real agent.
+    """
+    name = body.get("name", "")
+    if not (st.is_dummy and name == st.agent_name):
+        raise HTTPException(400, "Can only clean up the current session's own dummy agent")
+
+    if st.agent_type == "god":
+        _name_mgr.unregister_god(name, st.god_type)
+    else:
+        _name_mgr.unregister_npc(name, body.get("gender", "male"))
+
+    log.info(f"🧹 Cleaned up dummy agent: {name}")
+    st.is_dummy = False
+    return {"status": "removed", "agent": name}
 
 
 @app.post("/api/tcp-retry")

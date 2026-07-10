@@ -94,7 +94,11 @@ try:
     from isaacsim.core.utils.prims import get_prim_at_path
     _ISAAC = True
 except ImportError:
-    _ISAAC = False
+    try:
+        from omni.isaac.core.utils.prims import get_prim_at_path  # type: ignore
+        _ISAAC = True
+    except Exception:
+        _ISAAC = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Frame dataclass — the unit of currency in this module

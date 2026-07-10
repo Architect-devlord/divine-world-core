@@ -18,9 +18,23 @@ import MentalMatrixModal  from "./components/MentalMatrixModal.jsx";
 // per-agent constant. The packaged launcher always serves this frontend from
 // backend_port + 1 (see packager.py's _create_launcher), so the page's own
 // URL already tells us which backend to talk to.
+//
+// FIX (npm run dev couldn't reach any backend): that packaged-launcher
+// scheme is the ONLY one this used to compute, unconditionally — including
+// under `npm run dev`, where Vite serves this app on 8765, so BACKEND_PORT
+// came out 8764 (nothing listens there) instead of 11400 (main.py, per
+// vite.config.js's own dev-server proxy target). Absolute URLs to the wrong
+// port also can't be caught by that proxy — it only intercepts same-origin
+// relative requests. import.meta.env.DEV is Vite's own "am I running under
+// `vite`/`npm run dev`" flag: true there, false in a built/packaged bundle.
+// In dev, use relative paths so every request actually goes through the
+// proxy vite.config.js already sets up (→ 127.0.0.1:11400); the packaged
+// (production) behaviour below is completely unchanged.
 const BACKEND_PORT = window.location.port ? Number(window.location.port) - 1 : 11400;
-const BACKEND_URL  = `http://${window.location.hostname}:${BACKEND_PORT}`;
-const WS_URL       = `ws://${window.location.hostname}:${BACKEND_PORT}/ws`;
+const BACKEND_URL  = import.meta.env.DEV ? '' : `http://${window.location.hostname}:${BACKEND_PORT}`;
+const WS_URL        = import.meta.env.DEV
+  ? `ws://${window.location.host}/agent-ws`
+  : `ws://${window.location.hostname}:${BACKEND_PORT}/ws`;
 // AGENT_ID can't be derived from the URL the same way — it's fetched from
 // /status on mount (see the useEffect in App()) and threaded through as
 // state/props from there. "demo" below is only the value used before that
@@ -295,6 +309,7 @@ function App() {
 
   const wsRef               = useRef(null);
   const reconnectTimeoutRef = useRef(null);
+  const shouldReconnectRef  = useRef(true);
   const messagesEndRef      = useRef(null);
   const thoughtsEndRef      = useRef(null);
 
@@ -307,16 +322,23 @@ function App() {
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (wsRef.current) return;
+
     const connect = () => {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onopen  = () => { setConnected(true);  setError(null); };
       ws.onclose = () => {
+        if (!shouldReconnectRef.current) return;
         setConnected(false);
+        wsRef.current = null;
         reconnectTimeoutRef.current = setTimeout(connect, 5000);
       };
-      ws.onerror = () => setError("System interface offline");
+      ws.onerror = () => {
+        if (!shouldReconnectRef.current) return;
+        setError("System interface offline");
+      };
 
       ws.onmessage = ev => {
         try {
@@ -324,6 +346,11 @@ function App() {
           const now  = new Date().toLocaleTimeString();
 
           switch (data.type) {
+            case "connected":
+              setConnected(true);
+              setError(null);
+              break;
+
             // ── Chat messages from the agent ──────────────────────────────
             case "chat":
               setMessages(m => [...m, { sender: data.from || "agent", text: data.text }]);
@@ -374,10 +401,16 @@ function App() {
       };
     };
 
+    shouldReconnectRef.current = true;
     connect();
+  }, []);
+
+  useEffect(() => {
     return () => {
-      wsRef.current?.close();
+      shouldReconnectRef.current = false;
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      wsRef.current?.close();
+      wsRef.current = null;
     };
   }, []);
 

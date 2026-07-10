@@ -29,9 +29,15 @@ export default defineConfig({
     strictPort: true,
     open: true,
     proxy: {
-      '/api':  { target: 'http://127.0.0.1:11400', changeOrigin: true },
-      '/ws':   { target: 'ws://127.0.0.1:11400',   ws: true },
-      '/chat': { target: 'http://127.0.0.1:11400', changeOrigin: true },
+      '/api':         { target: 'http://127.0.0.1:11400', changeOrigin: true },
+      '/status':      { target: 'http://127.0.0.1:11400', changeOrigin: true },
+      '/thoughts':   { target: 'http://127.0.0.1:11400', changeOrigin: true },
+      '/agent-ws':    {
+        target: 'ws://127.0.0.1:11400',
+        ws: true,
+        rewrite: path => path.replace(/^\/agent-ws/, '/ws'),
+      },
+      '/chat':        { target: 'http://127.0.0.1:11400', changeOrigin: true },
     },
   },
 

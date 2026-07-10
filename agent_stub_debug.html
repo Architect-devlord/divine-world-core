@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Stub — Debug Control Panel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.0/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #080b12; font-family: ui-sans-serif, system-ui; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+    textarea, input { font-family: inherit; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+    const DEFAULT_PORT = 11400;
+    const params = new URLSearchParams(location.search);
+    const port = params.get('port') || location.port || DEFAULT_PORT;
+    const API = 'http://127.0.0.1:' + port + '/debug/api';
+    const WS_URL = 'ws://127.0.0.1:' + port + '/debug/ws';
+
+    const btn = (color, extra = {}) => ({
+      padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 'bold',
+      cursor: 'pointer', background: color + '20', color, border: `1px solid ${color}50`,
+      ...extra,
+    });
+    const card = { background: '#0d1117', border: '1px solid #1e293b', borderRadius: 10, padding: 14 };
+    const label = { fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 };
+
+    function App() {
+      const [connected, setConnected] = useState(false);
+      const [state, setState]         = useState(null);
+      const [pending, setPending]     = useState([]);   // [{req_id, message, speaker_id, timestamp}]
+      const [replyDrafts, setReplyDrafts] = useState({});
+      const [logs, setLogs]           = useState([]);
+      const wsRef = useRef(null);
+
+      const log = useCallback((msg) => {
+        setLogs(l => [...l.slice(-80), `${new Date().toLocaleTimeString()}  ${msg}`]);
+      }, []);
+
+      const refreshState = useCallback(() => {
+        fetch(`${API}/state`).then(r => r.json()).then(setState).catch(() => {});
+      }, []);
+
+      useEffect(() => {
+        refreshState();
+        const t = setInterval(refreshState, 3000);
+        return () => clearInterval(t);
+      }, [refreshState]);
+
+      useEffect(() => {
+        const ws = new WebSocket(WS_URL);
+        ws.onopen  = () => { setConnected(true); log('Connected to stub server'); };
+        ws.onclose = () => { setConnected(false); log('Disconnected — is agent_stub_server.py running?'); };
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'debug_connected') {
+            log(`Stub ready — ${msg.frontend_clients} frontend client(s) currently connected`);
+          } else if (msg.type === 'incoming_chat') {
+            setPending(p => [...p, msg]);
+            log(`💬 Incoming chat (${msg.speaker_id}): "${msg.message}"`);
+          }
+        };
+        wsRef.current = ws;
+        return () => ws.close();
+      }, [log]);
+
+      const sendReply = async (req_id) => {
+        const text = replyDrafts[req_id] || '';
+        if (!text.trim()) return;
+        await fetch(`${API}/reply`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ req_id, text }),
+        });
+        setPending(p => p.filter(m => m.req_id !== req_id));
+        setReplyDrafts(d => { const n = { ...d }; delete n[req_id]; return n; });
+        log(`→ Replied as agent: "${text}"`);
+      };
+
+      const broadcast = async (payload) => {
+        await fetch(`${API}/broadcast`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        log(`📡 Broadcast: ${payload.type}`);
+      };
+
+      const setSettings = async (patch) => {
+        await fetch(`${API}/settings`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        refreshState();
+      };
+
+      const setControllerConfig = async (patch) => {
+        await fetch(`${API}/controller-config`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        refreshState();
+      };
+
+      return (
+        <div style={{ minHeight: '100vh', color: '#e2e8f0', padding: 18, maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <h1 style={{ fontSize: 18, fontWeight: 'bold', margin: 0 }}>🧪 Agent Stub — Debug Control Panel</h1>
+            <span style={{ ...btn(connected ? '#10b981' : '#ef4444'), cursor: 'default' }}>
+              {connected ? '● control channel live' : '○ disconnected'}
+            </span>
+          </div>
+          <p style={{ fontSize: 12, color: '#64748b', marginTop: 0, marginBottom: 16 }}>
+            Not a real agent — no brain, policy, or world model. This panel lets you stand in for one
+            while testing the React frontend (<code>npm run dev</code>, proxied to this stub's port).
+            Frontend clients currently connected: <b>{state?.frontend_clients ?? '…'}</b>
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+
+            {/* ── Chat: reply as the agent ──────────────────────────────── */}
+            <div style={card}>
+              <div style={label}>💬 Chat — reply as the agent</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 10 }}>
+                <input type="checkbox" checked={!!state?.auto_reply}
+                  onChange={e => setSettings({ auto_reply: e.target.checked })} />
+                Auto-reply with canned text instead of waiting for me
+              </label>
+              <input
+                style={{ width: '100%', padding: 6, marginBottom: 10, background: '#0a0e14',
+                         border: '1px solid #1e293b', borderRadius: 6, color: '#e2e8f0', fontSize: 12 }}
+                value={state?.canned_reply || ''}
+                placeholder="Canned reply / timeout fallback text"
+                onChange={e => setSettings({ canned_reply: e.target.value })} />
+
+              {pending.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#334155' }}>No pending chat messages.</div>
+              ) : pending.map(m => (
+                <div key={m.req_id} style={{ marginBottom: 10, padding: 8, background: '#0a0e14', borderRadius: 6 }}>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 5 }}>
+                    <b>{m.speaker_id}</b>: {m.message}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      style={{ flex: 1, padding: 5, background: '#0d1117', border: '1px solid #1e293b',
+                               borderRadius: 5, color: '#e2e8f0', fontSize: 12 }}
+                      placeholder="Type the agent's reply…"
+                      value={replyDrafts[m.req_id] || ''}
+                      onChange={e => setReplyDrafts(d => ({ ...d, [m.req_id]: e.target.value }))}
+                      onKeyDown={e => e.key === 'Enter' && sendReply(m.req_id)} />
+                    <button style={btn('#06b6d4')} onClick={() => sendReply(m.req_id)}>Send</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Controller mode ────────────────────────────────────────── */}
+            <div style={card}>
+              <div style={label}>🎛️ Controller Mode</div>
+              <div style={{ fontSize: 12, marginBottom: 8 }}>
+                Status: <b style={{ color: state?.controller?.running ? '#10b981' : '#64748b' }}>
+                  {state?.controller?.running ? 'active' : 'inactive'}
+                </b>
+                {' · '}permissions: {Object.keys(state?.controller?.enabled_permissions || {}).join(', ') || 'none'}
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 10 }}>
+                <input type="checkbox" checked={!!state?.controller?.fail_next_activate}
+                  onChange={e => setControllerConfig({ fail_next_activate: e.target.checked })} />
+                Make the NEXT "Activate" call fail (test the frontend's error path)
+              </label>
+              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>Fake live stats:</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {['frames_processed','audio_chunks_processed','learning_events','files_processed'].map(k => (
+                  <button key={k} style={btn('#8b5cf6')}
+                    onClick={() => setControllerConfig({ bump: k, by: 1 })}>
+                    +1 {k} ({state?.controller?.stats?.[k] ?? 0})
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* ── Broadcast test WS messages ─────────────────────────────── */}
+            <div style={{ ...card, gridColumn: '1 / -1' }}>
+              <div style={label}>📡 Broadcast to the real frontend (as if the agent produced these)</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button style={btn('#f59e0b')} onClick={() => broadcast({
+                  type: 'agent_thought', internal_thought: 'Testing the thinking indicator…',
+                })}>agent_thought (→ "Thinking" indicator)</button>
+
+                <button style={btn('#f59e0b')} onClick={() => broadcast({
+                  type: 'agent_speech', text: 'This is a test speech bubble.',
+                })}>agent_speech</button>
+
+                <button style={btn('#f59e0b')} onClick={() => broadcast({
+                  type: 'activity_update', activity_type: 'controller', title: 'Test activity event',
+                })}>activity_update</button>
+
+                <button style={btn('#f59e0b')} onClick={() => broadcast({
+                  type: 'world_model_update', data: { note: 'fake world-model tick' },
+                })}>world_model_update</button>
+
+                <button style={btn('#f59e0b')} onClick={() => broadcast({
+                  type: 'visualization_update', data: { note: 'fake visualization payload' },
+                })}>visualization_update</button>
+              </div>
+            </div>
+
+            {/* ── Allowed websites (read-only mirror) ────────────────────── */}
+            <div style={card}>
+              <div style={label}>🌐 Allowed Websites (current)</div>
+              {(state?.allowed_websites || []).length === 0 ? (
+                <div style={{ fontSize: 12, color: '#334155' }}>None set yet — set from the React app's UI.</div>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+                  {state.allowed_websites.map((w, i) => <li key={i}>{w.url || JSON.stringify(w)}</li>)}
+                </ul>
+              )}
+            </div>
+
+            {/* ── Log ─────────────────────────────────────────────────────── */}
+            <div style={{ ...card, maxHeight: 220, overflow: 'auto' }}>
+              <div style={label}>📋 Log</div>
+              {logs.map((l, i) => <div key={i} style={{ fontSize: 11, color: '#64748b' }}>{l}</div>)}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

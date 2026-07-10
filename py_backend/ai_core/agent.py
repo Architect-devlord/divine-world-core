@@ -57,6 +57,7 @@ import time
 import signal
 import logging
 import subprocess
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, Literal, List
 import json
@@ -703,6 +704,15 @@ class NPCAgent:
         self.last_obs     = None
         self.last_action  = None
         self.step_count   = 0
+
+        # Mode 2 (human takeover, training continues): when set, decide()
+        # returns this instead of the policy's own output for exactly one
+        # call, then clears it. Perceive/memory/reward/learning all still
+        # run on whatever action was actually taken -- see decide() below
+        # and start_human_override_listener(). Thread-safe: browser input
+        # arrives on a different task/thread than the agent's own tick loop.
+        self._human_override      = None
+        self._human_override_lock = threading.Lock()
 
         self.client_process = client_process
         self.agent_type     = 'npc'
@@ -1738,6 +1748,87 @@ class NPCAgent:
             )
             log.info(f"[{self.agent_id}] TransformerPolicy initialised (13-dim)")
 
+    def set_human_override(self, action: Optional[np.ndarray]):
+        """
+        Mode 2: give this agent's NEXT decide() call a specific action to
+        return instead of whatever its own policy/PolicyBridge would have
+        produced. Pass None to clear (resume normal autonomous behaviour).
+
+        Nothing else changes: perceive() still runs on the real call site
+        as normal, the resulting action (now the human's) still gets
+        act()/act_god()-decoded into real controls, reward_system.py still
+        scores the real outcome, ContinualLearner still records the real
+        (obs, action, reward) tuple, EmergentSkillPool still clusters it —
+        a human-piloted tick becomes training data for this exact agent
+        identity, not a separate thing bypassing its own learning pipeline.
+        """
+        with self._human_override_lock:
+            self._human_override = None if action is None else np.asarray(action, dtype=np.float32)
+
+    def _consume_human_override(self) -> Optional[np.ndarray]:
+        """One-shot read: returns the pending override (if any) and clears it,
+        so a stale action can't silently keep re-firing if the browser stalls."""
+        with self._human_override_lock:
+            action, self._human_override = self._human_override, None
+        return action
+
+    async def start_human_override_listener(self, port: int):
+        """
+        Mode 2 transport: a small, separate, opt-in WebSocket server a
+        human-controller-style relay can connect to and stream real-time
+        action overrides — deliberately NOT the same WS the Minecraft mod
+        uses (backend_port), so this can never interfere with that
+        connection even if the relay misbehaves. Only one message type:
+        {"type": "action", "moveForward":.., "moveStrafe":.., "jump":bool,
+         "sneak":bool, "attack":bool, "use":bool, "drop":bool,
+         "openInv":bool, "swapHand":bool, "yawDelta":.., "pitchDelta":..,
+         "sprint":bool, "hotbarSlot": int|None} -- the same field names
+         human_controller_server.py's dw_controller.html already sends,
+         so the relay only needs to forward, not re-encode.
+        """
+        import websockets
+
+        dim = 18 if self.god_type else 13
+
+        def _vec_from_msg(msg: dict) -> np.ndarray:
+            v = np.zeros(dim, dtype=np.float32)
+            v[0] = float(msg.get('moveForward', 0.0))
+            v[1] = float(msg.get('moveStrafe', 0.0))
+            v[2] = 1.0 if msg.get('jump')      else -1.0
+            v[3] = 1.0 if msg.get('sneak')     else -1.0
+            v[4] = 1.0 if msg.get('attack')    else -1.0
+            v[5] = 1.0 if msg.get('use')       else -1.0
+            v[6] = 1.0 if msg.get('drop')      else -1.0
+            v[7] = 1.0 if msg.get('openInv')   else -1.0
+            v[8] = 1.0 if msg.get('swapHand')  else -1.0
+            v[9]  = float(msg.get('yawDelta', 0.0))   / 2.0
+            v[10] = float(msg.get('pitchDelta', 0.0)) / 1.2
+            v[11] = 1.0 if msg.get('sprint')   else -1.0
+            slot  = msg.get('hotbarSlot')
+            v[12] = -1.0 if slot is None else (slot / 8.0) * 2.0 - 1.0
+            return v
+
+        async def _handler(ws, *_):
+            log.info(f"[{self.agent_id}] Human-override channel connected "
+                      f"(Mode 2) on port {port}")
+            try:
+                async for raw in ws:
+                    try:
+                        msg = json.loads(raw)
+                    except Exception:
+                        continue
+                    if msg.get('type') == 'action':
+                        self.set_human_override(_vec_from_msg(msg))
+                    elif msg.get('type') == 'release':
+                        self.set_human_override(None)
+            except Exception as e:
+                log.debug(f"[{self.agent_id}] Human-override channel closed: {e}")
+            finally:
+                self.set_human_override(None)   # never leave a stale override on disconnect
+
+        await websockets.serve(_handler, '0.0.0.0', port)
+        log.info(f"[{self.agent_id}] Listening for Mode-2 human override on ws://0.0.0.0:{port}")
+
     def decide(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         """
         Convert a 128-dim observation vector into an action vector.
@@ -1755,7 +1846,19 @@ class NPCAgent:
         _action_worker() in cognitive_loop call this method — making this the
         single correct insertion point: no call site changes needed, and no
         duplication.
+
+        Mode 2 (human takeover, training continues): this is also the single
+        correct insertion point for that, for the same reason. A pending
+        human override (see set_human_override) takes priority over both the
+        learning-mode and normal paths below, is consumed exactly once, and
+        the caller's own perceive() → decide() → act() → reward/memory/
+        learning flow is otherwise untouched — only the source of the
+        action vector changes for that one tick.
         """
+        override = self._consume_human_override()
+        if override is not None:
+            return override
+
         # Learning-mode path: route through PolicyBridge so cl_head actually
         # runs when the N=5 curiosity streak has activated learning mode.
         bridge = getattr(self, 'policy_bridge', None)

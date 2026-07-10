@@ -514,29 +514,50 @@ class MinecraftWebSocketClient:
 
 
 # ==============================================================================
-# Isaac Sim — soft imports (unchanged)
+# Isaac Sim — soft imports with 5.x (isaacsim) first, omni.* fallback for 4.x
 # ==============================================================================
 
+# ArticulationAction availability
+ArticulationAction = None
+_ISAAC_AVAILABLE = False
 try:
     from isaacsim.core.utils.types import ArticulationAction
     _ISAAC_AVAILABLE = True
 except ImportError:
-    ArticulationAction = None
-    _ISAAC_AVAILABLE   = False
+    try:
+        from omni.isaac.core.utils.types import ArticulationAction  # type: ignore
+        _ISAAC_AVAILABLE = True
+    except Exception:
+        ArticulationAction = None
+        _ISAAC_AVAILABLE = False
 
+# DifferentialController (wheeled robots) availability
+DifferentialController = None
+_DIFF_CTRL_AVAILABLE = False
 try:
     from isaacsim.robot.wheeled_robots.controllers.differential_controller import DifferentialController
     _DIFF_CTRL_AVAILABLE = True
 except ImportError:
-    DifferentialController = None
-    _DIFF_CTRL_AVAILABLE   = False
+    try:
+        from omni.isaac.robot.wheeled_robots.controllers.differential_controller import DifferentialController  # type: ignore
+        _DIFF_CTRL_AVAILABLE = True
+    except Exception:
+        DifferentialController = None
+        _DIFF_CTRL_AVAILABLE = False
 
+# Rotation utilities
+rot_utils = None
+_ROT_UTILS_AVAILABLE = False
 try:
     import isaacsim.core.utils.numpy.rotations as rot_utils
     _ROT_UTILS_AVAILABLE = True
 except ImportError:
-    rot_utils            = None
-    _ROT_UTILS_AVAILABLE = False
+    try:
+        import omni.isaac.core.utils.numpy.rotations as rot_utils  # type: ignore
+        _ROT_UTILS_AVAILABLE = True
+    except Exception:
+        rot_utils = None
+        _ROT_UTILS_AVAILABLE = False
 
 _MODE_VELOCITY = "velocity"
 _MODE_POSITION = "position"

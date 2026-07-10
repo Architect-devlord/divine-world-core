@@ -24,7 +24,7 @@ python-multipart>=0.0.6
 python-dotenv>=1.0.0
 pydantic>=2.10.0
 aiofiles>=24.1.0
-opencv-python-headless>=4.11.0
+# opencv-python-headless>=4.11.0
 # Vision/Audio 
 opencv-python>=4.11.0  # Updated for latest Python builds
 pillow>=11.0.0         # Critical for 3.13/3.14 support
@@ -40,7 +40,7 @@ playwright>=1.48.0
 # then use playwright install chromium 
 
 # Optional: GUI
-PyQt5>=5.15.0  # For utils/gui.py
+# PyQt5>=5.15.0  # For utils/gui.py
 
 websockets>=11.0  # Used in unified_chat_system
 pyinstaller>=6.11.0    # Improved support for Python 3.13+ internals
@@ -61,7 +61,10 @@ soundfile>=0.12.1
 lz4>=4.3.2
 python-snappy>=0.6.1
 
-#isaac sim stuff for later
+--extra-index-url https://pypi.nvidia.com
+isaacsim[BUNDLE]==5.1.0
+
+# isaac sim stuff for later
 # only core packages 
 # pip install isaacsim --index-url https://pypi.nvidia.com
 # every thing of isaacsim
@@ -75,25 +78,24 @@ python-snappy>=0.6.1
 # isaacsim isaacsim.exp.compatibility_check
 
 # python 3.11 for isaac sim 5 and python 3.12 for isaac sim 6
-"""
+
 # For scylla in linux do these before running the main.py
 # Check if it's installed
-scylla --version
+# scylla --version
 # If not installed then use
-yay -S scylla-bin
+# yay -S scylla-bin
 
 #Run Scylla's built-in benchmark tool. It will test your disk performance and generate the necessary configuration file (/etc/scylla.d/io.conf).
 
-sudo /usr/lib/scylla/scylla_io_setup
-#Note: This might take a few minutes as it stresses your disk.
+# sudo /usr/lib/scylla/scylla_io_setup
+# Note: This might take a few minutes as it stresses your disk.
 
 # If installed via systemd:
-sudo systemctl start scylla-server
-sudo systemctl status scylla-server
+# sudo systemctl start scylla-server
+# sudo systemctl status scylla-server
 
 # Or via Docker (quickest way to get it running):
-docker run --name scylla -p 9042:9042 -d scylladb/scylla
+# docker run --name scylla -p 9042:9042 -d scylladb/scylla
 
 # Confirm it's listening once started:
-ss -tlnp | grep 9042
-"""
+# ss -tlnp | grep 9042

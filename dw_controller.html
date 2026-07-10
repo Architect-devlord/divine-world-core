@@ -121,6 +121,16 @@
       const [agentType, setAgentType] = useState('npc');
       const [godType,   setGodType]   = useState(null);
 
+      /* Mode 1 — pipeline-test ("dummy") agent creation */
+      const [showCreate,  setShowCreate]  = useState(false);
+      const [createKind,  setCreateKind]  = useState('npc');   // 'npc' | 'god'
+      const [createGender,setCreateGender]= useState('male');
+      const [createGod,   setCreateGod]   = useState('');
+      const [dummyOpts,   setDummyOpts]   = useState({ genders: ['male','female'], god_types: [] });
+
+      /* full inventory grid (not just the 9 hotbar slots) */
+      const [showInv,    setShowInv]    = useState(false);
+
       /* ui */
       const [tab,       setTab]       = useState('mc');
       const [chat,      setChat]      = useState([]);
@@ -271,6 +281,10 @@
           .then(r => r.json())
           .then(d => { setAgents(d); log(`Loaded ${d.length} agent(s) from agents.json`); })
           .catch(() => log('Cannot reach server — is human_controller_server.py running?', 'error'));
+        fetch(`${API_URL}/dummy-options`)
+          .then(r => r.json())
+          .then(setDummyOpts)
+          .catch(() => {});   // non-critical — Create Test Agent panel just falls back to defaults
       }, [log]);
 
       /* keyboard */
@@ -377,6 +391,28 @@
         } catch(e) { log(`Connect failed: ${e.message}`, 'error'); }
       }, [agents, log]);
 
+      /* Mode 1 — create + immediately connect to a fresh, isolated pipeline-
+         test identity (never a real agent's name/ports — see /api/create-dummy). */
+      const createDummy = useCallback(async () => {
+        try {
+          const body = createKind === 'god'
+            ? { kind:'god', god_type: createGod || undefined }
+            : { kind:'npc', gender: createGender };
+          const r = await fetch(`${API_URL}/create-dummy`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) { const e = await r.json(); throw new Error(e.detail || r.statusText); }
+          const d = await r.json();
+          setSelAgent(d);
+          setAgentType(d.type || 'npc');
+          setGodType(d.god_type || null);
+          setShowCreate(false);
+          log(`🧪 Test agent created: ${d.agent} | type: ${d.type}${d.god_type?'/'+d.god_type:''} | tcp:${d.tcp_port} ws:${d.ws_port}`);
+          log('This is an isolated test identity — no real agent is affected.');
+        } catch(e) { log(`Create test agent failed: ${e.message}`, 'error'); }
+      }, [createKind, createGender, createGod, log]);
+
       const sendAbility = useCallback((name, p1=0, p2=0, p3=0) => {
         wsRef.current?.send(JSON.stringify({ type:'ability', name, param1:p1, param2:p2, param3:p3 }));
         log(`→ Ability: ${name}`);
@@ -385,6 +421,14 @@
       const sendScreen = useCallback(cmd => {
         wsRef.current?.send(JSON.stringify({ type:'screen', command:cmd }));
       }, []);
+
+      /* Full inventory (all 46 slots, not just the 9-slot hotbar) — same
+         wire message human_controller_server.py already dispatches to
+         ActionExecutor.executeInventoryAction via inv:slot,button,clickType. */
+      const sendInv = useCallback((slot, button=0, clickType=0) => {
+        wsRef.current?.send(JSON.stringify({ type:'inventory', slot, button, clickType }));
+        log(`→ Inventory: slot ${slot} btn ${button} click ${clickType}`);
+      }, [log]);
 
       const tcpRetry = useCallback(() => {
         fetch(`${API_URL}/tcp-retry`, { method:'POST' });
@@ -471,6 +515,24 @@
               ))}
             </select>
 
+            {/* Mode 1 — pipeline-test identity, deliberately styled apart
+                from the real-agent select above: this never touches a real
+                agent's name or ports (see /api/create-dummy). */}
+            <button
+              style={{ padding:'3px 10px', borderRadius:4, fontSize:10, fontWeight:'bold',
+                       cursor:'pointer', background: showCreate ? '#f59e0b' : '#f59e0b22',
+                       color: showCreate ? '#000' : '#f59e0b', border:'1px dashed #f59e0b80' }}
+              onClick={() => setShowCreate(v => !v)}>
+              🧪 New Test Agent
+            </button>
+
+            {selAgent?.is_dummy && (
+              <span style={{ padding:'2px 9px', borderRadius:9999, fontSize:10, fontWeight:'bold',
+                background:'#f59e0b18', border:'1px solid #f59e0b50', color:'#f59e0b' }}>
+                🧪 TEST AGENT — pipeline check only
+              </span>
+            )}
+
             {godType && (
               <span style={{ padding:'2px 9px', borderRadius:9999, fontSize:10, fontWeight:'bold',
                 background: gc+'18', border:`1px solid ${gc}50`, color: gc }}>
@@ -494,6 +556,58 @@
               ↻
             </button>
           </header>
+
+          {/* ── CREATE TEST AGENT (Mode 1) ────────────────────────────────
+              Deliberately separate from the real-agent <select> above —
+              this always registers a brand-new name via the same
+              AgentNameManager real agents use (fresh, non-colliding port),
+              never claims an existing one. */}
+          {showCreate && (
+            <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap',
+                          padding:'8px 14px', background:'#f59e0b0d',
+                          borderBottom:'1px dashed #f59e0b50' }}>
+              <span style={{ fontSize:11, color:'#f59e0b', fontWeight:'bold' }}>🧪 New Test Agent:</span>
+
+              <select style={S.select} value={createKind} onChange={e => setCreateKind(e.target.value)}>
+                <option value="npc">Normal Agent</option>
+                <option value="god">God</option>
+              </select>
+
+              {createKind === 'npc' ? (
+                <select style={S.select} value={createGender} onChange={e => setCreateGender(e.target.value)}>
+                  {(dummyOpts.genders || ['male','female']).map(g => (
+                    <option key={g} value={g}>{g === 'male' ? '♂ Male' : '♀ Female'}</option>
+                  ))}
+                </select>
+              ) : (
+                <select style={S.select} value={createGod} onChange={e => setCreateGod(e.target.value)}>
+                  <option value="">(random)</option>
+                  {(dummyOpts.god_types || []).map(g => (
+                    <option key={g} value={g}>{GOD_ICN[g] || '✨'} {g}</option>
+                  ))}
+                </select>
+              )}
+
+              <button style={S.btnSm('#f59e0b')} onClick={createDummy}>Create &amp; Connect</button>
+
+              {selAgent?.is_dummy && (
+                <button style={S.btnSm('#ef4444')} onClick={async () => {
+                  try {
+                    await fetch(`${API_URL}/cleanup-dummy`, {
+                      method:'POST', headers:{'Content-Type':'application/json'},
+                      body: JSON.stringify({ name: selAgent.agent, gender: createGender }),
+                    });
+                    log(`🧹 Removed test agent: ${selAgent.agent}`);
+                    setSelAgent(null);
+                  } catch(e) { log(`Cleanup failed: ${e.message}`, 'error'); }
+                }}>🧹 Remove this test agent</button>
+              )}
+
+              <span style={{ fontSize:10, color:'#94a3b8' }}>
+                Registers a fresh name in agents.json — never overrides a real agent.
+              </span>
+            </div>
+          )}
 
           {/* ── TABS ───────────────────────────────────────────────────── */}
           <div style={S.tabBar}>
@@ -566,8 +680,18 @@
 
                 {/* hotbar + sensitivity */}
                 <div style={{ flexShrink:0, padding:'7px 10px', borderBottom:'1px solid #1e293b' }}>
-                  <div style={{ fontSize:9, color:'#334155', textTransform:'uppercase',
-                    letterSpacing:2, marginBottom:5 }}>Hotbar</div>
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                    <div style={{ fontSize:9, color:'#334155', textTransform:'uppercase',
+                      letterSpacing:2, marginBottom:5 }}>Hotbar (quick-select)</div>
+                    <button
+                      style={{ fontSize:9, padding:'2px 8px', borderRadius:4, cursor:'pointer',
+                               background: showInv ? '#06b6d420' : '#0d1117',
+                               border:'1px solid '+(showInv ? '#06b6d4' : '#1e293b'),
+                               color: showInv ? '#06b6d4' : '#64748b' }}
+                      onClick={() => { setShowInv(v => !v); if (!showInv) sendScreen('inv'); else sendScreen('close'); }}>
+                      🎒 Inventory (46) {showInv ? '▲' : '▼'}
+                    </button>
+                  </div>
                   <div style={{ display:'flex', gap:4 }}>
                     {Array.from({length:9},(_,i) => (
                       <button key={i}
@@ -589,6 +713,65 @@
                       onChange={e => setSensi(+e.target.value)}
                       style={{ flex:1, height:3 }} />
                   </div>
+
+                  {/* Full inventory: all 46 slots (0=craft result, 1–4=craft
+                      grid, 5–8=armour, 9–35=main inventory, 36–44=hotbar,
+                      45=offhand — matches ActionExecutor.java exactly), sent
+                      over the existing 'inventory' wire message
+                      (inv:slot,button,clickType) — no server/Java changes
+                      needed, this panel was simply never built before.
+                      Left-click = normal pickup/place, Shift+click =
+                      quick-move, Right-click = the alternate button. */}
+                  {showInv && (() => {
+                    const slotBtn = (slot, label, w=26) => (
+                      <button key={slot} title={`slot ${slot}`}
+                        style={{ width:w, height:26, borderRadius:3, fontSize:9,
+                                 border:'1px solid #1e293b', background:'#0d1117',
+                                 color:'#64748b', cursor:'pointer' }}
+                        onClick={e => sendInv(slot, 0, e.shiftKey ? 1 : 0)}
+                        onContextMenu={e => { e.preventDefault(); sendInv(slot, 1, 0); }}>
+                        {label}
+                      </button>
+                    );
+                    return (
+                      <div style={{ marginTop:10, paddingTop:8, borderTop:'1px dashed #1e293b' }}>
+                        <div style={{ display:'flex', gap:10, marginBottom:6 }}>
+                          <div>
+                            <div style={{ fontSize:8, color:'#334155', marginBottom:3 }}>CRAFT</div>
+                            <div style={{ display:'grid', gridTemplateColumns:'repeat(2,26px)', gap:3 }}>
+                              {[1,2,3,4].map(s => slotBtn(s, s))}
+                            </div>
+                          </div>
+                          <div style={{ display:'flex', alignItems:'center' }}>→</div>
+                          <div>
+                            <div style={{ fontSize:8, color:'#334155', marginBottom:3 }}>RESULT</div>
+                            {slotBtn(0, '★')}
+                          </div>
+                          <div>
+                            <div style={{ fontSize:8, color:'#334155', marginBottom:3 }}>ARMOUR</div>
+                            <div style={{ display:'flex', gap:3 }}>
+                              {[5,6,7,8].map(s => slotBtn(s, ['H','C','L','B'][s-5]))}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize:8, color:'#334155', marginBottom:3 }}>OFFHAND</div>
+                            {slotBtn(45, '✋')}
+                          </div>
+                        </div>
+                        <div style={{ fontSize:8, color:'#334155', marginBottom:3 }}>MAIN INVENTORY (9–35)</div>
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(9,26px)', gap:3, marginBottom:6 }}>
+                          {Array.from({length:27},(_,k) => slotBtn(9+k, k))}
+                        </div>
+                        <div style={{ fontSize:8, color:'#334155', marginBottom:3 }}>HOTBAR (36–44)</div>
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(9,26px)', gap:3 }}>
+                          {Array.from({length:9},(_,k) => slotBtn(36+k, k+1))}
+                        </div>
+                        <div style={{ fontSize:8, color:'#334155', marginTop:6 }}>
+                          Click = pickup/place · Shift+click = quick-move · Right-click = alt button
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* god abilities */}

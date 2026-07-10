@@ -9,6 +9,8 @@
 
 Divine World is a comprehensive world simulation system featuring AI-driven agents, god-tier entities, and deep integration with Minecraft. It bridges the gap between Large Language Models and complex virtual environments, providing agents with a "Mental Matrix" for reasoning and perception.
 
+This version of the DivineWorld and the RPG sversion of the DivineWorld and the robot and base design described in the divine-notes and anything assosciated with DivineWorld all are proprietary.
+
 ## Key Features
 
 - **Autonomous Agents**: Self-driven NPCs with distinct personalities and memory persistence.

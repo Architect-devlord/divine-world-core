@@ -299,6 +299,7 @@ class AgentProcessManager:
         agent_type:      str                   = "npc",
         custom_name:     Optional[str]         = None,
         memory_mb:       int                   = 2048,
+        gender:          Optional[str]         = None,
     ) -> bool:
         if agent_id in self.agent_processes:
             log.warning(f"Agent {agent_id} already running")
@@ -324,7 +325,13 @@ class AgentProcessManager:
                 )
                 server_integration.register_agent(
                     username, agent_uuid, agent_type, custom_name,
-                    gender=locals().get("gender")   # FIX 2: pass caller-supplied gender
+                    # FIX (dead-code fix): this read locals().get("gender"),
+                    # but start_agent_process had no 'gender' parameter at
+                    # all -- always silently None, for every caller, despite
+                    # the "FIX 2" comment implying it worked. Now a real
+                    # parameter; callers that already compute a gender
+                    # locally (e.g. the NPC-spawn endpoints) can pass it.
+                    gender=gender
                 )
 
                 # UltimMC setup is intentionally NOT called here.
@@ -2152,12 +2159,28 @@ async def spawn_god(request: Request):
 
     sx, sy, sz = spawn_pos.get("x", 0), spawn_pos.get("y", 64), spawn_pos.get("z", 0)
 
+    # FIX (spawn_god argument bugs, confirmed by diff against the working
+    # NPC-spawn call site a few hundred lines up, which never had this
+    # problem):
+    #   1. '--memory-mb' isn't a real agent.py argument -- agent.py's
+    #      argparse has no such flag and uses the strict parser.parse_args()
+    #      (not parse_known_args()), so this made every /spawn_god crash the
+    #      subprocess immediately with "unrecognized arguments: --memory-mb
+    #      N", before agent.py's own code ever ran. memory_mb was already a
+    #      real start_agent_process() parameter (used by _auto_package_agent
+    #      for packaging) -- it just wasn't being passed to it; passed as a
+    #      stray CLI flag to the wrong process instead.
+    #   2. '--god-type' was never passed at all, despite agent.py defining
+    #      and expecting exactly that flag (choices=[...six god types]),
+    #      with no default -- so even a spawn that got past bug 1 would
+    #      start every god agent with god_type=None.
     ok = agent_manager.start_agent_process(
         agent_id=agent_id, mode="minecraft", server_addr=server_addr,
+        memory_mb=cfg["memory_mb"],
         additional_args=[
             "--gender", "dual",
+            "--god-type", god_type,
             "--personality", json.dumps(cfg["persona_traits"]),
-            "--memory-mb", str(cfg["memory_mb"]),
             "--spawn-x", str(sx), "--spawn-y", str(sy), "--spawn-z", str(sz),
         ],
         agent_type=f"god_{god_type}", custom_name=display_name,

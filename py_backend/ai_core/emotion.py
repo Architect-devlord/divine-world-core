@@ -3,7 +3,23 @@ import numpy as np
 from typing import Dict
 
 class EmotionSystem:
-    EMOTIONS = ['joy','sadness','anger','fear','trust','surprise','anticipation','disgust']
+    # FIX: obs_builder.py's EMOTION_KEYS list (both the 128-dim live version
+    # and the copy checked here) has required 'frustration' and 'curiosity'
+    # since at least the 128-dim rebuild, with an explicit comment saying
+    # "must match EmotionSystem.snapshot() keys" — but this list never
+    # actually included them. Every .add('frustration', ...) / .add('curiosity', ...)
+    # call site (cognitive_loop.py, skill_tracker.py, self_supervised_trainer.py)
+    # was a silent no-op, guarded by `if emotion in self.emotions`, and every
+    # .snapshot().get('frustration'/'curiosity', default) call always
+    # returned the literal default — meaning these two emotions could never
+    # be written, never be read as anything but 0.0, and (via obs_builder.py's
+    # own emotions.get(key, 0.0) fallback) were never actually perceivable in
+    # the observation vector either, three separate silent failures stacked
+    # on the same root cause. This is not a design decision to revisit —
+    # the surrounding code has always treated both as real, first-class
+    # emotional states; only this list was never updated to match.
+    EMOTIONS = ['joy','sadness','anger','fear','trust','surprise',
+                'anticipation','disgust','frustration','curiosity']
 
     def __init__(self, decay_rate: float = 0.95):
         self.emotions: Dict[str, float] = {e: 0.0 for e in self.EMOTIONS}

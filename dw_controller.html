@@ -353,8 +353,27 @@
             type: 'action',
             moveForward: (k.KeyW?1:0) - (k.KeyS?1:0),
             moveStrafe:  (k.KeyD?1:0) - (k.KeyA?1:0),
-            yawDelta:   m.dx * senRef.current * 0.12,
-            pitchDelta: m.dy * senRef.current * 0.12,
+        // FIX: yawDelta/pitchDelta previously used a bare linear scale
+        // (dx * sensitivity * 0.12). Traced the full pipeline: agent.py's
+        // _vec_from_msg() divides by 2.0/1.2 before act()'s
+        // np.clip(action[:13], -1.0, 1.0) — meaning the OLD linear scale
+        // saturated the clip at only ~8.3px of accumulated mouse movement
+        // (at the default sensitivity of 2.0). Any ordinary deliberate
+        // mouse-look swipe (routinely 50-150px) landed WAY past that
+        // threshold, so a 50px swipe and a 150px swipe produced the
+        // IDENTICAL clipped turn — camera control felt stuck at a fixed,
+        // small turn rate no matter how fast a human actually moved the
+        // mouse. Math.tanh() maps the same raw pixel range onto a smoothly
+        // saturating curve instead: small/precise movements (~10-30px)
+        // stay close to proportional (tanh is ~linear near 0), while large
+        // swipes (100px+) now correctly approach the true maximum turn
+        // rate instead of already having hit an identical ceiling at 8px.
+        // 0.01 is tuned so dx=50 at the default sensitivity (2.0) lands
+        // around tanh(1.0)≈0.76 -- clearly differentiated from both a
+        // gentle 10px nudge (~0.2) and a full 150px swipe (~0.995), rather
+        // than all three being indistinguishable as they were before.
+            yawDelta:   Math.tanh(m.dx * senRef.current * 0.01) * 2.0,
+            pitchDelta: Math.tanh(m.dy * senRef.current * 0.01) * 2.0,
             flags: {
               jump:      !!k.Space,
               sneak:     !!(k.ShiftLeft || k.ShiftRight),

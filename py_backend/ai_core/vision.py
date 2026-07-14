@@ -882,8 +882,19 @@ class VisionAdapter:
                     vis = vf.tensor  # already CHW
                     proprio = vf.to_proprio_vector(dim=32)
                     last_action = getattr(agent, "last_action", None)
-                    action = (last_action if last_action is not None
-                              else np.zeros(11, dtype=np.float32))
+                    if last_action is not None:
+                        # FIX: last_action is 18-dim for god agents (act_god()
+                        # stores the full policy output before its own [:13]
+                        # slice) - truncate to the world model's actual
+                        # action_dim, same reasoning as world_model.py's
+                        # _build_observation_from_context fix (dims 13-17 are
+                        # a discrete ability trigger, not continuous movement).
+                        wm = getattr(agent, "world_model", None)
+                        adim = wm.config.action_dim if wm is not None else 13
+                        action = np.asarray(last_action, dtype=np.float32)[:adim]
+                    else:
+                        # FIX: was 11 — must match TransformerPolicy.BASE_DIM=13
+                        action = np.zeros(13, dtype=np.float32)
                     buf.add_step(
                         vision=vis,
                         proprio=proprio,

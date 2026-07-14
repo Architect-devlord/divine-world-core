@@ -1310,7 +1310,11 @@ class WorldModel(nn.Module):
 
         # FIX: keep next_state_loss as a tensor (zeros_like) so the sum stays
         # in the autograd graph and dtype is consistent.
-        if pred['next_state'] is not None and 'next_state' in targets:
+        # FIX: was `'next_state' in targets`, which checks key presence, not
+        # value presence. train_step() always inserts the key via batch.get()
+        # even when no real target exists, so the old check was always True
+        # and this branch always ran, even against a None target.
+        if pred['next_state'] is not None and targets.get('next_state') is not None:
             next_state_loss = F.mse_loss(pred['next_state'], targets['next_state'])
             losses['next_state'] = next_state_loss.item()
         else:
@@ -1380,6 +1384,16 @@ class WorldModel(nn.Module):
     @classmethod
     def load(cls, path: str, device: Optional[str] = None) -> 'WorldModel':
         """Load model checkpoint"""
+        # FIX: requirements.txt pins torch>=2.5.0 with no upper bound, but
+        # torch 2.6 changed torch.load()'s default weights_only from False
+        # to True, which rejects custom (non-tensor/dict/list) classes
+        # unless explicitly allowlisted - this checkpoint's only such class
+        # is WorldModelConfig itself (model_state_dict/optimizer_state_dict
+        # are plain tensor dicts, loss_history is a plain list, both already
+        # safe). Allowlisting the specific class we wrote and trust, rather
+        # than passing weights_only=False and disabling the check for
+        # anything else that might end up in this file.
+        torch.serialization.add_safe_globals([WorldModelConfig])
         checkpoint = torch.load(path, map_location='cpu')
 
         config = checkpoint['config']
@@ -1486,7 +1500,7 @@ def test_world_model():
         'vision': torch.randn(B, T, 3, 84, 84),
         'audio': torch.randn(B, T, 128),
         'proprio': torch.randn(B, T, 32),
-        'action': torch.randn(B, T, 11),
+        'action': torch.randn(B, T, config.action_dim),  # FIX: was hardcoded 11, drifted from config.action_dim=13
         'reward': torch.randn(B, T, 1),
         'termination': torch.randint(0, 2, (B, T, 1)).float(),
     }
@@ -1503,7 +1517,7 @@ def test_world_model():
     log.info("Testing imagination...")
     initial_obs = {k: v[:, :4, ...] for k, v in batch.items()
                    if k not in ('reward', 'termination')}
-    actions = torch.randn(B, 8, 11)
+    actions = torch.randn(B, 8, config.action_dim)  # FIX: was hardcoded 11, drifted from config.action_dim=13
     imagined = model.imagine(initial_obs, actions, steps=8)
     log.info(f"  Imagined rewards shape: {imagined['rewards'].shape}")
 
@@ -1829,11 +1843,31 @@ def _build_observation_from_context(agent, context: Optional[Dict] = None) -> Di
             ).unsqueeze(0).unsqueeze(0)
 
     if hasattr(agent, 'last_action') and agent.last_action is not None:
+        # FIX: agent.last_action is 18-dim for god agents (act_god() stores
+        # the full policy output in last_action before its own internal
+        # [:13] slice for movement) - action_encoder is Linear(config.
+        # action_dim=13, ...), a fixed continuous-movement space. Truncating
+        # here rather than widening the world model: dims 13-17 are a
+        # discrete ability trigger/index/params, not continuous movement,
+        # and this project's established convention (see the template-
+        # ceiling fixes in brain_core.py/cognitive_loop.py) already treats
+        # symbolic/discrete actions as out-of-band from the continuous,
+        # world-model-relevant action space - this applies that same
+        # decision here rather than inventing a new one. Without this,
+        # every god agent hard-crashed (caught by the broad except in
+        # neural_evaluate() below) on every tick after its first action,
+        # not just cold-start.
+        action_dim = agent.world_model.config.action_dim if hasattr(agent, 'world_model') else 13
+        last_action = np.asarray(agent.last_action)[:action_dim]
         observation['action'] = torch.tensor(
-            agent.last_action, dtype=torch.float32, device=device
+            last_action, dtype=torch.float32, device=device
         ).unsqueeze(0).unsqueeze(0)
     else:
-        observation['action'] = torch.zeros(1, 1, 11, dtype=torch.float32, device=device)
+        # FIX: was hardcoded 11 — silently mismatched agent.world_model's real
+        # action_dim (13), which only surfaced as a swallowed exception in
+        # neural_evaluate()'s broad except below, not a visible crash.
+        action_dim = agent.world_model.config.action_dim if hasattr(agent, 'world_model') else 13
+        observation['action'] = torch.zeros(1, 1, action_dim, dtype=torch.float32, device=device)
 
     return observation
 

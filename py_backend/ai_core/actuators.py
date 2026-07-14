@@ -312,6 +312,11 @@ class ForgeIPCClient:
         FIX Bug 2: hotbar_slot, sprint (in flags bit 0), and god_ability section
         were all missing from the TCP path. All are now included, making this
         frame byte-compatible with MinecraftWebSocketClient._build_frame().
+
+        FIX (chat mapping gap): TCP agents had no way to send chat at all -
+        the WS path already could via send_chat()/FRAME_CHAT, but nothing
+        equivalent existed here. Added a trailing chat_msg section (same
+        2-byte-length-prefix convention as the ability section above it).
         """
         tick = int(time.time() * 1000)
 
@@ -361,6 +366,17 @@ class ForgeIPCClient:
         else:
             ability_section = struct.pack('!H', 0)
 
+        # Chat section (FIX: TCP path had no way to send chat at all - the
+        # WS path already could, via MinecraftWebSocketClient.send_chat()/
+        # FRAME_CHAT). Appended after the ability section, same convention:
+        # 2-byte length prefix, 0 = no chat this frame.
+        chat_msg = action.get('chat_msg') or ''
+        if chat_msg:
+            chat_bytes = chat_msg.encode('utf-8')
+            chat_section = struct.pack('!H', len(chat_bytes)) + chat_bytes
+        else:
+            chat_section = struct.pack('!H', 0)
+
         agent_bytes = agent_id.encode('utf-8')
         try:
             frame = (
@@ -375,7 +391,8 @@ class ForgeIPCClient:
                 ) +
                 struct.pack('!B', flags) +        # FIX Bug 1: 1 byte not 7
                 struct.pack('!B', hotbar_byte) +  # FIX Bug 2
-                ability_section                   # FIX Bug 2
+                ability_section +                 # FIX Bug 2
+                chat_section                      # FIX: chat mapping gap
             )
         except Exception as e:
             log.error("Failed to pack TCP payload: %s", e)

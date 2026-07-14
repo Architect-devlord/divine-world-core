@@ -45,6 +45,7 @@ from typing import Any, Dict, List, Optional
 import psutil
 import uvicorn
 import argparse
+import aiohttp
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -316,6 +317,26 @@ class AgentProcessManager:
 
             if exe_path.exists():
                 cmd = [str(exe_path)]
+                # FIX (backend_port=0 gap): packager.py already bakes
+                # backend_port into this exact agent's own config.json,
+                # written by _create_config() to exe_path.parent - it's
+                # what the packaged executable itself reads on startup.
+                # main.py just never read it back for its own bookkeeping,
+                # so agent_info[agent_id]["backend_port"] silently stayed 0
+                # for every packaged-exe launch (breaking anything that
+                # needs to reach that agent's own server, e.g. chat_heard
+                # forwarding). There's no separate tcp_port in this config
+                # schema - packaged agents appear to only use the WS
+                # transport, so that one legitimately has nothing to read.
+                backend_port = 0
+                try:
+                    config_path = exe_path.parent / "config.json"
+                    if config_path.exists():
+                        with open(config_path) as f:
+                            backend_port = json.load(f).get("backend_port", 0)
+                except Exception as e:
+                    log.warning(f"[PortAlloc] Could not read {agent_id}'s "
+                                f"packaged config.json for backend_port: {e}")
             else:
                 # Resolve display name → username → UUID
                 username = name_manager.resolve_display_name(agent_id, custom_name)
@@ -1967,15 +1988,35 @@ async def handle_breeding_event(request: Request):
 @app.post("/api/agents/chat_heard")
 async def agent_chat_heard(request: Request):
     """
-    HTTP fallback for god agents that overheard proximity chat.
+    Proximity-chat notification hub.
 
-    NPC agents receive chat via their WebSocket (/ws/agent text frame).
-    God agents run a separate LLM brain (LLMOracleBrain) and are not
-    connected via a persistent WebSocket, so ProximityChatHandler on the
-    server mod notifies them via this endpoint instead.
+    FIX: previously called agent_manager.get_chat_queue(), a method that
+    was never defined anywhere — this route 500'd on every single call.
+    It also assumed an in-process asyncio.Queue the "agent's cognitive
+    loop" could drain, which can't work: every agent is its own separate
+    agent.py subprocess (see AgentProcessManager.start_agent_process), so
+    nothing in *this* process's memory is visible to it. The previous
+    docstring's "God agents run a separate LLM brain (LLMOracleBrain)"
+    is also imprecise: LLMOracleBrain is real (DivineWorld's Java side,
+    Ollama-backed), but it's a dialogue-generation layer for Oracle
+    teaching/Q&A, wired alongside the Oracle's normal agent.py process —
+    not a replacement for it. Every god, Oracle included, is an ordinary
+    NPCAgent with god_type set, running the same agent.py/BrainCore
+    pipeline as NPCs for its actual embodied behavior.
 
-    The endpoint injects the message into a per-agent asyncio.Queue that
-    the agent's cognitive loop drains on each cycle.
+    What's actually true (per ProximityChatHandler.java): this endpoint is
+    called, over one static BACKEND_URL, for every AI agent — NPC or god —
+    within PROXIMITY_RADIUS of a chat message. It's the *only* delivery
+    channel god agents have (no client-side chat listener), and a faster
+    supplementary channel for NPCs, who also get the same event slightly
+    later via their own /ws/agent text-frame path. OracleSystem.java reuses
+    this same call for teaching-material delivery, disguised as ordinary
+    chat from speaker "Oracle".
+
+    main.py holds no agent's live state (each agent is its own process
+    with its own backend port) — this route's only real job is to look up
+    hearer_id's port and forward the event to that agent's own
+    /api/perception/chat_heard.
     """
     data      = await request.json()
     hearer_id = data.get("hearer_id")
@@ -1989,12 +2030,27 @@ async def agent_chat_heard(request: Request):
     if info is None:
         return {"status": "ignored", "reason": "agent not running"}
 
-    q = agent_manager.get_chat_queue(hearer_id)
-    if q is not None:
-        try:
-            q.put_nowait({"type": "chat_heard", "speaker": speaker, "message": message})
-        except Exception:
-            pass  # queue full — drop rather than block
+    backend_port = info.get("backend_port")
+    if not backend_port:
+        # Can legitimately be 0/missing for an agent launched from a packaged
+        # executable (start_agent_process's exe_path branch never computes a
+        # local backend_port to store) — nothing to forward to in that case.
+        log.warning(f"[chat_heard] {hearer_id} has no known backend_port, dropping")
+        return {"status": "ignored", "reason": "agent port unknown"}
+
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5)
+        ) as session:
+            async with session.post(
+                f"http://127.0.0.1:{backend_port}/api/perception/chat_heard",
+                json={"speaker": speaker, "message": message},
+            ) as resp:
+                if resp.status != 200:
+                    log.warning(f"[chat_heard] {hearer_id} responded {resp.status}")
+    except Exception as e:
+        log.warning(f"[chat_heard] failed to reach {hearer_id} on port {backend_port}: {e}")
+        return {"status": "ignored", "reason": "agent unreachable"}
 
     log.debug(f"[chat_heard] {hearer_id} overheard {speaker}: {message[:60]}")
     return {"status": "ok", "hearer": hearer_id}

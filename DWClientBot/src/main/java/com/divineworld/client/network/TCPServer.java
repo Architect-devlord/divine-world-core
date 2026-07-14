@@ -159,8 +159,20 @@ public class TCPServer {
             p3 = input.readFloat();
         }
 
+        // Chat section (FIX: chat mapping gap - always present, same
+        // 2-byte-length-prefix convention as the ability section above,
+        // 0 = no chat this frame). Read unconditionally, same as abilityLen.
+        String chatMsg = null;
+        int chatLen = input.readShort() & 0xFFFF;
+        if (chatLen > 0) {
+            byte[] chatBytes = new byte[chatLen];
+            input.readFully(chatBytes);
+            chatMsg = new String(chatBytes, StandardCharsets.UTF_8);
+        }
+
         final String fAbility = ability;
         final float  fP1 = p1, fP2 = p2, fP3 = p3;
+        final String fChatMsg = chatMsg;
 
         // ── Dispatch on main thread ───────────────────────────────────────
         Minecraft.getInstance().execute(() -> {
@@ -168,7 +180,13 @@ public class TCPServer {
             ActionExecutor.executeAction(
                 moveForward, moveStrafe, yawDelta, pitchDelta, actionFlags, hotbarSlot);
 
-            // 2. Special action routing
+            // 2. Chat (independent of the ability/special-action slot below -
+            // an agent can speak on the same frame as any other action)
+            if (fChatMsg != null && !fChatMsg.isEmpty()) {
+                ActionExecutor.executeChatAction(fChatMsg);
+            }
+
+            // 3. Special action routing
             if (fAbility == null || fAbility.isEmpty()) return;
 
             if (fAbility.startsWith("inv:")) {

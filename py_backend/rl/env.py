@@ -18,8 +18,8 @@ class DivineWorldEnv(gym.Env):
     """
     Gymnasium wrapper around NPCAgent.
 
-    Observation: Box(50,) - concatenated state vector
-    Action: Box(11,) - continuous actions
+    Observation: Box(128,) - concatenated state vector (see obs_builder.OBS_DIM)
+    Action: Box(13,) - continuous actions
     """
     metadata = {'render_modes': ['human']}
 

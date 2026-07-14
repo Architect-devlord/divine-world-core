@@ -39,6 +39,38 @@ function MentalMatrixSimulator({ agentId, onSimulationEvent }) {
   useEffect(() => { isRunningRef.current = isRunning;  }, [isRunning]);
   useEffect(() => { timeScaleRef.current = timeScale; }, [timeScale]);
 
+  // Report current sandbox state up to the parent (feeds MentalMatrixModal's
+  // "Dump Buffer" export and its "Telemetry: OK" indicator).
+  // FIX: onSimulationEvent was accepted as a prop but never actually called -
+  // simulationState in the modal stayed permanently null, so Dump Buffer
+  // always exported nothing and the Telemetry indicator never lit up.
+  // Physics (position/velocity) lives in refs, not React state, to avoid a
+  // re-render every animation frame - pulled in here at snapshot time
+  // instead, so this only fires on add/remove/setting changes, not per-frame.
+  useEffect(() => {
+    if (!onSimulationEvent) return;
+    onSimulationEvent({
+      agentId,
+      isRunning,
+      showGrid,
+      timeScale,
+      objectCount: simulatedObjects.length,
+      objects: simulatedObjects.map(o => {
+        const mesh = meshMapRef.current.get(o.id);
+        const phys = physicsRef.current.get(o.id);
+        return {
+          id: o.id,
+          type: o.type,
+          colorHex: o.colorHex,
+          position: mesh ? { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z } : null,
+          velocity: phys ? { ...phys.velocity } : null,
+          mass: phys?.mass ?? null,
+          useGravity: phys?.useGravity ?? null,
+        };
+      }),
+    });
+  }, [simulatedObjects, isRunning, showGrid, timeScale, agentId, onSimulationEvent]);
+
   // ── Camera ─────────────────────────────────────────────────────────────────
   const applyOrbit = useCallback(() => {
     const cam = cameraRef.current;

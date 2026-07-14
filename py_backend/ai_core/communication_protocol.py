@@ -780,6 +780,24 @@ async def run_tcp_action_loop(agent, agent_id: str, loop_hz: float = 20.0):
     is_god = bool(getattr(agent, 'god_type', None) and
                   hasattr(agent, 'god_controls'))
 
+    # FIX (chat mapping gap): _minecraft_send_chat was only ever set inside
+    # handle_agent_websocket() - a pure-TCP-mode agent (WS never connects,
+    # this loop is the real driver) never got it at all, so _broadcast_
+    # speech()'s existing lookup found nothing and speech never reached
+    # in-game chat for such agents. No queue needed here (unlike the WS
+    # path): apply_action() is a synchronous, non-blocking send over an
+    # already-open socket, so this can send immediately.
+    # Guarded with hasattr so a WS-provided version (preferred once
+    # connected) isn't clobbered. NOTE: if WS later disconnects, nothing
+    # currently hands control back to this TCP version - a real, separate
+    # gap this fix doesn't attempt to resolve.
+    if not hasattr(agent, '_minecraft_send_chat'):
+        async def _tcp_send_chat(msg, _agent=agent):
+            _mc = getattr(_agent, 'minecraft_client', None)
+            if _mc is not None:
+                _mc.apply_action({'chat_msg': msg})
+        agent._minecraft_send_chat = _tcp_send_chat
+
     while True:
         try:
             mc = getattr(agent, 'minecraft_client', None)
@@ -799,7 +817,7 @@ async def run_tcp_action_loop(agent, agent_id: str, loop_hz: float = 20.0):
             obs = agent.last_obs
             if obs is None:
                 import numpy as np
-                obs = np.zeros(50, dtype=np.float32)
+                obs = np.zeros(128, dtype=np.float32)  # FIX: was stale 50, OBS_DIM is 128
 
             action_array = agent.decide(obs, deterministic=False)
             if is_god and len(action_array) >= 18:  # FIX B-15: GodTransformerPolicy.TOTAL_DIM = 18

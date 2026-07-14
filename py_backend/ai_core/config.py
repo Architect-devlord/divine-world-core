@@ -174,6 +174,11 @@ class Config:
         'py_backend.packager',
         'py_backend.breeding_system',
         'ai_core.agent_spawner',
+        'py_backend.ai_core.agent_spawner',  # FIX: was missing - this copy isn't
+                                               # read by packager.py (which always
+                                               # uses py_backend/config.py), but kept
+                                               # consistent with that copy so anyone
+                                               # reading this file isn't misled.
         'py_backend.auto_connect_system',
         'py_backend.minecraft_launcher',
         'py_backend.chat_system',

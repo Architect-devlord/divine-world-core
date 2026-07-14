@@ -173,7 +173,13 @@ class Config:
         'py_backend.auto_packager',
         'py_backend.packager',
         'py_backend.breeding_system',
-        'py_backend.agent_spawner',
+        'ai_core.agent_spawner',       # FIX: was 'py_backend.agent_spawner', which
+                                        # names a file that's never existed -
+                                        # agent_spawner.py has always lived inside
+                                        # ai_core/, never directly in py_backend/.
+                                        # Bare form, for when PyInstaller resolves it
+                                        # via the ai_core_path/py_backend_path search
+                                        # roots rather than the repo-root-relative one.
         'py_backend.auto_connect_system',
         'py_backend.minecraft_launcher',
         'py_backend.chat_system',

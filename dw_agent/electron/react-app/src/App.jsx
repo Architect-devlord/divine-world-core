@@ -506,6 +506,8 @@ function App() {
           sendMessage={sendMessage}
           inputText={text}
           setInputText={setText}
+          agentId={agentId}
+          backendUrl={BACKEND_URL}
         />
       ) : (
         <div className="flex h-full w-full p-3 gap-3">

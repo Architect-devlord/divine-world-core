@@ -8,7 +8,7 @@ import MessageBubble from './components/MessageBubble';
  * Displays permissions and warnings before enabling system access.
  * Detects available devices (cameras, microphones).
  */
-export default function ControllerSafety({ onModeChange, messages, sendMessage, inputText, setInputText }) {
+export default function ControllerSafety({ onModeChange, messages, sendMessage, inputText, setInputText, agentId, backendUrl }) {
   const [showDialog, setShowDialog] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [acknowledgedRisks, setAcknowledgedRisks] = useState(false);
@@ -34,7 +34,10 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
     network: true
   });
 
-  const BACKEND_URL = "http://127.0.0.1:11400";
+  const BACKEND_URL = backendUrl;
+  // FIX: was hardcoded "http://127.0.0.1:11400" - silently talked to the
+  // wrong backend for any agent not on port 11400. App.jsx already derives
+  // the real value from its own URL; use that instead of guessing here.
 
   const permissionsList = [
     {
@@ -77,7 +80,7 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
   const detectDevices = async () => {
     setDevicesLoading(true);
     try {
-      const response = await fetch(`${BACKEND_URL}/api/controller/detect-devices?agent_id=demo`);
+      const response = await fetch(`${BACKEND_URL}/api/controller/detect-devices?agent_id=${agentId}`);
       const data = await response.json();
 
       if (data.status === "success") {
@@ -104,7 +107,7 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          agent_id: "demo",
+          agent_id: agentId,
           permissions: enabledPermissions,
           permissionSettings: permissions,
           devices: selectedDevices,
@@ -125,7 +128,7 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
 
   const handleDeactivate = async () => {
     try {
-      await fetch(`${BACKEND_URL}/api/controller/deactivate?agent_id=demo`, { method: 'POST' });
+      await fetch(`${BACKEND_URL}/api/controller/deactivate?agent_id=${agentId}`, { method: 'POST' });
       setControllerActive(false);
     } catch (err) {
       console.error("Failed to deactivate:", err);
@@ -415,7 +418,7 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
         {/* Activity Monitor (when active) */}
         {controllerActive && (
           <div className="mt-8">
-            <ControllerActivityMonitor agentId="demo" />
+            <ControllerActivityMonitor agentId={agentId} backendUrl={backendUrl} />
           </div>
         )}
       </div>
@@ -426,10 +429,12 @@ export default function ControllerSafety({ onModeChange, messages, sendMessage, 
 /**
  * Real-time controller activity monitor
  */
-function ControllerActivityMonitor({ agentId }) {
+function ControllerActivityMonitor({ agentId, backendUrl }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
-  const BACKEND_URL = "http://127.0.0.1:11400";
+  // FIX: was hardcoded "http://127.0.0.1:11400", same issue as the parent
+  // component - now takes the real value as a prop instead.
+  const BACKEND_URL = backendUrl;
 
   useEffect(() => {
     fetchStatus();

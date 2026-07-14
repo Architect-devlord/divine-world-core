@@ -283,4 +283,36 @@ public class ActionExecutor {
                 "[ActionExecutor] Unknown screen command: {}", cmd);
         }
     }
+
+    // =========================================================================
+    // Chat (FIX: chat mapping gap - TCP path had no way to send chat at all)
+    // =========================================================================
+
+    /**
+     * Send a chat message as this client's player.
+     *
+     * Called by TCPServer when a frame's trailing chat section is non-empty.
+     * Mirrors WebSocketManager.handleChatFrame()'s exact approach (same API,
+     * same 256-char truncation) so both transports behave identically -
+     * this class didn't have its own chat handling before, so there was
+     * nothing to keep consistent with until now.
+     *
+     * Uses ClientPacketListener.sendChat() directly rather than opening a
+     * ChatScreen and simulating input: ChatScreen exposes no public way to
+     * set its (protected) input field or submit programmatically, and
+     * Screen.sendMessage() - what a real Enter keypress in ChatScreen calls
+     * internally - just calls this same method, so this is the direct,
+     * robust equivalent rather than reflection into UI internals.
+     */
+    public static void executeChatAction(String message) {
+        if (message == null || message.isEmpty()) return;
+
+        Minecraft mc = Minecraft.getInstance();
+        net.minecraft.client.multiplayer.ClientPacketListener conn = mc.getConnection();
+        if (conn == null) return;
+
+        String trimmed = message.length() > 256 ? message.substring(0, 256) : message;
+        conn.sendChat(trimmed);
+        DWClientMod.LOGGER.info("[TCP] Agent spoke: {}", trimmed);
+    }
 }

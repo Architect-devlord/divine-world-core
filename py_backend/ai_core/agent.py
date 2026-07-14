@@ -248,6 +248,50 @@ async def chat(message: str = Form(...),
     return {"response": response}
 
 
+@app.post("/api/perception/chat_heard")
+async def perception_chat_heard(request: Request):
+    """
+    Deliver an overheard-chat perception event to THIS agent.
+
+    Mirrors communication_protocol.py's _handle_chat_heard() (the WebSocket
+    text-frame path most NPCs receive proximity chat through) so a memory
+    entry looks identical regardless of which channel delivered it.
+
+    This is what main.py's /api/agents/chat_heard forwards to once it has
+    resolved which agent process is the hearer — main.py doesn't hold any
+    agent's live state itself, so it can't call brain.evaluate_event()
+    directly; it has to reach the actual agent.py process over HTTP.
+    It's the only delivery channel god agents have (no client-side chat
+    listener) and a faster supplementary channel for NPCs, who also get
+    the same event a little later via /ws/agent.
+    """
+    if not global_agent:
+        return {"error": "Agent not running"}
+
+    data    = await request.json()
+    speaker = data.get("speaker", "unknown")
+    message = data.get("message", "")
+    if not message:
+        return {"status": "ignored", "reason": "empty message"}
+
+    global_agent.memory.remember({
+        "type":      "chat_heard",
+        "speaker":   speaker,
+        "message":   message,
+        "timestamp": time.time(),
+        "text":      message,
+    }, tags=["chat", "proximity", "heard", "social"])
+
+    event = {
+        "type":    "chat_heard",
+        "tags":    ["social", "speech", "proximity"],
+        "payload": {"speaker": speaker, "message": message},
+    }
+    global_agent.brain.evaluate_event(event)
+
+    return {"status": "ok"}
+
+
 @app.post("/api/agents/{agent_id}/web/allow")
 async def allow_websites(agent_id: str, data: Dict[str, Any]):
     if global_agent and hasattr(global_agent, 'web_browser'):
@@ -349,34 +393,55 @@ async def browser_type_text(request: Request):
 @app.post("/browser/scroll")
 async def browser_scroll(request: Request):
     """
-    Scroll the current page.
-    Body: {"dx": 0, "dy": 500}
+    Scroll a page up or down.
+    Body: {"url": "https://...", "direction": "down", "amount": 600}
+
+    FIX: previously took {dx, dy} and gated the actual scroll behind
+    hasattr(web_browser, "_page") - WebBrowser never sets self._page (every
+    interaction method opens its own local `page`, closed before returning),
+    so that check was always False and this route silently did nothing
+    while still returning {"status": "ok"}. The real scroll() takes
+    (url, direction, amount) and returns an InteractionResult, same shape
+    as click()/type_into() above.
     """
     if not global_agent or not hasattr(global_agent, 'web_browser'):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Browser not attached")
-    data = await request.json()
-    dx   = float(data.get("dx", 0))
-    dy   = float(data.get("dy", 500))
+    data      = await request.json()
+    url       = data.get("url", "")
+    direction = data.get("direction", "down")
+    amount    = int(data.get("amount", 600))
     try:
-        if hasattr(global_agent.web_browser, "_page") and global_agent.web_browser._page:
-            await global_agent.web_browser._page.mouse.wheel(dx, dy)
-        return {"status": "ok"}
+        result = await global_agent.web_browser.scroll(url, direction, amount)
+        return {
+            "status":     "ok" if getattr(result, "success", False) else "error",
+            "message":    getattr(result, "message", ""),
+            "screenshot": getattr(result, "screenshot_b64", None),
+        }
     except Exception as _e:
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=str(_e))
 
 
 @app.get("/browser/screenshot")
-async def browser_screenshot():
-    """Return a JPEG screenshot of the current browser page."""
+async def browser_screenshot(url: str, full_page: bool = False):
+    """
+    Return a base64-encoded PNG screenshot of the given page.
+    Query params: ?url=https://...&full_page=false
+
+    FIX: previously called web_browser.screenshot_jpeg(), a method that
+    doesn't exist anywhere on WebBrowser (the real method is screenshot(),
+    which returns PNG, not JPEG) - every call raised and 500'd. Also never
+    accepted a url at all, though the real method requires one and there's
+    no "current page" concept to fall back on (every interaction method,
+    this one included, opens its own page for the given url).
+    """
     if not global_agent or not hasattr(global_agent, 'web_browser'):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Browser not attached")
     try:
-        jpeg = await global_agent.web_browser.screenshot_jpeg()
-        import base64
-        return {"status": "ok", "screenshot": base64.b64encode(jpeg).decode() if jpeg else None}
+        screenshot_b64 = await global_agent.web_browser.screenshot(url, full_page)
+        return {"status": "ok" if screenshot_b64 else "error", "screenshot": screenshot_b64}
     except Exception as _e:
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=str(_e))

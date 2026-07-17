@@ -1,0 +1,7 @@
+# Test-only dependencies for py_backend/tests/ - deliberately kept out of
+# requirements.txt so packager.py doesn't bundle test tooling into
+# packaged agent executables. Install with:
+#   pip install -r requirements-test.txt -r requirements.txt --break-system-packages
+
+pytest>=8.0.0
+pytest-asyncio>=1.0.0

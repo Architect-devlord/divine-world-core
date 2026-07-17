@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AeroLogic: Robotic Flight & Fleet Engineering Suite</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for real-time physics telemetry -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #0b0f19;
+        }
+
+        .code-block {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Custom scrollbar for professional look */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+
+        .neon-border-indigo {
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+        }
+        .neon-border-emerald {
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.15);
+        }
+    </style>
+</head>
+<body class="h-full text-slate-100 flex flex-col antialiased">
+
+<div class="flex h-full overflow-hidden">
+    <!-- Collapsible/Responsive Left Sidebar -->
+    <aside class="w-72 bg-slate-900 border-r border-slate-800 flex flex-col z-40 shrink-0 hidden md:flex">
+        <!-- Sidebar Header -->
+        <div class="p-6 border-b border-slate-800 flex items-center justify-between">
+            <div>
+                <h1 class="text-lg font-extrabold tracking-tight bg-gradient-to-r from-indigo-400 to-sky-400 bg-clip-text text-transparent">AEROLOGIC</h1>
+                <p class="text-[10px] text-slate-500 font-mono tracking-widest uppercase mt-0.5">Fleet Operations Unit</p>
+            </div>
+            <span class="px-2 py-0.5 text-[9px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded font-mono uppercase">2026.07</span>
+        </div>
+
+        <!-- Sidebar Navigation Groups -->
+        <div class="flex-1 overflow-y-auto px-4 py-6 space-y-7 custom-scroll">
+            <!-- Global Control Hub -->
+            <div class="space-y-1">
+                <h3 class="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Workspace</h3>
+                <button onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 bg-slate-800 text-indigo-400 border-l-4 border-indigo-500">
+                    <span class="text-base">📊</span> System Dashboard
+                </button>
+                <button onclick="switchTab('sandbox')" id="nav-sandbox" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 text-slate-400 hover:bg-slate-800/50 hover:text-slate-100">
+                    <span class="text-base">🛠️</span> Component Sandbox
+                </button>
+            </div>
+
+            <!-- God Agent Fleet -->
+            <div class="space-y-1">
+                <h3 class="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">God Agent Flight & Terrestrial</h3>
+                <button onclick="switchTab('wither')" id="nav-wither" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 text-slate-400 hover:bg-slate-800/50 hover:text-slate-100">
+                    <span class="text-base">💀</span> Wither (Vectored)
+                </button>
+                <button onclick="switchTab('enerdragon')" id="nav-enerdragon" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 text-slate-400 hover:bg-slate-800/50 hover:text-slate-100">
+                    <span class="text-base">🐉</span> EnerDragon (Biomimetic)
+                </button>
+                <button onclick="switchTab('warden')" id="nav-warden" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 text-slate-400 hover:bg-slate-800/50 hover:text-slate-100">
+                    <span class="text-base">🐺</span> Warden (Armored Guardian)
+                </button>
+                <button onclick="switchTab('elder')" id="nav-elder" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 text-slate-400 hover:bg-slate-800/50 hover:text-slate-100">
+                    <span class="text-base">🌊</span> Elder Guardian (Amphibious)
+                </button>
+                <button onclick="switchTab('creaking')" id="nav-creaking" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 text-slate-400 hover:bg-slate-800/50 hover:text-slate-100">
+                    <span class="text-base">👁️</span> Creaking (Scout)
+                </button>
+                <button onclick="switchTab('oracle')" id="nav-oracle" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 text-slate-400 hover:bg-slate-800/50 hover:text-slate-100">
+                    <span class="text-base">📡</span> Oracle (Coordinator)
+                </button>
+            </div>
+
+            <!-- Civilian Fleet -->
+            <div class="space-y-1">
+                <h3 class="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Civilian Fleet</h3>
+                <button onclick="switchTab('normal')" id="nav-normal" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 text-slate-400 hover:bg-slate-800/50 hover:text-slate-100">
+                    <span class="text-base">🤖</span> Normal Agent (Modular)
+                </button>
+            </div>
+
+            <!-- Common Standards -->
+            <div class="space-y-1">
+                <h3 class="px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Standards & Safety</h3>
+                <button onclick="switchTab('standards')" id="nav-standards" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition duration-150 text-slate-400 hover:bg-slate-800/50 hover:text-slate-100">
+                    <span class="text-base">⚠️</span> Operational Safety
+                </button>
+            </div>
+        </div>
+
+        <!-- Sidebar Footer -->
+        <div class="p-4 border-t border-slate-800 bg-slate-950/40">
+            <div class="p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/10 text-center">
+                <p class="text-[10px] font-semibold text-indigo-400 tracking-wider">FLIGHT CAPABILITY</p>
+                <p class="text-xs text-indigo-200 mt-1">15-Min Continuous Thrust Verified</p>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Panel -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-y-auto custom-scroll relative">
+        <!-- Top Navigation (Mobile Toggle & Status Cards) -->
+        <header class="bg-slate-900/80 backdrop-filter backdrop-blur-md border-b border-slate-800 sticky top-0 z-30 px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <!-- Mobile Navigation Button -->
+                <button onclick="toggleMobileNav()" class="md:hidden p-2 text-slate-400 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                </button>
+                <div>
+                    <h2 class="text-lg font-bold text-slate-100" id="current-section-title">Fleet System Overview</h2>
+                    <p class="text-xs text-slate-400 font-mono" id="current-section-subtitle">Real-time telemetrics and structural design files</p>
+                </div>
+            </div>
+
+            <!-- Fast Diagnostic Readouts -->
+            <div class="hidden sm:flex items-center gap-6 font-mono text-xs">
+                <div class="flex items-center gap-2">
+                    <span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span class="text-slate-400">Node Link:</span>
+                    <span class="text-emerald-400 font-bold">ACTIVE</span>
+                </div>
+                <div class="flex items-center gap-2 border-l border-slate-800 pl-6">
+                    <span>Active Templates:</span>
+                    <span class="text-indigo-400 font-bold">7 / 7 Ingested</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Dynamic Mobile Navigation Dropdown -->
+        <div id="mobile-nav" class="hidden md:hidden bg-slate-900 border-b border-slate-800 px-6 py-4 space-y-2">
+            <button onclick="switchTab('dashboard')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">📊 System Dashboard</button>
+            <button onclick="switchTab('sandbox')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">🛠️ Component Sandbox</button>
+            <button onclick="switchTab('wither')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">💀 Wither (Vectored)</button>
+            <button onclick="switchTab('enerdragon')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">🐉 EnerDragon (Biomimetic)</button>
+            <button onclick="switchTab('warden')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">🐺 Warden (Armored)</button>
+            <button onclick="switchTab('elder')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">🌊 Elder Guardian (Amphibious)</button>
+            <button onclick="switchTab('creaking')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">👁️ Creaking (Scout)</button>
+            <button onclick="switchTab('oracle')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">📡 Oracle (Coordinator)</button>
+            <button onclick="switchTab('normal')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">🤖 Normal Agent (Modular)</button>
+            <button onclick="switchTab('standards')" class="w-full text-left py-2 px-3 text-sm text-slate-300 hover:bg-slate-800 rounded">⚠️ Operational Safety</button>
+        </div>
+
+        <!-- Content Body Wrapper -->
+        <div class="flex-1 p-6 lg:p-8 space-y-12 max-w-7xl w-full mx-auto">
+
+            <!-- VIEW: SYSTEM DASHBOARD -->
+            <section id="view-dashboard" class="space-y-8 animate-fade-in">
+                <!-- Dashboard Welcome Banner -->
+                <div class="p-6 md:p-8 rounded-3xl bg-gradient-to-br from-indigo-900/40 to-slate-900 border border-indigo-500/10 neon-border-indigo flex flex-col md:flex-row md:items-center justify-between gap-6">
+                    <div class="space-y-2 max-w-xl">
+                        <span class="px-2.5 py-1 text-xs bg-indigo-500/10 text-indigo-400 font-mono border border-indigo-500/20 rounded-full font-bold uppercase tracking-wider">AeroLogic Fleet Engineering Suite</span>
+                        <h3 class="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-100">Unified God Agent Architecture</h3>
+                        <p class="text-sm text-slate-400 leading-relaxed">
+                            Interfacing directly with deep telemetry configurations for all 7 active Robotic Agents. Access, customize, and prototype custom material bounds, verify flight efficiency thresholds, and generate deployable, physics-aligned firmware controllers.
+                        </p>
+                    </div>
+                    <button onclick="switchTab('sandbox')" class="px-6 py-3 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white rounded-xl text-sm font-semibold shadow-lg transition duration-150 shrink-0">
+                        Launch Sandbox Simulator &rarr;
+                    </button>
+                </div>
+
+                <!-- Fast Fleet Health Stats Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-1">
+                        <span class="text-[10px] text-slate-400 font-mono uppercase tracking-wider font-bold">Wither Flight Readiness</span>
+                        <div class="flex items-end justify-between">
+                            <span class="text-2xl font-bold font-mono text-indigo-400">18.4 min</span>
+                            <span class="text-xs text-emerald-400">✓ Meets Threshold</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-1">
+                        <span class="text-[10px] text-slate-400 font-mono uppercase tracking-wider font-bold">EnerDragon Flame Balance</span>
+                        <div class="flex items-end justify-between">
+                            <span class="text-2xl font-bold font-mono text-indigo-400">0.45 L/min</span>
+                            <span class="text-xs text-emerald-400">✓ Isolated Safe</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-1">
+                        <span class="text-[10px] text-slate-400 font-mono uppercase tracking-wider font-bold">Warden Ruggedness Rating</span>
+                        <div class="flex items-end justify-between">
+                            <span class="text-2xl font-bold font-mono text-indigo-400">92 / 100</span>
+                            <span class="text-xs text-emerald-400">✓ Heavy Impact OK</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 space-y-1">
+                        <span class="text-[10px] text-slate-400 font-mono uppercase tracking-wider font-bold">Oracle Hub Capacity</span>
+                        <div class="flex items-end justify-between">
+                            <span class="text-2xl font-bold font-mono text-indigo-400">40 TOPS</span>
+                            <span class="text-xs text-emerald-400">✓ Local LLM Ready</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Structured Agent Index Grid (Cards leading to detailed panels) -->
+                <div class="space-y-4">
+                    <h3 class="text-lg font-bold tracking-tight text-slate-200">Active God & Civilian Platforms</h3>
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- Wither -->
+                        <div class="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800 hover:border-indigo-500/20 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition duration-150">
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <span class="p-2.5 bg-indigo-500/10 text-indigo-400 rounded-lg text-lg">💀</span>
+                                    <span class="px-2 py-0.5 text-[9px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded font-mono font-bold uppercase">Flight: Vectored</span>
+                                </div>
+                                <h4 class="text-lg font-bold text-slate-100 mt-4">Wither Robot</h4>
+                                <p class="text-sm text-slate-400 mt-2 leading-relaxed">Vertical T-frame counter-rotating dual gimbals resolving pendulum destabilization at its rotational axis intersection.</p>
+                            </div>
+                            <button onclick="switchTab('wither')" class="w-full text-center py-2 bg-slate-800 hover:bg-indigo-600 hover:text-white rounded-xl text-xs font-semibold text-indigo-300 transition duration-150">View Build & Code</button>
+                        </div>
+                        <!-- EnerDragon -->
+                        <div class="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800 hover:border-indigo-500/20 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition duration-150">
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <span class="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-lg text-lg">🐉</span>
+                                    <span class="px-2 py-0.5 text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded font-mono font-bold uppercase">Flight: Biomimetic</span>
+                                </div>
+                                <h4 class="text-lg font-bold text-slate-100 mt-4">EnerDragon</h4>
+                                <p class="text-sm text-slate-400 mt-2 leading-relaxed">Ornithopter mechanism backed by secondary lift propeller and safe H2 water electrolysis fire-breathing loop.</p>
+                            </div>
+                            <button onclick="switchTab('enerdragon')" class="w-full text-center py-2 bg-slate-800 hover:bg-emerald-600 hover:text-white rounded-xl text-xs font-semibold text-emerald-300 transition duration-150">View Build & Code</button>
+                        </div>
+                        <!-- Warden -->
+                        <div class="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800 hover:border-indigo-500/20 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition duration-150">
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <span class="p-2.5 bg-rose-500/10 text-rose-400 rounded-lg text-lg">🐺</span>
+                                    <span class="px-2 py-0.5 text-[9px] bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded font-mono font-bold uppercase">Heavy Terrestrial</span>
+                                </div>
+                                <h4 class="text-lg font-bold text-slate-100 mt-4">Warden Robot</h4>
+                                <p class="text-sm text-slate-400 mt-2 leading-relaxed">Armored terrestrial behemoth utilizing ultrasonic echolocation array to traverse highly jagged debris fields.</p>
+                            </div>
+                            <button onclick="switchTab('warden')" class="w-full text-center py-2 bg-slate-800 hover:bg-rose-600 hover:text-white rounded-xl text-xs font-semibold text-rose-300 transition duration-150">View Build & Code</button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                        <!-- Elder Guardian -->
+                        <div class="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800 hover:border-indigo-500/20 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition duration-150">
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <span class="p-2.5 bg-sky-500/10 text-sky-400 rounded-lg text-lg">🌊</span>
+                                    <span class="px-2 py-0.5 text-[9px] bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded font-mono font-bold uppercase">Amphibious ROV</span>
+                                </div>
+                                <h4 class="text-lg font-bold text-slate-100 mt-4">Elder Guardian</h4>
+                                <p class="text-xs text-slate-400 mt-2 leading-relaxed">Robust marine-gasket quad hull bridging aquatic thrusters with terrestrial walking profiles.</p>
+                            </div>
+                            <button onclick="switchTab('elder')" class="w-full text-center py-2 bg-slate-800 hover:bg-sky-600 hover:text-white rounded-xl text-xs font-semibold text-sky-300 transition duration-150">View Build & Code</button>
+                        </div>
+                        <!-- Creaking -->
+                        <div class="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800 hover:border-indigo-500/20 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition duration-150">
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <span class="p-2.5 bg-amber-500/10 text-amber-400 rounded-lg text-lg">👁️</span>
+                                    <span class="px-2 py-0.5 text-[9px] bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded font-mono font-bold uppercase">Scouting / Climber</span>
+                                </div>
+                                <h4 class="text-lg font-bold text-slate-100 mt-4">Creaking Robot</h4>
+                                <p class="text-xs text-slate-400 mt-2 leading-relaxed">Multi-spectrum visual (RGB + IR + Thermal) lightweight climber with active gecko-dry adhesive grip plates.</p>
+                            </div>
+                            <button onclick="switchTab('creaking')" class="w-full text-center py-2 bg-slate-800 hover:bg-amber-600 hover:text-white rounded-xl text-xs font-semibold text-amber-300 transition duration-150">View Build & Code</button>
+                        </div>
+                        <!-- Oracle -->
+                        <div class="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800 hover:border-indigo-500/20 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition duration-150">
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <span class="p-2.5 bg-indigo-500/10 text-indigo-400 rounded-lg text-lg">📡</span>
+                                    <span class="px-2 py-0.5 text-[9px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded font-mono font-bold uppercase">Communications Node</span>
+                                </div>
+                                <h4 class="text-lg font-bold text-slate-100 mt-4">Oracle Robot</h4>
+                                <p class="text-xs text-slate-400 mt-2 leading-relaxed">Mesh infrastructure coordinating fleet data packets via antenna-staff and dedicated local LLM.</p>
+                            </div>
+                            <button onclick="switchTab('oracle')" class="w-full text-center py-2 bg-slate-800 hover:bg-indigo-600 hover:text-white rounded-xl text-xs font-semibold text-indigo-300 transition duration-150">View Build & Code</button>
+                        </div>
+                        <!-- Normal Agent -->
+                        <div class="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800 hover:border-indigo-500/20 rounded-2xl p-6 flex flex-col justify-between space-y-6 transition duration-150">
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <span class="p-2.5 bg-slate-500/10 text-slate-400 rounded-lg text-lg">🤖</span>
+                                    <span class="px-2 py-0.5 text-[9px] bg-slate-500/10 text-slate-400 border border-slate-500/20 rounded font-mono font-bold uppercase">Modular Civilian</span>
+                                </div>
+                                <h4 class="text-lg font-bold text-slate-100 mt-4">Normal Agent</h4>
+                                <p class="text-xs text-slate-400 mt-2 leading-relaxed">Mass-producible bipedal agent utilizing LEGO-compatible end effectors for physical deployment.</p>
+                            </div>
+                            <button onclick="switchTab('normal')" class="w-full text-center py-2 bg-slate-800 hover:bg-slate-600 hover:text-white rounded-xl text-xs font-semibold text-slate-300 transition duration-150">View Build & Code</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: FLEET SANDBOX / COMPONENT CONFIGURATOR -->
+            <section id="view-sandbox" class="hidden space-y-8 animate-fade-in">
+                <!-- Sandbox Introduction and Selection Panel -->
+                <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 space-y-6">
+                    <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 pb-6 border-b border-slate-800">
+                        <div class="space-y-1">
+                            <h3 class="text-xl font-bold tracking-tight text-slate-100">Component & Material Prototyper</h3>
+                            <p class="text-sm text-slate-400">Swap structural components dynamically to stress-test weights, costs, and battery curves.</p>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <label class="text-sm font-semibold text-slate-300 font-mono">TARGET ROBOT:</label>
+                            <select id="sandbox-robot-select" onchange="runSandboxCalculations()" class="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-sm text-slate-200 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <option value="wither">Wither Robot (Vectored Flyer)</option>
+                                <option value="enerdragon">EnerDragon (Biomimetic Flyer)</option>
+                                <option value="warden">Warden Robot (Heavy Terrestrial)</option>
+                                <option value="elder">Elder Guardian (Amphibious ROV)</option>
+                                <option value="creaking">Creaking Robot (Thin Scout)</option>
+                                <option value="oracle">Oracle Robot (Fleet Coordinator)</option>
+                                <option value="normal">Normal Agent (Modular Civilian)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Simulator Columns -->
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        <!-- Left Controls: Dynamic Selections -->
+                        <div class="lg:col-span-5 space-y-6">
+                            <!-- Chassis Material Selection -->
+                            <div class="bg-slate-950/40 p-4 border border-slate-800/80 rounded-2xl space-y-3">
+                                <label class="text-xs font-bold text-slate-400 uppercase tracking-wider block font-mono">1. Core Chassis Material</label>
+                                <select id="sandbox-material" onchange="runSandboxCalculations()" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold">
+                                    <option value="carbon_fiber">Carbon-Fiber weave (Ultra Light / Rigid)</option>
+                                    <option value="aluminum">7075-T6 Aircraft Aluminum (Moderate / Heavy)</option>
+                                    <option value="polycarbonate">Optically Clear Polycarbonate (Shatter-Resistant)</option>
+                                    <option value="petg">3D-Printed Carbon-PETG (Low cost / Custom)</option>
+                                    <option value="steel">Cast Steel Armor (Warden Spec / Extremely Heavy)</option>
+                                </select>
+                            </div>
+
+                            <!-- Battery Chemistry Selection -->
+                            <div class="bg-slate-950/40 p-4 border border-slate-800/80 rounded-2xl space-y-3">
+                                <label class="text-xs font-bold text-slate-400 uppercase tracking-wider block font-mono">2. Battery Chemistry Matrix</label>
+                                <select id="sandbox-battery" onchange="runSandboxCalculations()" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold">
+                                    <option value="lipo">High-Discharge LiPo (High discharge rate - flyer optimized)</option>
+                                    <option value="liion">High-Density Li-Ion (Max endurance - ground optimized)</option>
+                                    <option value="solid_state">Solid-State Battery (Experimental / Ultra High Density)</option>
+                                    <option value="nimh">Heavy Duty Rugged NiMH (Non-flammable / Submersible safe)</option>
+                                </select>
+                            </div>
+
+                            <!-- Compute Engine Selection -->
+                            <div class="bg-slate-950/40 p-4 border border-slate-800/80 rounded-2xl space-y-3">
+                                <label class="text-xs font-bold text-slate-400 uppercase tracking-wider block font-mono">3. Onboard Brain / Compute Module</label>
+                                <select id="sandbox-compute" onchange="runSandboxCalculations()" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold">
+                                    <option value="pi5">Raspberry Pi 5 8GB (Baseline / 12W)</option>
+                                    <option value="pi5_hailo">Raspberry Pi 5 + Hailo AI HAT (13 TOPS / 16W)</option>
+                                    <option value="pi5_hailo10">Raspberry Pi 5 + Hailo-10H Accelerator (40 TOPS / 20W)</option>
+                                    <option value="pizero">Raspberry Pi Zero 2 W (Flight mass weight limit / 3W)</option>
+                                    <option value="orangepi">Orange Pi 5 (8-Core CPU + 6 TOPS NPU / 10W)</option>
+                                </select>
+                            </div>
+
+                            <!-- Actuator Class Selection -->
+                            <div class="bg-slate-950/40 p-4 border border-slate-800/80 rounded-2xl space-y-3">
+                                <label class="text-xs font-bold text-slate-400 uppercase tracking-wider block font-mono">4. Joint Actuators & Motors</label>
+                                <select id="sandbox-actuator" onchange="runSandboxCalculations()" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold">
+                                    <option value="coreless">Coreless Micro Servos (Low torque / Medium load)</option>
+                                    <option value="metal_gear">Metal Gear High-Torque Servos (1.5kg-cm+ verified)</option>
+                                    <option value="brushless_bldc">FOC BLDC Outrunner Motors (Highly efficient / Premium)</option>
+                                    <option value="hermetic">Hermetically Sealed Heavy Marine Actuators (Seals rated)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Right Outputs: Active Physics Readouts -->
+                        <div class="lg:col-span-7 bg-slate-950 p-6 rounded-2xl border border-slate-800 flex flex-col justify-between space-y-6">
+                            <div>
+                                <h4 class="text-xs font-bold font-mono tracking-widest text-slate-500 uppercase">Interactive Physics Metrics</h4>
+
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+                                    <!-- Total Weight Card -->
+                                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-xl text-center space-y-1">
+                                        <span class="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Total Weight</span>
+                                        <p id="sb-weight-val" class="text-lg font-bold font-mono text-indigo-400">1200g</p>
+                                    </div>
+                                    <!-- Operating Time Card -->
+                                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-xl text-center space-y-1">
+                                        <span class="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Est. Duration</span>
+                                        <p id="sb-duration-val" class="text-lg font-bold font-mono text-emerald-400">18.5 min</p>
+                                    </div>
+                                    <!-- Structural Integrity Card -->
+                                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-xl text-center space-y-1">
+                                        <span class="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Ruggedness Index</span>
+                                        <p id="sb-rugged-val" class="text-lg font-bold font-mono text-sky-400">85 / 100</p>
+                                    </div>
+                                    <!-- Estimated Cost Card -->
+                                    <div class="p-4 bg-slate-900 border border-slate-800 rounded-xl text-center space-y-1">
+                                        <span class="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Assembly Cost</span>
+                                        <p id="sb-cost-val" class="text-lg font-bold font-mono text-amber-400">$640</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Real-time discharge curve visualization -->
+                            <div class="h-44 border border-slate-800 bg-slate-900/40 rounded-xl p-3 flex flex-col justify-between relative">
+                                <span class="text-[10px] text-slate-500 font-mono uppercase block absolute top-2 left-3">Discharge Potential Over Time</span>
+                                <div class="w-full h-full pt-6">
+                                    <canvas id="sandboxChart"></canvas>
+                                </div>
+                            </div>
+
+                            <!-- Physical Diagnostic Warnings -->
+                            <div id="sb-warning-box" class="p-4 rounded-xl border flex items-center gap-3">
+                                <span id="sb-warning-icon" class="text-xl"></span>
+                                <div class="space-y-0.5">
+                                    <p id="sb-warning-title" class="text-xs font-bold font-mono uppercase tracking-wider"></p>
+                                    <p id="sb-warning-desc" class="text-xs text-slate-400"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: WITHER ROBOT -->
+            <section id="view-wither" class="hidden space-y-10 animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold tracking-tight text-slate-100">Wither Vectored Platform</h2>
+                        <p class="text-sm text-slate-400">Vertical T-Shape counter-rotating stabilization gimbals</p>
+                    </div>
+                    <span class="px-3 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full text-xs font-mono font-bold uppercase">STABILITY CLASS A</span>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Physical Specifications Panel -->
+                    <div class="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+                        <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Chassis Mechanics</h3>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            The Wither addresses the pendulum effect by placing its heaviest structural components (batteries, processor, and gimbals) directly at the vertical T-junction axis. By concentrating the mass at the center of rotation, the inertia of the vehicle stays unified, letting the dual arm-mounted servo-gimbals redirect thrust almost instantly.
+                        </p>
+                        <div class="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                            <span class="text-xs font-bold text-indigo-400 block font-mono">RECOMMENDED HARDWARE:</span>
+                            <ul class="text-xs text-slate-400 space-y-2">
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Central Thrust Motor:</span> <strong class="text-slate-200">Sunnysky V2216 800KV</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Gimbal Servos:</span> <strong class="text-slate-200">KST DS1509MG 1.5kg-cm+</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Chassis Gussets:</span> <strong class="text-slate-200">2mm Carbon Fiber Gussets</strong></li>
+                                <li class="flex justify-between"><span>Compute Node:</span> <strong class="text-slate-200">Raspberry Pi 5 (Option 1)</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Onboard Firmware Studio -->
+                    <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col">
+                        <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+                            <div>
+                                <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Onboard Firmware Studio</h3>
+                                <p class="text-xs text-slate-500 font-mono">vectored_thrust_gimbal.py</p>
+                            </div>
+                            <span class="px-2 py-0.5 text-[10px] bg-indigo-500/10 text-indigo-400 rounded font-mono font-bold">PYTHON 3</span>
+                        </div>
+                        <div class="mt-4 flex-1 bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto code-block text-xs text-indigo-200/90 leading-relaxed relative max-h-[400px]">
+                            <pre><code>import time
+import math
+
+class WitherStabilizationController:
+    def __init__(self, target_roll=0.0, target_pitch=0.0):
+        self.Kp_gimbal = 1.25
+        self.Kd_gimbal = 0.45
+        self.prev_roll_err = 0.0
+        self.prev_pitch_err = 0.0
+        self.last_timestamp = time.time()
+
+    def calculate_gimbal_actuation(self, imu_roll, imu_pitch, imu_gyro_x, imu_gyro_y):
+        """
+        Dynamically adjusts the 2-axis gimbal tilt angles to offset the pendulum
+        destabilization effect. Symmetrical dual arm motors compensate for thrust vectors.
+        """
+        now = time.time()
+        dt = max(now - self.last_timestamp, 0.001)
+        self.last_timestamp = now
+
+        # Compute error states against horizontal axis
+        roll_err = 0.0 - imu_roll
+        pitch_err = 0.0 - imu_pitch
+
+        # Gimbal PID servo correction
+        roll_correction = (roll_err * self.Kp_gimbal) + (imu_gyro_x * self.Kd_gimbal)
+        pitch_correction = (pitch_err * self.Kp_gimbal) + (imu_gyro_y * self.Kd_gimbal)
+
+        # Map to physical servo angles (within hardware bounds +/- 35 degrees)
+        left_servo_deg = max(min(1500 + int(roll_correction * 10), 1850), 1150)
+        right_servo_deg = max(min(1500 - int(roll_correction * 10), 1850), 1150)
+
+        return left_servo_deg, right_servo_deg</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: ENERDRAGON ROBOT -->
+            <section id="view-enerdragon" class="hidden space-y-10 animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold tracking-tight text-slate-100">EnerDragon Biomimetic Platform</h2>
+                        <p class="text-sm text-slate-400">Flapping ornithopter with isolated H2 hydrogen flame-breathing logic</p>
+                    </div>
+                    <span class="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-mono font-bold uppercase">FLIGHT CLASS S</span>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Physical Specifications Panel -->
+                    <div class="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+                        <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Dual-Battery Architecture</h3>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            The EnerDragon features strict fluid-compute separation. Battery A powers flight operations, whilst Battery B drives the isolated wet-zone electrolysis cell. H2 gas is generated at a rate of 0.45 L/min and is pumped via silicone tubing to a mouth-mounted spark plug terminal.
+                        </p>
+                        <div class="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                            <span class="text-xs font-bold text-emerald-400 block font-mono">RECOMMENDED HARDWARE:</span>
+                            <ul class="text-xs text-slate-400 space-y-2">
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Electrolysis Valve:</span> <strong class="text-slate-200">12V Micro Solenoid</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Ignition Coil:</span> <strong class="text-slate-200">Standard Hobby Spark Igniter</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Compute Board:</span> <strong class="text-slate-200">Raspberry Pi Zero 2 W</strong></li>
+                                <li class="flex justify-between"><span>Primary Wing Servo:</span> <strong class="text-slate-200">Corona CS238MG (Metal-Gear)</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Onboard Firmware Studio -->
+                    <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col">
+                        <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+                            <div>
+                                <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Onboard Firmware Studio</h3>
+                                <p class="text-xs text-slate-500 font-mono">flame_breath_controller.py</p>
+                            </div>
+                            <span class="px-2 py-0.5 text-[10px] bg-emerald-500/10 text-emerald-400 rounded font-mono font-bold">PYTHON 3</span>
+                        </div>
+                        <div class="mt-4 flex-1 bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto code-block text-xs text-emerald-200/90 leading-relaxed relative max-h-[400px]">
+                            <pre><code>import time
+
+class EnerDragonFlameBreather:
+    def __init__(self, valve_pin=18, spark_pin=23, leak_sensor_pin=24):
+        self.valve_pin = valve_pin
+        self.spark_pin = spark_pin
+        self.leak_sensor_pin = leak_sensor_pin
+        self.electrolysis_active = False
+
+    def check_wet_zone_safety(self, humidity_analog_val):
+        """
+        Validates that no water or raw H2 has bridged the physical gasket barrier
+        into the Raspberry Pi dry-zone compartment.
+        """
+        if humidity_analog_val > 450: # Threshold for moisture presence
+            print("WET ZONE SEAL BREACH DETECTED! Emergency lockdown active.")
+            self.lockdown_systems()
+            return False
+        return True
+
+    def trigger_flame_burst(self, duration_sec=3.0):
+        """
+        Executes a safe sequence of flame discharge. Pumps H2 gas and initiates
+        the high-frequency spark plug arc dynamically.
+        """
+        print("Engaging H2 transport valve...")
+        # Open H2 valve, wait 0.2s for head pressure to drop, then ignite
+        time.sleep(0.2)
+        print("Arcing spark plug coil...")
+        time.sleep(duration_sec)
+        self.lockdown_systems()
+
+    def lockdown_systems(self):
+        self.electrolysis_active = False
+        print("All H2 generation and ignition nodes deactivated.")</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: WARDEN ROBOT -->
+            <section id="view-warden" class="hidden space-y-10 animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold tracking-tight text-slate-100">Warden Armored Guardian</h2>
+                        <p class="text-sm text-slate-400">High-inertia terrestrial platform utilizing ultrasonic active echolocation</p>
+                    </div>
+                    <span class="px-3 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-full text-xs font-mono font-bold uppercase">DURABILITY CLASS S+</span>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Physical Specifications Panel -->
+                    <div class="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+                        <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Heavy-duty Chassis</h3>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            Formed by double-material protective sheets (hard polycarbonate outer layer, cushioning EVA inner foam), the Warden acts as the ultimate durability target. To assist navigation in full dust, haze or darkness, it uses a directional ultrasonic microphone array for complete environmental mapping.
+                        </p>
+                        <div class="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                            <span class="text-xs font-bold text-rose-400 block font-mono">RECOMMENDED HARDWARE:</span>
+                            <ul class="text-xs text-slate-400 space-y-2">
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Ultrasonic Emitter:</span> <strong class="text-slate-200">US-100 Transducer</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Receiving Array:</span> <strong class="text-slate-200">Dual SPH0645 MEMS Mics</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Chassis Armor:</span> <strong class="text-slate-200">5mm Polycarbonate Plates</strong></li>
+                                <li class="flex justify-between"><span>Joint Actuators:</span> <strong class="text-slate-200">Dynamixel XM430-W350-T</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Onboard Firmware Studio -->
+                    <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col">
+                        <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+                            <div>
+                                <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Onboard Firmware Studio</h3>
+                                <p class="text-xs text-slate-500 font-mono">echolocation_triangulation.py</p>
+                            </div>
+                            <span class="px-2 py-0.5 text-[10px] bg-rose-500/10 text-rose-400 rounded font-mono font-bold">PYTHON 3</span>
+                        </div>
+                        <div class="mt-4 flex-1 bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto code-block text-xs text-rose-200/90 leading-relaxed relative max-h-[400px]">
+                            <pre><code>import time
+
+class WardenEcholocationArray:
+    def __init__(self, mic_spacing_meters=0.15):
+        self.sound_speed_mps = 343.0
+        self.mic_spacing = mic_spacing_meters
+
+    def process_ultrasonic_echo(self, left_mic_arrival, right_mic_arrival):
+        """
+        Performs Time-Difference-Of-Arrival (TDOA) calculations over the MEMS array
+        to determine distance and precise angle of obstacles ahead.
+        """
+        # Time difference in seconds
+        tdoa = abs(left_mic_arrival - right_mic_arrival)
+
+        if tdoa > (self.mic_spacing / self.sound_speed_mps):
+            # Physical impossibility filter due to noise spikes
+            return None, None
+
+        # Triangulate heading angle (theta) from perpendicular plane
+        angle_rad = math.asin((self.sound_speed_mps * tdoa) / self.mic_spacing)
+        heading_deg = math.degrees(angle_rad)
+
+        # Average distance estimation
+        avg_time = (left_mic_arrival + right_mic_arrival) / 2.0
+        distance_meters = (avg_time * self.sound_speed_mps) / 2.0
+
+        return distance_meters, heading_deg</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: ELDER GUARDIAN ROBOT -->
+            <section id="view-elder" class="hidden space-y-10 animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold tracking-tight text-slate-100">Elder Guardian Amphibious ROV</h2>
+                        <p class="text-sm text-slate-400">Quad-legged walker bridging marine thrusters with terrestrial locomotion</p>
+                    </div>
+                    <span class="px-3 py-1 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full text-xs font-mono font-bold uppercase">SUBMERSIBLE DEPTH: 10M</span>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Physical Specifications Panel -->
+                    <div class="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+                        <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Amphibious Integrity</h3>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            Designed with a fully sealed box-hull (corrosion-resistant 316-grade hardware), the Elder Guardian integrates underwater brushless propulsion with low-lying walking logic. It utilizes an inductive charging pad on a ramp interface to avoid open pogo-pins in wet environments.
+                        </p>
+                        <div class="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                            <span class="text-xs font-bold text-sky-400 block font-mono">RECOMMENDED HARDWARE:</span>
+                            <ul class="text-xs text-slate-400 space-y-2">
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Underwater Thruster:</span> <strong class="text-slate-200">Blue Robotics T200</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Single-Beam Sonar:</span> <strong class="text-slate-200">Ping Sonar (115kHz)</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Hull Gaskets:</span> <strong class="text-slate-200">Viton O-Ring Seals</strong></li>
+                                <li class="flex justify-between"><span>Inductive Charging:</span> <strong class="text-slate-200">24V Contactless Pad</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Onboard Firmware Studio -->
+                    <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col">
+                        <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+                            <div>
+                                <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Onboard Firmware Studio</h3>
+                                <p class="text-xs text-slate-500 font-mono">amphibious_transition.py</p>
+                            </div>
+                            <span class="px-2 py-0.5 text-[10px] bg-sky-500/10 text-sky-400 rounded font-mono font-bold">PYTHON 3</span>
+                        </div>
+                        <div class="mt-4 flex-1 bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto code-block text-xs text-sky-200/90 leading-relaxed relative max-h-[400px]">
+                            <pre><code>import time
+
+class ElderGuardianSubmersibleController:
+    def __init__(self, wet_limit=2.5):
+        self.pressure_baseline = 1013.25 # hPa standard sea-level
+        self.is_submerged = False
+
+    def select_gait_model(self, current_pressure_hpa):
+        """
+        Dynamically shifts state-machines between underwater thrusters and land-based
+        IK walking patterns depending on real-time hydrostatic pressure.
+        """
+        # Calculate water-depth equivalents (10 hPa approx equals 10cm depth)
+        depth_m = max((current_pressure_hpa - self.pressure_baseline) / 98.0, 0.0)
+
+        if depth_m > 0.15: # Submersion depth exceeds 15cm
+            self.is_submerged = True
+            print(f"Submersion validated at {depth_m:.2f}m. Retracting legs, engaging BLDC Thruster.")
+            return "THRUSTER_PROFILES"
+        else:
+            self.is_submerged = False
+            print("Wading/Land environment validated. Disengaging thrusters, powering gait joints.")
+            return "QUADRUPEDAL_WALK"
+
+    def running_leak_verification(self, leak_sensor_adc):
+        if leak_sensor_adc > 100: # Threshold for fluid contact inside hull
+            print("CRITICAL EXCEPTION: Internal hull moisture detected! Engaging emergency blow.")
+            return False
+        return True</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: CREAKING ROBOT -->
+            <section id="view-creaking" class="hidden space-y-10 animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold tracking-tight text-slate-100">Creaking Thin Scout</h2>
+                        <p class="text-sm text-slate-400">Multi-spectrum active climbing platform utilizing dry-gecko adhesion</p>
+                    </div>
+                    <span class="px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-full text-xs font-mono font-bold uppercase">PERCEPTION RESOLUTION: 1080P/THERMAL</span>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Physical Specifications Panel -->
+                    <div class="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+                        <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Stealth Perception</h3>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            The Creaking combines visible light, IR, and thermal camera streams dynamically through a Raspberry Pi 5 with a Hailo AI HAT. Utilizing custom gecko-dry adhesive pads on segmented feet, it can scale non-porous glass and concrete obstacles.
+                        </p>
+                        <div class="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                            <span class="text-xs font-bold text-amber-400 block font-mono">RECOMMENDED HARDWARE:</span>
+                            <ul class="text-xs text-slate-400 space-y-2">
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Thermal Camera:</span> <strong class="text-slate-200">FLIR Lepton 3.5</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Adhesive Sheets:</span> <strong class="text-slate-200">Geckskin Dry Grip Pads</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>AI Processing:</span> <strong class="text-slate-200">Hailo AI Hat (13 TOPS)</strong></li>
+                                <li class="flex justify-between"><span>Microphone Array:</span> <strong class="text-slate-200">SPH0645 Multi-Element</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Onboard Firmware Studio -->
+                    <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col">
+                        <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+                            <div>
+                                <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Onboard Firmware Studio</h3>
+                                <p class="text-xs text-slate-500 font-mono">sensor_fusion_handler.py</p>
+                            </div>
+                            <span class="px-2 py-0.5 text-[10px] bg-amber-500/10 text-amber-400 rounded font-mono font-bold">PYTHON 3</span>
+                        </div>
+                        <div class="mt-4 flex-1 bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto code-block text-xs text-amber-200/90 leading-relaxed relative max-h-[400px]">
+                            <pre><code>import time
+
+class CreakingPerceptionFusion:
+    def __init__(self):
+        self.rgb_weight = 0.6
+        self.thermal_weight = 0.4
+
+    def adjust_sensor_weights(self, lux_ambient, thermal_variance):
+        """
+        Dynamically adjusts the visual stream weights. If ambient lighting degrades,
+        the system biases directly towards FLIR thermal-imaging signatures.
+        """
+        if lux_ambient < 15.0: # Very dim room
+            self.rgb_weight = 0.1
+            self.thermal_weight = 0.9
+            print("Low-light state. Multi-spectrum fusion bias shifted to Thermal IR.")
+        else:
+            self.rgb_weight = 0.6
+            self.thermal_weight = 0.4
+
+    def scale_climbing_tension(self, foot_load_sensor_value):
+        """
+        Adjusts the shear force applied to the dry-gecko pad. Needs optimal lateral
+        force to engage van der Waals forces without sliding off the surface.
+        """
+        if foot_load_sensor_value < 100: # Poor surface contact
+            # Increase leg shear extension to load the pad
+            return "SHEAR_ENGAGED_MAX"
+        return "SHEAR_STABLE"</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: ORACLE ROBOT -->
+            <section id="view-oracle" class="hidden space-y-10 animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold tracking-tight text-slate-100">Oracle System Coordinator</h2>
+                        <p class="text-sm text-slate-400">Fleet telemetry coordinator and LoRa Mesh gateway controller</p>
+                    </div>
+                    <span class="px-3 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full text-xs font-mono font-bold uppercase">PROCESSING CAPACITY: 40 TOPS</span>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Physical Specifications Panel -->
+                    <div class="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+                        <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Cognitive Hub</h3>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            Acting as the brain coordinator of the Divine World ecosystem, the Oracle routes low-bandwidth telemetry packets over custom LoRa mesh systems. With a Raspberry Pi 5 and a Hailo-10H accelerator, it can execute local language model reasoning.
+                        </p>
+                        <div class="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                            <span class="text-xs font-bold text-indigo-400 block font-mono">RECOMMENDED HARDWARE:</span>
+                            <ul class="text-xs text-slate-400 space-y-2">
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Mesh Transceiver:</span> <strong class="text-slate-200">915MHz LoRa Module</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>AI Accelerator:</span> <strong class="text-slate-200">Hailo-10H (40 TOPS)</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Local Storage:</span> <strong class="text-slate-200">512GB NVMe M.2 SSD</strong></li>
+                                <li class="flex justify-between"><span>Antenna Setup:</span> <strong class="text-slate-200">High-Gain Staff Mount</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Onboard Firmware Studio -->
+                    <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col">
+                        <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+                            <div>
+                                <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Onboard Firmware Studio</h3>
+                                <p class="text-xs text-slate-500 font-mono">lora_mesh_relay.py</p>
+                            </div>
+                            <span class="px-2 py-0.5 text-[10px] bg-indigo-500/10 text-indigo-400 rounded font-mono font-bold">PYTHON 3</span>
+                        </div>
+                        <div class="mt-4 flex-1 bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto code-block text-xs text-indigo-200/90 leading-relaxed relative max-h-[400px]">
+                            <pre><code>import time
+
+class OracleMeshCoordinator:
+    def __init__(self):
+        self.node_registry = {} # Tracks active civilian modules in communication range
+
+    def register_client_node(self, node_id, status_byte):
+        """
+        Enlists a regional civilian agent. Synchronizes localized memory capsules
+        on a sliding window threshold.
+        """
+        self.node_registry[node_id] = {
+            "last_contact": time.time(),
+            "status": status_byte,
+            "packets_routed": 0
+        }
+        print(f"Registered mesh node [{node_id}]. Connection established.")
+
+    def route_capsule_telemetry(self, source_id, destination_id, payload_bytes):
+        """
+        Encapsulates and forwards state packet bytes across intermediate hopping
+        repeaters without cell or Wi-Fi dependencies.
+        """
+        if source_id in self.node_registry:
+            self.node_registry[source_id]["packets_routed"] += 1
+            print(f"Forwarded mesh packet: {source_id} -> {destination_id} | Size: {len(payload_bytes)}B")
+            return True
+        return False</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: NORMAL AGENT ROBOT -->
+            <section id="view-normal" class="hidden space-y-10 animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold tracking-tight text-slate-100">Normal Agent Modular Civilian</h2>
+                        <p class="text-sm text-slate-400">Mass-producible bipedal skeleton with swappable LEGO-compatible mounts</p>
+                    </div>
+                    <span class="px-3 py-1 bg-slate-500/10 text-slate-400 border border-slate-500/20 rounded-full text-xs font-mono font-bold uppercase">FLEET CLASSIFICATION: MULTI-AGENT GENERAL</span>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Physical Specifications Panel -->
+                    <div class="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+                        <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Modular Hardware</h3>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            Proportioned identically to bipedal templates, the Normal Agent utilizes lightweight structural parts and quick-release physical connectors to minimize maintenance costs. Broken limbs can be swapped out immediately in the field.
+                        </p>
+                        <div class="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
+                            <span class="text-xs font-bold text-slate-400 block font-mono">RECOMMENDED HARDWARE:</span>
+                            <ul class="text-xs text-slate-400 space-y-2">
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Compute Core:</span> <strong class="text-slate-200">Raspberry Pi 5 8GB</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Dual Cameras:</span> <strong class="text-slate-200">Pi Camera Module 3 (Stereo)</strong></li>
+                                <li class="flex justify-between border-b border-slate-900 pb-1"><span>Quick Connector:</span> <strong class="text-slate-200">Standard LEGO mount plate</strong></li>
+                                <li class="flex justify-between"><span>Batteries:</span> <strong class="text-slate-200">Swappable 18650 Custom Pack</strong></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Onboard Firmware Studio -->
+                    <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col">
+                        <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+                            <div>
+                                <h3 class="text-sm font-bold tracking-wider text-slate-400 uppercase font-mono">Onboard Firmware Studio</h3>
+                                <p class="text-xs text-slate-500 font-mono">modular_limb_handler.py</p>
+                            </div>
+                            <span class="px-2 py-0.5 text-[10px] bg-slate-500/10 text-slate-400 rounded font-mono font-bold">PYTHON 3</span>
+                        </div>
+                        <div class="mt-4 flex-1 bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto code-block text-xs text-indigo-200/90 leading-relaxed relative max-h-[400px]">
+                            <pre><code>import time
+
+class NormalAgentModularManager:
+    def __init__(self):
+        self.connected_limbs = {"arm_L": True, "arm_R": True, "leg_L": True, "leg_R": True}
+
+    def diagnostic_bus_check(self):
+        """
+        Continuously polls the quick-connect I2C/SPI pins to detect if a limb module
+        has been severed, disconnected, or replaced.
+        """
+        for limb, active in list(self.connected_limbs.items()):
+            # Mock check reading register pin status
+            pin_state = self.read_bus_register(limb)
+            if pin_state == 0x00 and active:
+                self.connected_limbs[limb] = False
+                print(f"ALERT: {limb} disconnected or damaged. Reconfiguring kinematics...")
+            elif pin_state == 0xFF and not active:
+                self.connected_limbs[limb] = True
+                print(f"INFO: {limb} module replacement detected. Calibrating encoder zero-points.")
+
+    def read_bus_register(self, limb):
+        # 0xFF denotes active operational state
+        return 0xFF</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW: FLIGHT STANDARDS -->
+            <section id="view-standards" class="hidden space-y-10 animate-fade-in">
+                <header>
+                    <h2 class="text-2xl font-bold tracking-tight text-slate-100">Operational Safety & Flight Standards</h2>
+                    <p class="text-sm text-slate-400">Mandatory fleet thresholds for real-world deployment safety</p>
+                </header>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div class="space-y-6">
+                        <div class="p-6 bg-slate-900 border-l-4 border-indigo-500 rounded-2xl shadow-sm">
+                            <h4 class="font-bold text-slate-100 mb-2">1. The 15-Minute Continuous Flight Metric</h4>
+                            <p class="text-sm text-slate-400 leading-relaxed">
+                                Under simulated gravitational loads, flying agents must achieve a minimum of 15 minutes of station-keeping (hover) with at least 15% battery potential remaining. Peak motor efficiency must occur near 50% throttle to guarantee structural safety margins in updrafts.
+                            </p>
+                        </div>
+                        <div class="p-6 bg-slate-900 border-l-4 border-emerald-500 rounded-2xl shadow-sm">
+                            <h4 class="font-bold text-slate-100 mb-2">2. Automated "Perch Fail-Safe"</h4>
+                            <p class="text-sm text-slate-400 leading-relaxed">
+                                Referencing safety policies modeled directly in the **Ender_Dragon_Sanctuary**, any airborne vehicle must auto-detect solid elevated surfaces. When power declines below 10%, flight coordination must prioritize immediate soft landing or perching.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-900 p-8 rounded-2xl border border-slate-800 flex flex-col items-center justify-center text-center">
+                        <div class="w-16 h-16 bg-slate-950 border border-slate-800 rounded-full flex items-center justify-center mb-4 text-2xl">⚠️</div>
+                        <h4 class="font-bold text-slate-100 mb-2">Hydro-Electric Warnings</h4>
+                        <p class="text-sm text-slate-400 max-w-sm">
+                            Never operate the EnerDragon's Battery B electrolysis loop in ambient air temperatures exceeding 45°C. Ensure the BMP280 pressure sensor in the sealed compartment is audited every 5 operational hours.
+                        </p>
+                        <button onclick="switchTab('sandbox')" class="mt-6 px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition">Run Simulation Diagnostics</button>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+    </div>
+</div>
+
+<script>
+    // Navigation / Tab Switcher Engine
+    function switchTab(tabId) {
+        // Hide all views
+        document.querySelectorAll('section').forEach(sec => sec.classList.add('hidden'));
+
+        // Show selected view
+        const targetView = document.getElementById(`view-${tabId}`);
+        if (targetView) targetView.classList.remove('hidden');
+
+        // Reset nav button styling
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.classList.remove('bg-slate-800', 'text-indigo-400', 'border-l-4', 'border-indigo-500');
+            btn.classList.add('text-slate-400', 'hover:bg-slate-800/50', 'hover:text-slate-100');
+        });
+
+        // Activate active nav button
+        const targetNavBtn = document.getElementById(`nav-${tabId}`);
+        if (targetNavBtn) {
+            targetNavBtn.classList.remove('text-slate-400', 'hover:bg-slate-800/50', 'hover:text-slate-100');
+            targetNavBtn.classList.add('bg-slate-800', 'text-indigo-400', 'border-l-4', 'border-indigo-500');
+        }
+
+        // Close mobile nav menu
+        document.getElementById('mobile-nav').classList.add('hidden');
+
+        // Update titles dynamically
+        const titleMap = {
+            'dashboard': { t: 'Fleet System Overview', s: 'Real-time telemetrics and structural design files' },
+            'sandbox': { t: 'Component Prototyper', s: 'Simulate structural parameters dynamically' },
+            'wither': { t: 'Wither Vectored Platform', s: 'Stabilization profiles & active firmware code' },
+            'enerdragon': { t: 'EnerDragon Biomimetic Platform', s: 'Electrolysis controls & wing mechanics' },
+            'warden': { t: 'Warden Armored Guardian', s: 'Heavy terrain and sonar tracking structures' },
+            'elder': { t: 'Elder Guardian Amphibious ROV', s: 'Hydro-gasket sealing and gait transition' },
+            'creaking': { t: 'Creaking Scout Platform', s: 'Multi-spectrum camera fusion & dry-gecko adhesion' },
+            'oracle': { t: 'Oracle Coordinator System', s: 'LoRa Meshtastic routers and onboard LLM engines' },
+            'normal': { t: 'Normal Agent Modular Civilian', s: 'Limb structural bus manager' },
+            'standards': { t: 'AeroLogic Fleet Safety Guidelines', s: 'Structural thresholds and emergency protocols' }
+        };
+
+        if (titleMap[tabId]) {
+            document.getElementById('current-section-title').innerText = titleMap[tabId].t;
+            document.getElementById('current-section-subtitle').innerText = titleMap[tabId].s;
+        }
+
+        // If sandbox is chosen, draw/update the chart
+        if (tabId === 'sandbox') {
+            setTimeout(runSandboxCalculations, 50);
+        }
+    }
+
+    function toggleMobileNav() {
+        const menu = document.getElementById('mobile-nav');
+        menu.classList.toggle('hidden');
+    }
+
+    // --- PHYSICS SIMULATOR AND SANDBOX MATHEMATICAL ENGINE ---
+
+    // Constant Specifications Base
+    const ROBOT_BASES = {
+        wither: { name: 'Wither', baseWeight: 450, baseCost: 150, basePower: 8, efficiency: 11, isFlyer: true },
+        enerdragon: { name: 'EnerDragon', baseWeight: 580, baseCost: 220, basePower: 12, efficiency: 10, isFlyer: true },
+        warden: { name: 'Warden', baseWeight: 11000, baseCost: 400, basePower: 30, efficiency: 5, isFlyer: false },
+        elder: { name: 'Elder Guardian', baseWeight: 3500, baseCost: 320, basePower: 22, efficiency: 6, isFlyer: false },
+        creaking: { name: 'Creaking', baseWeight: 1400, baseCost: 200, basePower: 14, efficiency: 8, isFlyer: false },
+        oracle: { name: 'Oracle', baseWeight: 4800, baseCost: 350, basePower: 18, efficiency: 7, isFlyer: false },
+        normal: { name: 'Normal Agent', baseWeight: 4000, baseCost: 120, basePower: 10, efficiency: 8, isFlyer: false }
+    };
+
+    const MATERIALS = {
+        carbon_fiber: { weightMult: 0.8, durability: 95, cost: 280 },
+        aluminum: { weightMult: 1.2, durability: 85, cost: 120 },
+        polycarbonate: { weightMult: 1.0, durability: 70, cost: 60 },
+        petg: { weightMult: 0.9, durability: 55, cost: 35 },
+        steel: { weightMult: 2.6, durability: 100, cost: 180 }
+    };
+
+    const BATTERIES = {
+        lipo: { density: 160, maxC: 45, cost: 65, safetyFactor: 50 },
+        liion: { density: 240, maxC: 15, cost: 50, safetyFactor: 70 },
+        solid_state: { density: 410, maxC: 25, cost: 260, safetyFactor: 95 },
+        nimh: { density: 85, maxC: 8, cost: 40, safetyFactor: 98 }
+    };
+
+    const COMPUTES = {
+        pi5: { weight: 46, power: 12, cost: 80, tops: 0 },
+        pi5_hailo: { weight: 68, power: 16, cost: 160, tops: 13 },
+        pi5_hailo10: { weight: 75, power: 20, cost: 290, tops: 40 },
+        pizero: { weight: 10, power: 3, cost: 15, tops: 0 },
+        orangepi: { weight: 55, power: 10, cost: 145, tops: 6 }
+    };
+
+    const ACTUATORS = {
+        coreless: { efficiency: 0.65, weight: 120, cost: 40, powerDraw: 15 },
+        metal_gear: { efficiency: 0.78, weight: 240, cost: 85, powerDraw: 28 },
+        brushless_bldc: { efficiency: 0.92, weight: 180, cost: 190, powerDraw: 35 },
+        hermetic: { efficiency: 0.82, weight: 380, cost: 240, powerDraw: 45 }
+    };
+
+    let sandboxChartInstance = null;
+
+    // Run physics calculations based on interactive options chosen in dropdowns
+    function runSandboxCalculations() {
+        const robotId = document.getElementById('sandbox-robot-select').value;
+        const matId = document.getElementById('sandbox-material').value;
+        const batId = document.getElementById('sandbox-battery').value;
+        const compId = document.getElementById('sandbox-compute').value;
+        const actId = document.getElementById('sandbox-actuator').value;
+
+        const base = ROBOT_BASES[robotId];
+        const mat = MATERIALS[matId];
+        const bat = BATTERIES[batId];
+        const comp = COMPUTES[compId];
+        const act = ACTUATORS[actId];
+
+        // 1. Calculate Physical Mass (grams)
+        // Battery mass scales relative to robot size constraints
+        const batMass = base.isFlyer ? 450 : 1200;
+        const calcWeight = Math.round((base.baseWeight * mat.weightMult) + batMass + comp.weight + act.weight);
+
+        // 2. Calculate Battery capacity (Wh)
+        const capacityWh = Math.round((batMass / 1000) * bat.density);
+
+        // 3. Compute Power consumption parameters
+        const computePower = comp.power;
+        const baseSystemPower = base.basePower;
+        const actuatorLoadPower = act.powerDraw;
+        const totalStaticPower = baseSystemPower + computePower + actuatorLoadPower;
+
+        // 4. Calculate Operational Duration (Minutes or Hours depending on type)
+        let estMinutes = 0;
+        let warningText = "";
+        let warningIcon = "✓";
+        let isCritical = false;
+
+        if (base.isFlyer) {
+            // Thrust dynamic physics: lift requires countering mass
+            // Thrust = weight (kg) * G (9.81) * Thrust margin
+            const thrustNNeeded = (calcWeight / 1000) * 9.81 * 1.5;
+            // Power draw = force proportional to motor/prop efficiency
+            const liftPowerWatts = thrustNNeeded * (25 / act.efficiency);
+            const activeThrustPower = totalStaticPower + liftPowerWatts;
+
+            estMinutes = (capacityWh / activeThrustPower) * 60;
+
+            if (estMinutes < 15.0) {
+                isCritical = true;
+                warningIcon = "⚠️";
+                warningText = "FLIGHT RISK: CRITICAL WARNING";
+                document.getElementById('sb-warning-box').className = "p-4 rounded-xl border border-rose-500 bg-rose-500/10 text-rose-300";
+                document.getElementById('sb-warning-desc').innerText = `Configuration is too heavy or under-powered. Total flight duration (${estMinutes.toFixed(1)} mins) fails the 15-minute standard. Select Carbon-Fiber and LiPo options!`;
+            } else {
+                warningText = "FLIGHT PARAMETERS ACCURATE";
+                document.getElementById('sb-warning-box').className = "p-4 rounded-xl border border-emerald-500 bg-emerald-500/10 text-emerald-300";
+                document.getElementById('sb-warning-desc').innerText = `Flight model matches weight bounds. Total flight potential reaches ${estMinutes.toFixed(1)} mins under standard conditions. Perfect!`;
+            }
+        } else {
+            // Ground-based operations
+            const tractionResistancePower = (calcWeight / 1000) * 8 * (1 / act.efficiency);
+            const operationalPower = totalStaticPower + tractionResistancePower;
+
+            const estHours = (capacityWh / operationalPower);
+            estMinutes = estHours * 60; // Keep uniform storage
+
+            if (estHours < 4.0 && robotId === 'warden') {
+                isCritical = true;
+                warningIcon = "⚠️";
+                warningText = "ENDURANCE RISK: CRITICAL WARNING";
+                document.getElementById('sb-warning-box').className = "p-4 rounded-xl border border-rose-500 bg-rose-500/10 text-rose-300";
+                document.getElementById('sb-warning-desc').innerText = `Mass configuration draw is too high. Ground operational time (${estHours.toFixed(1)} hrs) is below the 4-hour target. Upgrade battery or use Carbon/Aluminum chassis.`;
+            } else {
+                warningText = "SYSTEM COGNITION SAFE";
+                document.getElementById('sb-warning-box').className = "p-4 rounded-xl border border-emerald-500 bg-emerald-500/10 text-emerald-300";
+                document.getElementById('sb-warning-desc').innerText = `Continuous ground operational time estimated at ${estHours.toFixed(1)} hours. Core temperature metrics remain nominal.`;
+            }
+        }
+
+        // 5. Calculate Ruggedness and Cost indexes
+        const calcRugged = Math.round((mat.durability * 0.7) + (bat.safetyFactor * 0.3));
+        const calcCost = base.baseCost + mat.cost + bat.cost + comp.cost + act.cost;
+
+        // Bind calculated metrics to visual fields
+        document.getElementById('sb-weight-val').innerText = calcWeight >= 1000 ? `${(calcWeight / 1000).toFixed(2)}kg` : `${calcWeight}g`;
+        document.getElementById('sb-duration-val').innerText = base.isFlyer ? `${estMinutes.toFixed(1)} min` : `${(estMinutes / 60).toFixed(1)} hrs`;
+        document.getElementById('sb-rugged-val').innerText = `${calcRugged} / 100`;
+        document.getElementById('sb-cost-val').innerText = `$${calcCost}`;
+        document.getElementById('sb-warning-icon').innerText = warningIcon;
+        document.getElementById('sb-warning-title').innerText = warningText;
+
+        // Draw dynamic Chart.js discharge predictions
+        drawDischargeTelemetry(batId, estMinutes, base.isFlyer);
+    }
+
+    function drawDischargeTelemetry(batId, durationMins, isFlyer) {
+        const ctx = document.getElementById('sandboxChart').getContext('2d');
+        if (sandboxChartInstance) {
+            sandboxChartInstance.destroy();
+        }
+
+        const intervals = 5;
+        const timeLabels = [];
+        const potentialValues = [];
+        const step = durationMins / intervals;
+
+        for (let i = 0; i <= intervals; i++) {
+            const currentMin = i * step;
+            timeLabels.push(isFlyer ? `${currentMin.toFixed(1)}m` : `${(currentMin / 60).toFixed(1)}h`);
+
+            // Generate non-linear exponential discharge curve representation
+            const percentage = Math.max(100 - (Math.pow(i / intervals, 1.8) * 100), 0);
+            potentialValues.push(Math.round(percentage));
+        }
+
+        sandboxChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: timeLabels,
+                datasets: [{
+                    label: 'Battery Operational Voltage (%)',
+                    data: potentialValues,
+                    borderColor: '#6366f1',
+                    borderWidth: 2,
+                    backgroundColor: 'rgba(99, 102, 241, 0.05)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255,255,255,0.03)' },
+                        ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 } }
+                    },
+                    y: {
+                        min: 0,
+                        max: 100,
+                        grid: { color: 'rgba(255,255,255,0.03)' },
+                        ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 9 } }
+                    }
+                }
+            }
+        });
+    }
+
+    // Default Initialization on Document Load
+    window.onload = () => {
+        // Trigger default home page layout
+        switchTab('dashboard');
+    };
+</script>
+</body>
+</html>

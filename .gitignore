@@ -32,7 +32,6 @@ logs/
 # Testing
 coverage/
 .nyc_output/
-tests/
 UltimMC/
 # ============================================================================
 # Python

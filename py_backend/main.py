@@ -736,6 +736,26 @@ agent_manager = AgentProcessManager()
 integrate_with_backend(app, agent_manager)
 
 
+@app.exception_handler(json.JSONDecodeError)
+async def _json_decode_error_handler(request: Request, exc: json.JSONDecodeError):
+    """
+    FIX: 14 separate route handlers in this file do `data = await
+    request.json()` with no error handling - an empty or malformed body
+    (e.g. a POST sent with no body at all, which is what triggered the
+    originally-reported crash on /api/genesis/spawn) raised an uncaught
+    json.JSONDecodeError, producing an unhandled 500 instead of a normal
+    400 response. Rather than wrapping all 14 call sites individually,
+    one global handler catches this uniformly for all of them (and any
+    future route with the same pattern), matching how FastAPI already
+    handles its own validation errors.
+    """
+    log.warning(f"[{request.url.path}] request body is not valid JSON: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content={"error": "Request body must be valid JSON", "detail": str(exc)},
+    )
+
+
 # =============================================================================
 # GUI — served as a self-contained HTML page
 # =============================================================================

@@ -5,3 +5,12 @@
 
 pytest>=8.0.0
 pytest-asyncio>=1.0.0
+httpx>=0.27.0          # FastAPI's TestClient (test_chat_heard_routing.py, test_json_error_handling.py)
+
+# Already in requirements.txt (stable-baselines3>=2.8.0, gymnasium>=1.0.0) -
+# listed here too since test_policy.py needs them and it's reasonable to
+# run the test suite against an environment that hasn't installed the
+# full production requirements.txt yet.
+stable-baselines3>=2.8.0
+gymnasium>=1.0.0
+httpx>=0.27.0

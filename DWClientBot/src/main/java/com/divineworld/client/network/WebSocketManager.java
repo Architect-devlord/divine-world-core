@@ -851,8 +851,30 @@ public class WebSocketManager {
             Minecraft.getInstance().execute(() -> {
                 ActionExecutor.executeAction(
                     moveForward, moveStrafe, yawDelta, pitchDelta, actionFlags, fHotbar);
-                if (fa != null && !fa.isEmpty()) {
-                    GodEntityManager.executeGodAbility(fa, fp1, fp2, fp3);
+
+                // FIX (WS action-frame parity gap): this used to call
+                // GodEntityManager.executeGodAbility() unconditionally for
+                // any non-empty ability string, never learning the
+                // inv:/screen: prefix distinction TCPServer.java already
+                // has. Packaged agents appear to only use this WS
+                // transport, so this meant they could never open
+                // inventory or interact with screens at all - only real
+                // god abilities ever reached GodEntityManager correctly.
+                if (fa == null || fa.isEmpty()) return;
+
+                if (fa.startsWith("inv:")) {
+                    ActionExecutor.executeInventoryAction(fa);
+
+                } else if (fa.startsWith("screen:")) {
+                    ActionExecutor.executeScreenAction(fa);
+
+                } else {
+                    try {
+                        GodEntityManager.executeGodAbility(fa, fp1, fp2, fp3);
+                    } catch (Exception e) {
+                        DWClientMod.LOGGER.debug("[WS] God ability dispatch error: {}",
+                                e.getMessage());
+                    }
                 }
             });
 

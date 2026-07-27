@@ -119,6 +119,28 @@ class TransformerPolicy(ActorCriticPolicy):
         )
         self.log_std = nn.Parameter(torch.zeros(action_dim))
 
+    def _build(self, lr_schedule) -> None:
+        """
+        FIX: this class could never actually be constructed. SB3's base
+        _build() unconditionally does `self.mlp_extractor.latent_dim_pi`
+        right after calling _build_mlp_extractor() - but this override
+        sets self.features_extractor (a deliberately different, custom
+        attribute), never self.mlp_extractor, so every single
+        instantiation crashed with AttributeError before this fix.
+        Patching in a mlp_extractor shim wouldn't be the right fix either:
+        SB3's _build() would then go on to build ITS OWN generic
+        action_net/value_net from latent_dim_pi/vf, silently overwriting
+        the custom Tanh-activated heads already built above - running
+        without crashing, but not the architecture this class documents.
+        Overriding _build() entirely skips SB3's generic path, keeping
+        only what's genuinely still needed from it: the optimizer,
+        covering every parameter this class actually created.
+        """
+        self._build_mlp_extractor()
+        self.optimizer = self.optimizer_class(
+            self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs
+        )
+
     def forward(self, obs: torch.Tensor,
                 deterministic: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
         features    = self.features_extractor(obs)
@@ -292,6 +314,21 @@ class GodTransformerPolicy(ActorCriticPolicy):
         # BASE_DIM = 13 so log_std_base correctly covers all 13 movement dims.
         self.log_std_base   = nn.Parameter(torch.zeros(self.BASE_DIM))
         self.log_std_params = nn.Parameter(torch.zeros(3))
+
+    def _build(self, lr_schedule) -> None:
+        """FIX: same construction-blocking bug as TransformerPolicy - see
+        that class's _build() for the full explanation. SB3's base _build()
+        unconditionally reads self.mlp_extractor.latent_dim_pi right after
+        calling _build_mlp_extractor(), which this override never sets
+        (features_extractor/ability_head are deliberately different,
+        custom attributes) - every instantiation crashed before this fix,
+        and a mlp_extractor shim alone would have let SB3 silently
+        overwrite action_net/value_net/log_std with its own generic
+        construction instead."""
+        self._build_mlp_extractor()
+        self.optimizer = self.optimizer_class(
+            self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs
+        )
 
     def forward(self, obs: torch.Tensor,
                 deterministic: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:

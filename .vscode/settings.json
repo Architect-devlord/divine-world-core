@@ -4,6 +4,6 @@
         "./py_backend"
     ],
     "java.configuration.updateBuildConfiguration": "interactive",
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    "python-envs.defaultPackageManager": "ms-python.python:pip"
 }

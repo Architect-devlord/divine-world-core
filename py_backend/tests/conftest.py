@@ -101,6 +101,41 @@ def fake_request():
     return FakeRequest
 
 
+@pytest.fixture
+def obs_space():
+    import gymnasium as gym
+    import numpy as np
+    return gym.spaces.Box(low=-np.inf, high=np.inf, shape=(128,), dtype=np.float32)
+
+
+@pytest.fixture
+def npc_action_space():
+    import gymnasium as gym
+    import numpy as np
+    return gym.spaces.Box(low=-1.0, high=1.0, shape=(13,), dtype=np.float32)
+
+
+@pytest.fixture
+def god_action_space():
+    import gymnasium as gym
+    import numpy as np
+    return gym.spaces.Box(low=-1.0, high=1.0, shape=(18,), dtype=np.float32)
+
+
+@pytest.fixture
+def transformer_policy(obs_space, npc_action_space):
+    import importlib
+    policy_mod = importlib.import_module("rl.policy")
+    return policy_mod.TransformerPolicy(obs_space, npc_action_space, lambda _: 3e-4)
+
+
+@pytest.fixture
+def god_transformer_policy(obs_space, god_action_space):
+    import importlib
+    policy_mod = importlib.import_module("rl.policy")
+    return policy_mod.GodTransformerPolicy(obs_space, god_action_space, lambda _: 3e-4, n_abilities=8)
+
+
 class RecordingMemory:
     """Lightweight memory double that records calls instead of persisting -
     use when a test cares about *what* got recorded, not real persistence

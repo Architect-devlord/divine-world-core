@@ -86,7 +86,9 @@ public class DivineCommands {
                                 .suggests((ctx, builder) -> {
                                     // Suggest common ability names across all god types.
                                     // FIX: summon_vexes/summon_fangs added — oracle's boss
-                                    // body is now EntityType.EVOKER (GodSpawnHandler.java).
+                                    // body has Evoker-flavored lore (Vex/fang summons); it's
+                                    // AIOracle now (com.divineworld.entity.gods), not plain
+                                    // EntityType.EVOKER — see GodSpawnHandler.getGodEntityType().
                                     // NOTE: this list is autocomplete convenience only —
                                     // executeGodAbility() below passes the ability string
                                     // straight through to ServerGodAbilityExecutor.execute()
@@ -94,14 +96,14 @@ public class DivineCommands {
                                     // worked correctly if an operator typed them manually
                                     // before this fix; only tab-completion was missing them.
                                     String[] abilities = {
-                                        "sonic_boom","darkness","sniff","burrow","emerge",
-                                        "wither_skull","explosion","summon_wither_skeletons","dash",
-                                        "dragon_breath","fireball","perch",
-                                        "mining_fatigue","laser_beam","guardian_spikes","thorn_attack",
-                                        "wisdom_aura","teleport","healing_wave","knowledge_beam",
-                                        "summon_vexes","summon_fangs",
-                                        "tentacle_whip","life_steal","toggle_underground","toggle_ceiling",
-                                        "retract_tentacles","emerge"
+                                            "sonic_boom","darkness","sniff","burrow","emerge",
+                                            "wither_skull","explosion","summon_wither_skeletons","dash",
+                                            "dragon_breath","fireball","perch",
+                                            "mining_fatigue","laser_beam","guardian_spikes","thorn_attack",
+                                            "wisdom_aura","teleport","healing_wave","knowledge_beam",
+                                            "summon_vexes","summon_fangs",
+                                            "tentacle_whip","life_steal","toggle_underground","toggle_ceiling",
+                                            "retract_tentacles","emerge"
                                     };
                                     for (String a : abilities) builder.suggest(a);
                                     return builder.buildFuture();
@@ -194,7 +196,7 @@ public class DivineCommands {
     }
 
     private static int executeClearMemories(CommandContext<CommandSourceStack> ctx,
-                                             List<String> exceptions) {
+                                            List<String> exceptions) {
         try {
             ServerPlayer player = ctx.getSource().getPlayerOrException();
             ServerLevel level = ctx.getSource().getLevel();
@@ -341,7 +343,7 @@ public class DivineCommands {
 
             ServerPlayer target = null;
             if (agentId.equalsIgnoreCase("self") ||
-                agentId.equals(executor.getName().getString())) {
+                    agentId.equals(executor.getName().getString())) {
                 target = executor;
             } else {
                 target = DWNPCManager.findPlayerByAgentId(ctx.getSource().getLevel(), agentId);
@@ -378,17 +380,17 @@ public class DivineCommands {
         String[] godTypes = {"oracle","warden","ender_dragon","wither","elder_guardian","creaking"};
         for (String t : godTypes) builder.suggest(t);
         String[] common = {
-            "zombie","skeleton","creeper","spider","enderman","blaze","ghast",
-            "witch","villager","pillager","vindicator","evoker","ravager",
-            "iron_golem","snow_golem","horse","wolf","fox","bee","drowned",
-            "husk","stray","wither_skeleton","cave_spider","slime","magma_cube",
-            "shulker","guardian","phantom","piglin","hoglin","zoglin",
-            "piglin_brute","goat","axolotl","frog","sniffer","camel",
-            "cat","rabbit","cow","pig","sheep","chicken","mooshroom",
-            "bat","squid","glow_squid","dolphin","turtle","pufferfish",
-            "salmon","cod","tropical_fish","polar_bear","panda","ocelot",
-            "llama","parrot","mule","donkey","strider","trader_llama",
-            "wandering_trader","allay","vex"
+                "zombie","skeleton","creeper","spider","enderman","blaze","ghast",
+                "witch","villager","pillager","vindicator","evoker","ravager",
+                "iron_golem","snow_golem","horse","wolf","fox","bee","drowned",
+                "husk","stray","wither_skeleton","cave_spider","slime","magma_cube",
+                "shulker","guardian","phantom","piglin","hoglin","zoglin",
+                "piglin_brute","goat","axolotl","frog","sniffer","camel",
+                "cat","rabbit","cow","pig","sheep","chicken","mooshroom",
+                "bat","squid","glow_squid","dolphin","turtle","pufferfish",
+                "salmon","cod","tropical_fish","polar_bear","panda","ocelot",
+                "llama","parrot","mule","donkey","strider","trader_llama",
+                "wandering_trader","allay","vex"
         };
         for (String m : common) builder.suggest(m);
         for (String t : AgentConfigLoader.getGodTypes()) builder.suggest(t);

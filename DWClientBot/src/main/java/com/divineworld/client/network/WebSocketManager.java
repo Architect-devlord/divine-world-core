@@ -64,6 +64,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *     [N]  name     (UTF-8 registry name, no "minecraft:" prefix)
  *     [4]  distance (float32, metres)
  *     [4]  angle    (float32, degrees relative to player's yaw)
+ *   (plus rel_dx/rel_dy/rel_dz/movement_speed floats added later — see the
+ *   full layout above buildPerceptionFrame() for the current field list)
  *
  * NEW FIX W3 — Sound events never sent
  *   Python's decoder reads a sound_count after the audio section, but Java
@@ -634,6 +636,10 @@ public class WebSocketManager {
      *     [N]  name UTF-8
      *     [4]  distance (float32)
      *     [4]  angle (float32)
+     *     [4]  rel_dx (float32)          — egocentric forward offset
+     *     [4]  rel_dy (float32)          — vertical offset from eye height
+     *     [4]  rel_dz (float32)          — egocentric right offset
+     *     [4]  movement_speed (float32)  — magnitude of entity's delta movement
      *   [4]  audio_data length
      *   [N]  audio_data (only present when length > 0)
      *   [4]  sample_rate (uint32)  ← FIX W1: only written when audio_len > 0

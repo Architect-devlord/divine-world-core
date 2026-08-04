@@ -5,6 +5,7 @@ package com.divineworld.client;
 import com.divineworld.DWMod;
 import com.divineworld.entity.ModEntities;
 import com.divineworld.render.CreakingGeoRenderer;
+import com.divineworld.render.GodBodyGeoRenderer;
 import net.minecraft.client.renderer.entity.EntityRenderers;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -35,7 +36,16 @@ public class DivineClientSetup {
             EntityRenderers.register(ModEntities.AI_CREAKING.get(),
                     CreakingGeoRenderer::new);
 
-            DWMod.LOGGER.info("[DivineClientSetup] ✅ Creaking GeckoLib renderer registered");
+            // Register GeckoLib renderers for the remaining five god bodies —
+            // one shared GodBodyGeoRenderer type, applying each god's own
+            // scale via BaseGodEntity.getGodType() at render time.
+            EntityRenderers.register(ModEntities.AI_WARDEN.get(), GodBodyGeoRenderer::new);
+            EntityRenderers.register(ModEntities.AI_WITHER.get(), GodBodyGeoRenderer::new);
+            EntityRenderers.register(ModEntities.AI_ORACLE.get(), GodBodyGeoRenderer::new);
+            EntityRenderers.register(ModEntities.AI_ELDER_GUARDIAN.get(), GodBodyGeoRenderer::new);
+            EntityRenderers.register(ModEntities.AI_ENDER_DRAGON.get(), GodBodyGeoRenderer::new);
+
+            DWMod.LOGGER.info("[DivineClientSetup] ✅ All 6 god body GeckoLib renderers registered");
         });
     }
 }

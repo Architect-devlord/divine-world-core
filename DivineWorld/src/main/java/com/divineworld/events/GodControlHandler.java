@@ -95,8 +95,16 @@ public class GodControlHandler {
         godEntity.setYHeadRot(player.getYHeadRot());
 
         // ── Primary sync: puppet → body ───────────────────────────────────
+        // Checks both the vanilla classes (in case anything ever falls back
+        // to resolveVanillaEntityType() instead of the custom god classes —
+        // see GodSpawnHandler.getGodEntityType()) and the custom
+        // AIEnderDragon/AIWither classes that actually spawn now. Without
+        // the second half of each check, these would silently misclassify
+        // as ground gods and hard-snap instead of smoothly lerping.
         boolean isFlying = (godEntity instanceof EnderDragon)
-                        || (godEntity instanceof WitherBoss);
+                || (godEntity instanceof WitherBoss)
+                || (godEntity instanceof com.divineworld.entity.gods.AIEnderDragon)
+                || (godEntity instanceof com.divineworld.entity.gods.AIWither);
 
         if (isFlying) {
             syncFlyingGod(player, godEntity);
@@ -136,7 +144,7 @@ public class GodControlHandler {
         if (distSq > FLY_HARD_SNAP_SQ) {
             // Too far — hard teleport then zero velocity.
             godEntity.moveTo(player.getX(), player.getY(), player.getZ(),
-                             player.getYRot(), player.getXRot());
+                    player.getYRot(), player.getXRot());
             godEntity.setDeltaMovement(Vec3.ZERO);
             return;
         }
@@ -154,7 +162,7 @@ public class GodControlHandler {
 
         if (dx * dx + dy * dy + dz * dz > GROUND_MOVE_SQ) {
             godEntity.moveTo(player.getX(), player.getY(), player.getZ(),
-                             player.getYRot(), player.getXRot());
+                    player.getYRot(), player.getXRot());
         }
     }
 }

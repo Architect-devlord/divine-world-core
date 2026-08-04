@@ -635,8 +635,13 @@ public class ServerGodAbilityExecutor {
             // ── Underground / burrow — AI controls emerge ─────────────────
             case "toggle_underground", "burrow" -> {
                 if (isOnCooldown(player, "burrow")) return;
-                // Puppet invulnerability — AICreakingEntity handles visibility via setUnderground()
+                // Puppet invulnerability + no physics — AICreakingEntity handles the
+                // body's own visibility via setUnderground(). Matches what Warden's
+                // burrow already does for the puppet (see executeWardenAbility above);
+                // this call site was missing noPhysics, leaving the invisible puppet
+                // still fully subject to gravity/collision while nominally burrowed.
                 player.getAbilities().invulnerable = true;
+                player.noPhysics = true;
                 player.onUpdateAbilities();
                 player.getPersistentData().putBoolean("dw_burrowed", true);
                 setBodyUnderground(uuid, true);
@@ -652,6 +657,7 @@ public class ServerGodAbilityExecutor {
                 if (!player.getPersistentData().getBoolean("dw_burrowed")) return;
                 player.getPersistentData().putBoolean("dw_burrowed", false);
                 player.getAbilities().invulnerable = false;
+                player.noPhysics = false;
                 player.onUpdateAbilities();
                 setBodyUnderground(uuid, false);
                 GodSpawnHandler.triggerGodAnimation(uuid, "ability_controller", "dig_out");

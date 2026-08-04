@@ -206,7 +206,13 @@ public class GodSpawnHandler {
                 player.getYRot(), player.getXRot());
 
         if (newBody instanceof EnderDragon dragon) {
-            dragon.getPhaseManager().setPhase(EnderDragonPhase.HOVERING);
+            // Same CF-2 fix as spawnGodBody(): HOVERING's tick logic calls
+            // getDragonFight(), which is null outside The End and NPEs on the
+            // first phase tick. This call site had the identical bug — it's
+            // the same "spawn a dragon body" operation, just for a mid-game
+            // transform instead of the initial spawn, and the fix was only
+            // ever applied to the other one.
+            dragon.getPhaseManager().setPhase(EnderDragonPhase.SITTING_SCANNING);
         } else if (newBody instanceof net.minecraft.world.entity.Mob mob) {
             mob.setNoAi(true);
         }
@@ -235,25 +241,33 @@ public class GodSpawnHandler {
     // =========================================================================
 
     /**
-     * Map god type keys to vanilla entity types.
+     * Map god type keys to entity types.
      *
-     * oracle   → EVOKER       (robed mage; Vex/fang summons are Oracle's god powers)
-     * creaking → AI_CREAKING  (custom GeckoLib entity — real Creaking doesn't exist
-     *                          until MC 1.21.4, this project targets 1.20.1)
+     * All six god types now spawn DivineWorld's own custom entities
+     * (com.divineworld.entity.gods.*), moved here from DWClientBot's
+     * com.divineworld.client.entity.gods package where they were fully
+     * built (GeckoLib humanoid rig, per-type abilities, correct dimensions,
+     * registered renderers) but never actually spawned anywhere — this
+     * method previously returned plain vanilla EntityType.WARDEN/WITHER/
+     * ENDER_DRAGON/ELDER_GUARDIAN/EVOKER, which are AI-less placeholders
+     * with none of that. See ModEntities/EntityAttributeRegistrar/
+     * DivineClientSetup for the matching registration.
      *
-     * FIX: this comment previously said "creaking → WARDEN (safe placeholder...)",
-     * left over from before the custom AI_CREAKING entity existed. The switch
-     * body below has correctly returned ModEntities.AI_CREAKING.get() for a
-     * while now — only this comment was stale. Fixed for accuracy; no
-     * behavior change.
+     * The EnderDragon/WitherBoss-specific instanceof checks a few lines
+     * below in spawnGodBody()/replaceGodBody() (dragon phase, invulnerable
+     * ticks) naturally stop applying now — AIEnderDragon/AIWither aren't
+     * instances of the vanilla classes, so those vanilla-AI-specific fixups
+     * are simply skipped rather than needed, which is correct: the custom
+     * classes don't have a vanilla phase manager or invulnerability-tick
+     * mechanic to begin with.
      */
-    private static EntityType<?> getGodEntityType(String godType) {
+    static EntityType<?> getGodEntityType(String godType) {
         return switch (godType) {
-            case "ender_dragon", "dragon" -> EntityType.ENDER_DRAGON;
-            case "wither"                 -> EntityType.WITHER;
-            case "warden"                 -> EntityType.WARDEN;
-            case "elder_guardian"         -> EntityType.ELDER_GUARDIAN;
-            case "oracle"                 -> EntityType.EVOKER;   // CHANGED: Wandering Trader → Evoker
+            case "ender_dragon", "dragon" -> com.divineworld.entity.ModEntities.AI_ENDER_DRAGON.get();
+            case "wither"                 -> com.divineworld.entity.ModEntities.AI_WITHER.get();
+            case "warden"                 -> com.divineworld.entity.ModEntities.AI_WARDEN.get();
+            case "elder_guardian"         -> com.divineworld.entity.ModEntities.AI_ELDER_GUARDIAN.get();
+            case "oracle"                 -> com.divineworld.entity.ModEntities.AI_ORACLE.get();
             case "creaking"               -> com.divineworld.entity.ModEntities.AI_CREAKING.get();
             default                       -> null;
         };

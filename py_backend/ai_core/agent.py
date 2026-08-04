@@ -64,7 +64,29 @@ import json
 
 import torch
 import numpy as np
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# FIX: the single sys.path.insert() here used to be
+# Path(__file__).parent.parent, which resolves to py_backend/ (agent.py's
+# own grandparent). That's enough for the `ai_core.*` imports right below
+# to work, since py_backend/ is where the ai_core package itself lives.
+# But ai_core/__init__.py (imported as a side effect of every one of
+# those) does `from py_backend.utils import validation`, and
+# agent_spawner.py does `from py_backend.config import Config` /
+# `from py_backend.utils.mc_uuid import get_minecraft_uuid` — absolute
+# imports that need the actual repo root (py_backend's *parent*) on
+# sys.path, which py_backend/ itself is not. main.py has the equivalent
+# fix with only two .parent calls because main.py lives directly in
+# py_backend/; agent.py is one directory deeper (py_backend/ai_core/), so
+# reaching the same repo root needs a third .parent — but dropping straight
+# to the repo root and nothing else then breaks the ai_core.* imports below
+# (ai_core isn't a subdirectory of the repo root, it's a subdirectory of
+# py_backend/). Both directories are needed on sys.path simultaneously.
+# Without this, every agent subprocess start_agent_process() launches (NPC
+# or god) crashed immediately with "ModuleNotFoundError: No module named
+# 'py_backend'" — before this file's own code ever ran — regardless of what
+# PYTHONPATH the parent process set, since that only added py_backend/ too
+# (see AgentProcessManager.start_agent_process in main.py).
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))  # repo root, for py_backend.*
+sys.path.insert(0, str(Path(__file__).parent.parent))         # py_backend/, for ai_core.*
 
 from ai_core.personality  import Personality, GenderType, assign_npc_gender, assign_god_gender
 from ai_core.emotion      import EmotionSystem

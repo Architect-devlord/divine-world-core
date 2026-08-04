@@ -1,4 +1,4 @@
-package com.divineworld.client.entity;
+package com.divineworld.entity.gods;
 
 /**
  * Interface for all god entities.

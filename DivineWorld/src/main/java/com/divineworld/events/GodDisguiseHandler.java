@@ -89,6 +89,15 @@ public class GodDisguiseHandler {
                         "§c[Transform] Unknown mob type: §7" + mobType));
                 return false;
             }
+            // FIX: replaceGodBody() always spawns the new body visible, but if the
+            // god is currently in "humanoid" or "disguise" form — where the boss
+            // body is deliberately hidden and the puppet renders instead — the new
+            // body needs to match that immediately, or it pops into visibility and
+            // breaks the illusion the very next tick.
+            if (!FORM_GOD.equals(getGodForm(player))) {
+                Entity newBody = GodSpawnHandler.getGodEntity(player.getUUID());
+                if (newBody != null) newBody.setInvisible(true);
+            }
             // Mark as disguised; store CURRENT transform type for display only.
             // "dw_original_god_type" is untouched (set once in spawnGodBody).
             player.getPersistentData().putBoolean("dw_disguised", true);
@@ -107,7 +116,15 @@ public class GodDisguiseHandler {
         // ── Real player (op-4) path ───────────────────────────────────────────
         removeTransform(player);
 
-        EntityType<?> entityType = GodSpawnHandler.resolveVanillaEntityType(normType);
+        // Try the god-type mapping first (covers "oracle" → Evoker and
+        // "creaking" → the custom AI_CREAKING entity, neither of which is a
+        // real registry ID resolveVanillaEntityType() could ever find on its
+        // own), then fall back to a plain vanilla entity id — same order
+        // GodSpawnHandler.replaceGodBody() already uses for god agents.
+        EntityType<?> entityType = GodSpawnHandler.getGodEntityType(normType);
+        if (entityType == null) {
+            entityType = GodSpawnHandler.resolveVanillaEntityType(normType);
+        }
         if (entityType == null) {
             player.sendSystemMessage(Component.literal(
                     "§c[Transform] Unknown mob type: §7" + mobType));

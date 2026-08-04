@@ -1,6 +1,6 @@
-package com.divineworld.client.entity.gods;
+package com.divineworld.entity.gods;
 
-import com.divineworld.client.entity.IGodEntity;
+import com.divineworld.entity.gods.IGodEntity;
 import com.mojang.authlib.GameProfile;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleTypes;

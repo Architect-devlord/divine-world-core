@@ -1,6 +1,6 @@
-package com.divineworld.client.entity.gods;
+package com.divineworld.entity.gods;
 
-import com.divineworld.client.entity.ModEntities;
+import com.divineworld.entity.ModEntities;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.*;

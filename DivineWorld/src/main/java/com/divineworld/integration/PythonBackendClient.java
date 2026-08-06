@@ -20,7 +20,9 @@ import java.util.List;
 public class PythonBackendClient {
 
     private static final String BACKEND_URL = System.getProperty("dw.backend", "http://127.0.0.1:11400");
-    private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .build();
 
     /**
      * ✅ NEW: Spawn a single NPC agent (NOT genesis)

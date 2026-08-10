@@ -131,6 +131,26 @@ dependencies {
     // then special handling is done to allow a setup of a vanilla dependency without the use of an external repository.
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
     implementation fg.deobf("software.bernie.geckolib:geckolib-forge-1.20.1:4.4.4")
+
+    // FIX: DWClientBot's ClientNetworkHandler now hooks directly into
+    // DivineWorld's MorphSyncPacket.CLIENT_HANDLER (see that class for why —
+    // two independent mods each calling NetworkRegistry.newSimpleChannel()
+    // for the same channel name crashed the game the moment both were
+    // loaded together in one JVM, which they now always are on the client
+    // side). compileOnly, not implementation: this makes DivineWorld's
+    // classes visible at compile time without bundling/shading them into
+    // dwclient's own jar — DivineWorld's real classes come from
+    // divineworld-${divineworld_version}-all.jar being separately installed
+    // alongside this jar at runtime (which mods.toml below now declares as
+    // a mandatory dependency). Bundling them instead would put duplicate
+    // com.divineworld.* classes in two jars again — the same split-package
+    // problem this whole chain of fixes was resolving, just one layer
+    // lower (a JAR-content collision instead of a JPMS module collision).
+    //
+    // DivineWorld must be built BEFORE DWClientBot for this path to exist —
+    // run DivineWorld's build first if building both from scratch.
+    compileOnly files("${project.projectDir}/../DivineWorld/build/libs/divineworld-${divineworld_version}-all.jar")
+
     // Example mod dependency with JEI - using fg.deobf() ensures the dependency is remapped to your development mappings
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     // compileOnly fg.deobf("mezz.jei:jei-${mc_version}-common-api:${jei_version}")

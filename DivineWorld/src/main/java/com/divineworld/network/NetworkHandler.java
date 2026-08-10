@@ -19,8 +19,16 @@ import com.divineworld.DWMod;
  *
  * Chat bubble system removed — proximity chat handles all agent speech.
  *
- * Packet table (must match DWClientBot ClientNetworkHandler IDs exactly):
+ * Packet table:
  *   ID 0 — MorphSyncPacket  (server → client)
+ *
+ * This is the ONE place that creates the "divineworld:main" channel.
+ * DWClientBot no longer creates its own — it now has a compile-time
+ * dependency on DivineWorld (see DWClientBot's build.gradle/mods.toml) and
+ * hooks into MorphSyncPacket.CLIENT_HANDLER instead. DivineWorld itself has
+ * no dependency on DWClientBot in either direction, and runs standalone on
+ * a dedicated server exactly as before — CLIENT_HANDLER just stays null
+ * there and MorphSyncPacket.handle() no-ops safely.
  */
 public class NetworkHandler {
 
@@ -49,7 +57,7 @@ public class NetworkHandler {
         // the correct, current, non-deprecated API for 1.20.1; only the
         // predicate arguments needed to change.
         Predicate<String> versionCheck = v ->
-            PROTOCOL_VERSION.equals(v) || NetworkRegistry.ABSENT.equals(v);
+                PROTOCOL_VERSION.equals(v) || NetworkRegistry.ABSENT.equals(v);
 
         INSTANCE = NetworkRegistry.newSimpleChannel(
                 new ResourceLocation("divineworld", "main"),
@@ -78,6 +86,13 @@ public class NetworkHandler {
     public static void broadcastMorph(ServerPlayer transformedPlayer,
                                       ServerLevel level,
                                       String newMobType) {
+        if (INSTANCE == null) {
+            // Defensive only — register() should always have run by the time
+            // any transform can happen. Not expected in practice.
+            DWMod.LOGGER.warn("[NetworkHandler] broadcastMorph() called before register() — skipping.");
+            return;
+        }
+
         UUID   uuid    = transformedPlayer.getUUID();
         String godType = transformedPlayer.getPersistentData().getString("dw_god_type");
         MorphSyncPacket pkt = new MorphSyncPacket(uuid, newMobType, godType);

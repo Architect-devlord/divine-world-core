@@ -1,6 +1,19 @@
-// src/main/java/com/divineworld/client/DivineClientSetup.java
+// src/main/java/com/divineworld/clientsetup/DivineClientSetup.java
 // DivineWorld server mod — client-dist only
-package com.divineworld.client;
+package com.divineworld.clientsetup;
+// FIX: this class used to live in package com.divineworld.client — the exact
+// same package name DWClientBot's own classes (DWClientMod, ClientSetup,
+// ClientEventHandler, etc.) use. Two separate mod jars both containing the
+// same package name is illegal under the Java Platform Module System once
+// both are loaded together as named modules — Forge's
+// ModuleLayerHandler.buildLayer() throws java.lang.module.ResolutionException
+// ("Module divineworld contains package com.divineworld.client, module
+// dwclient exports package com.divineworld.client to divineworld") and the
+// game fails to launch at all with both mods installed. This was the only
+// DivineWorld file in that package; moving it to its own package resolves
+// the collision without touching DWClientBot. Nothing else in DivineWorld
+// referenced this class directly (it self-registers via
+// @Mod.EventBusSubscriber), so no other import needed updating.
 
 import com.divineworld.DWMod;
 import com.divineworld.entity.ModEntities;
@@ -18,11 +31,9 @@ import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
  * Separating client registration here keeps DWMod.java free of @OnlyIn code
  * and prevents crashes on dedicated servers that call FMLClientSetupEvent handlers.
  *
- * Registered in DWMod constructor:
- *   modBus.addListener(DivineClientSetup::onClientSetup)
- * — NOT via @Mod.EventBusSubscriber (the Dist.CLIENT guard on that annotation
- *   works, but an explicit addListener in DWMod is equally clear and avoids
- *   accidental double-registration).
+ * Self-registers via the @Mod.EventBusSubscriber annotation below (with
+ * value = Dist.CLIENT, so Forge skips it entirely on a dedicated server) —
+ * nothing in DWMod.java needs to reference this class directly.
  */
 @Mod.EventBusSubscriber(modid = DWMod.MOD_ID,
         bus    = Mod.EventBusSubscriber.Bus.MOD,
